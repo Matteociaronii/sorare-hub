@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>SorareHub — Portfolio & Lineup Optimizer</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="carbon-theme">
+  <!-- Top Navigation Bar -->
+  <header class="navbar">
+    <div class="nav-inner">
+      <div class="brand-group">
+        <div class="brand-logo">
+          <svg viewBox="0 0 40 40" class="logo-svg">
+            <circle cx="20" cy="20" r="16" fill="none" stroke="url(#goldGrad)" stroke-width="2.5"/>
+            <circle cx="20" cy="20" r="10" fill="none" stroke="#9ca3af" stroke-width="2"/>
+            <path d="M8 32 L18 22 L23 26 L33 10 M33 10 L26 10 M33 10 L33 17" fill="none" stroke="url(#goldGrad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <defs>
+              <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#f5d061"/>
+                <stop offset="100%" stop-color="#b8860b"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <div class="brand-titles">
+            <span class="title-sorare">SORARE</span>
+            <span class="title-hub">HUB</span>
+          </div>
+        </div>
+        <span class="engine-badge">OPTA × STATSBOMB 26/27</span>
+      </div>
+
+      <div class="nav-actions">
+        <div class="gw-pill" id="gw-status-pill">
+          <span class="status-dot"></span>
+          <span id="gw-label">GW Live Sync</span>
+        </div>
+        <button id="demo-btn" class="btn-secondary" title="Simula con una Gallery di test">
+          Modalità Demo
+        </button>
+        <button id="login-btn" class="btn-gold">
+          <span id="login-btn-text">Connetti Sorare</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <!-- Control Deck -->
+    <section class="control-deck carbon-card">
+      <div class="control-group">
+        <label class="field-label">1. COMPETIZIONE UFFICIALE SORARE</label>
+        <select id="comp-select" class="input-select"></select>
+      </div>
+
+      <div class="control-group">
+        <label class="field-label">2. RARITÀ CARTE</label>
+        <div class="pill-selector" id="scarcity-selector">
+          <button class="pill-btn active" data-scarcity="limited">Limited</button>
+          <button class="pill-btn" data-scarcity="rare">Rare</button>
+          <button class="pill-btn" data-scarcity="super_rare">Super Rare</button>
+          <button class="pill-btn" data-scarcity="unique">Unique</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label class="field-label">3. STRATEGIA ALGORITMO</label>
+        <div class="pill-selector" id="strategy-selector">
+          <button class="pill-btn active" data-strategy="floor" title="Massimizza volume AAS Opta e titolarità per soglie e premi costanti">
+            🛡️ Max Floor (Volume AAS)
+          </button>
+          <button class="pill-btn" data-strategy="ceiling" title="Massimizza xG/xA, Piazzati e Stacking per puntare al 1° posto">
+            🚀 Max Ceiling (Podio Secco)
+          </button>
+        </div>
+      </div>
+
+      <div class="control-group action-col">
+        <button id="run-optimizer-btn" class="btn-execute">
+          ⚡ GENERA PORTFOLIO A CASCATA
+        </button>
+      </div>
+    </section>
+
+    <!-- Gallery Telemetry Bar -->
+    <section class="telemetry-bar">
+      <div class="telemetry-card carbon-card">
+        <span class="telemetry-title">CARTE IN GALLERIA</span>
+        <div class="telemetry-val" id="stat-total-cards">0</div>
+        <span class="telemetry-sub" id="stat-user-slug">Non connesso</span>
+      </div>
+      <div class="telemetry-card carbon-card">
+        <span class="telemetry-title">CARTE IN-SEASON (26/27)</span>
+        <div class="telemetry-val text-gold" id="stat-inseason-cards">0</div>
+        <span class="telemetry-sub">Regola 4/5 Pronta</span>
+      </div>
+      <div class="telemetry-card carbon-card">
+        <span class="telemetry-title">CONFIRMED XI / TITOLARI</span>
+        <div class="telemetry-val text-emerald" id="stat-starters">0</div>
+        <span class="telemetry-sub">Feed Formazioni Attivo</span>
+      </div>
+      <div class="telemetry-card carbon-card">
+        <span class="telemetry-title">SQUADRE GENERATE</span>
+        <div class="telemetry-val text-cyan" id="stat-lineups-built">0</div>
+        <span class="telemetry-sub">Zero Duplicati Fisici</span>
+      </div>
+    </section>
+
+    <!-- Manual Slug / Quick Lookup Bar -->
+    <section class="lookup-bar carbon-card">
+      <div class="lookup-info">
+        <strong>Accesso Rapido Gallery Pubblica:</strong> Puoi collegarti in OAuth sopra oppure inserire direttamente il tuo username/slug Sorare per analizzare subito le tue carte:
+      </div>
+      <div class="lookup-controls">
+        <input type="text" id="slug-input" class="input-text" placeholder="Es. tuo-username-sorare">
+        <button id="slug-load-btn" class="btn-secondary">Carica Gallery</button>
+      </div>
+    </section>
+
+    <!-- Cascade Lineups Output -->
+    <section id="lineups-output" class="lineups-wrapper">
+      <div class="empty-placeholder carbon-card">
+        <div class="placeholder-icon">⚙️</div>
+        <h2>Motore SorareHub Pronto</h2>
+        <p>Connetti il tuo account Sorare via OAuth, inserisci il tuo username oppure premi <strong>Modalità Demo</strong> in alto a destra per testare il solver multi-lineup con metriche Opta AAS, xG/xA, Stacking e panchina a base 35 pt.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>SorareHub Pro • Architettura Client-Side PKCE Zero-Server • Regolamento Ufficiale Sorare 2026/2027</p>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="sorare_api.js"></script>
+  <script src="optimizer.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
