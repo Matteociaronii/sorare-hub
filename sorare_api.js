@@ -91,30 +91,29 @@ const SorareAPI = {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
+    // Query GraphQL compatibile con lo schema Sorare
     const query = `
-      query GetCurrentUserGallery {
+      query GetCurrentUserCards {
         currentUser {
           slug
           nickname
-          paginatedCards(first: 100) {
-            nodes {
+          cards {
+            slug
+            name
+            rarityTyped
+            seasonYear
+            power
+            positions
+            player {
+              displayName
               slug
-              name
-              rarityTyped
-              seasonYear
-              power
-              anyPositions
-              player {
-                displayName
+              birthDate
+              activeClub {
+                name
                 slug
-                birthDate
-                activeClub {
-                  name
+                domesticLeague {
                   slug
-                  domesticLeague {
-                    slug
-                    displayName
-                  }
+                  displayName
                 }
               }
             }
@@ -123,7 +122,6 @@ const SorareAPI = {
       }
     `;
 
-    // Chiamata GraphQL veicolata tramite il tuo Cloudflare Worker (niente CORS issues)
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
 
     const res = await fetch(workerGraphqlEndpoint, {
@@ -143,41 +141,17 @@ const SorareAPI = {
     const json = await res.json();
     if (json.errors && json.errors.length > 0) {
       console.error('Errori GraphQL:', json.errors);
-      return this.fetchCurrentUserBasic(token);
+      throw new Error(json.errors[0].message);
     }
 
     if (!json.data || !json.data.currentUser) {
       throw new Error('Nessun dato utente ricevuto da Sorare.');
     }
 
-    const rawCards = json.data.currentUser.paginatedCards?.nodes || [];
+    const rawCards = json.data.currentUser.cards || [];
     return {
       user: json.data.currentUser,
       cards: this.enrichCardsWithOptaMetrics(rawCards)
-    };
-  },
-
-  async fetchCurrentUserBasic(token) {
-    const fallbackQuery = `
-      query GetBasicUser {
-        currentUser {
-          slug
-          nickname
-        }
-      }
-    `;
-    const res = await fetch(`${CONFIG.TOKEN_ENDPOINT}/graphql`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ query: fallbackQuery })
-    });
-    const json = await res.json();
-    return {
-      user: json.data?.currentUser || { nickname: 'Manager', slug: 'manager' },
-      cards: []
     };
   },
 
@@ -186,7 +160,7 @@ const SorareAPI = {
     return rawCards
       .filter(c => c && c.player)
       .map((card, index) => {
-        const rawPos = (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
+        const rawPos = (card.positions && card.positions[0]) || (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
         const pos = this.normalizePosition(rawPos);
         const leagueSlug = card.player.activeClub?.domesticLeague?.slug || 'premier-league-gb-eng';
         const clubName = card.player.activeClub?.name || 'Club';
