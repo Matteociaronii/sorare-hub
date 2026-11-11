@@ -1,314 +1,249 @@
-// SorareHub - Main Application Controller (v2.4 Anti-Loop)
+// SorareHub - Main Application Controller
 const App = {
-  state: {
-    cards: [],
-    user: null,
-    selectedCompetitionId: 'premier_league_in_season',
-    selectedScarcity: 'limited',
-    selectedStrategy: 'floor',
-    isDemo: false
+  userCards: [],
+  currentUser: null,
+
+  init() {
+    this.checkSession();
   },
 
-  async init() {
-    this.populateCompetitionsMenu();
-    this.bindEvents();
+  notify(message, isError = false) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast ${isError ? 'toast-error' : ''}`;
+    toast.textContent = message;
+    toast.style.cssText = `
+      background: ${isError ? '#ef4444' : '#1e293b'};
+      color: #fff;
+      padding: 10px 16px;
+      margin-top: 8px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      font-size: 13px;
+      font-weight: 600;
+    `;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
+  },
 
+  async checkSession() {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
+    
+    let token = localStorage.getItem('sorare_access_token');
 
     if (code) {
-      // Pulisce immediatamente l'URL per non rimandare il codice al refresh
-      window.history.replaceState({}, document.title, window.location.pathname);
-      await this.checkOAuthCallback(code);
-      return;
+      this.notify('🔄 Finalizzazione accesso Sorare...');
+      token = await SorareAPI.handleOAuthCallback(code);
     }
 
-    const existingToken = localStorage.getItem('sorare_access_token');
-    if (existingToken) {
-      this.notify('🔑 Sessione attiva: sincronizzazione galleria...');
-      await this.loadUserGallery();
-    } else {
-      this.notify('⚡ SorareHub Pronto — Tocca "Connetti Sorare"');
+    if (token) {
+      await this.initUserGallery();
     }
   },
 
-  notify(msg, isError = false) {
-    let box = document.getElementById('debug-status-banner');
-    if (!box) {
-      box = document.createElement('div');
-      box.id = 'debug-status-banner';
-      box.style.position = 'fixed';
-      box.style.bottom = '24px';
-      box.style.left = '50%';
-      box.style.transform = 'translateX(-50%)';
-      box.style.padding = '14px 28px';
-      box.style.borderRadius = '10px';
-      box.style.fontSize = '14px';
-      box.style.fontWeight = '700';
-      box.style.zIndex = '999999';
-      box.style.maxWidth = '92%';
-      box.style.wordBreak = 'break-word';
-      box.style.textAlign = 'center';
-      box.style.boxShadow = '0 12px 32px rgba(0,0,0,0.85)';
-      document.body.appendChild(box);
-    }
-    box.style.display = 'block';
-    box.style.background = isError ? '#8b0000' : '#0e3a24';
-    box.style.color = isError ? '#ffcdd2' : '#a7f3d0';
-    box.style.border = isError ? '2px solid #ef4444' : '2px solid #10b981';
-    box.textContent = msg;
-
-    if (!isError && !msg.includes('corso') && !msg.includes('sincronizzazione')) {
-      setTimeout(() => { if (box) box.style.display = 'none'; }, 6000);
-    }
-  },
-
-  populateCompetitionsMenu() {
-    const compSelect = document.getElementById('comp-select');
-    if (!compSelect || !CONFIG.OFFICIAL_COMPETITIONS) return;
-
-    compSelect.innerHTML = '';
-
-    const inSeasonGroup = document.createElement('optgroup');
-    inSeasonGroup.label = '— IN-SEASON (SO5: Min 4 In-Season, Mono-Lega) —';
-
-    const classicGroup = document.createElement('optgroup');
-    classicGroup.label = '— CLASSIC (SO7: 7 Titolari, Tutte le Annate) —';
-
-    CONFIG.OFFICIAL_COMPETITIONS.forEach(comp => {
-      const option = document.createElement('option');
-      option.value = comp.id;
-      option.textContent = comp.name;
-
-      if (comp.format === 'SO5') {
-        inSeasonGroup.appendChild(option);
-      } else {
-        classicGroup.appendChild(option);
-      }
-    });
-
-    compSelect.appendChild(inSeasonGroup);
-    compSelect.appendChild(classicGroup);
-
-    compSelect.value = this.state.selectedCompetitionId;
-  },
-
-  bindEvents() {
-    const compSelect = document.getElementById('comp-select');
-    if (compSelect) {
-      compSelect.addEventListener('change', (e) => {
-        this.state.selectedCompetitionId = e.target.value;
-        if (this.state.cards.length > 0) this.runOptimizer();
-      });
-    }
-
-    const scarcityContainer = document.getElementById('scarcity-selector') || document.querySelector('.rarity-selector');
-    if (scarcityContainer) {
-      scarcityContainer.addEventListener('click', (e) => {
-        const btn = e.target.closest('button, .pill-btn');
-        if (!btn) return;
-        scarcityContainer.querySelectorAll('button, .pill-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.state.selectedScarcity = (btn.dataset.scarcity || btn.textContent || 'limited').trim().toLowerCase();
-        if (this.state.cards.length > 0) this.runOptimizer();
-      });
-    }
-
-    const strategyContainer = document.getElementById('strategy-selector') || document.querySelector('.strategy-selector');
-    if (strategyContainer) {
-      strategyContainer.addEventListener('click', (e) => {
-        const btn = e.target.closest('button, .pill-btn');
-        if (!btn) return;
-        strategyContainer.querySelectorAll('button, .pill-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        const text = btn.textContent.toLowerCase();
-        this.state.selectedStrategy = text.includes('ceiling') ? 'ceiling' : 'floor';
-        if (this.state.cards.length > 0) this.runOptimizer();
-      });
-    }
-
-    const runBtn = document.getElementById('run-optimizer-btn') || document.querySelector('.btn-generate');
-    if (runBtn) {
-      runBtn.addEventListener('click', () => this.runOptimizer());
-    }
-
-    document.querySelectorAll('#demo-btn, #demo-mode-btn, .btn-demo').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        this.loadDemoGallery();
-      });
-    });
-  },
-
-  async checkOAuthCallback(code) {
-    this.notify('🔄 Scambio codice OAuth con Sorare...');
-
-    if (window.SorareAPI && SorareAPI.handleOAuthCallback) {
-      try {
-        const token = await SorareAPI.handleOAuthCallback(code);
-        if (token) {
-          this.notify('✅ Token ricevuto! Caricamento carte...');
-          await this.loadUserGallery();
-        }
-      } catch (err) {
-        this.notify('❌ Scambio token fallito: ' + err.message, true);
-      }
-    }
-  },
-
-  async loadUserGallery() {
+  async initUserGallery() {
+    this.notify('📥 Connessione a Sorare in corso...');
     try {
-      this.notify('📥 Sincronizzazione galleria Sorare...');
       const data = await SorareAPI.fetchCurrentUserGallery();
-      if (!data) {
-        this.notify('⚠️ Nessun dato ricevuto da Sorare', true);
-        return;
+      if (!data) return;
+
+      this.currentUser = data.user;
+      this.userCards = data.cards || [];
+
+      // Aggiorna Header
+      const userBadge = document.getElementById('user-badge');
+      const userNick = document.getElementById('user-nickname');
+      const btnLogin = document.getElementById('btn-login');
+
+      if (userBadge && userNick) {
+        userNick.textContent = `@${this.currentUser.nickname || this.currentUser.slug}`;
+        userBadge.classList.remove('hidden');
+      }
+      if (btnLogin) {
+        btnLogin.textContent = 'Ricarica Collezione';
       }
 
-      this.state.user = data.user;
-      this.state.cards = data.cards;
-      this.state.isDemo = false;
+      // Aggiorna Contatori
+      const countEl = document.getElementById('stat-cards-count');
+      if (countEl) countEl.textContent = this.userCards.length;
 
-      this.updateNavbarUser(data.user.nickname || data.user.slug);
-      this.updateTelemetry();
-      this.notify(`🎉 Benvenuto @${data.user.nickname || data.user.slug}! ${data.cards.length} carte caricate.`);
-      this.runOptimizer();
+      const badgeCount = document.getElementById('gallery-count-badge');
+      if (badgeCount) badgeCount.textContent = this.userCards.length;
+
+      this.notify(`✅ Collezione caricata: ${this.userCards.length} carte!`);
+
+      // Se la galleria è aperta, fai il render
+      if (document.getElementById('gallery-view') && !document.getElementById('gallery-view').classList.contains('hidden')) {
+        this.filterGallery();
+      }
     } catch (err) {
-      console.error('Errore caricamento galleria:', err);
+      console.error(err);
       this.notify(`❌ Errore Galleria: ${err.message}`, true);
     }
   },
 
-  loadDemoGallery() {
-    this.state.isDemo = true;
-    this.state.user = { nickname: 'DemoManager', slug: 'demo' };
-    this.state.cards = this.getMockDemoCards();
+  switchView(viewName) {
+    const optView = document.getElementById('optimizer-view');
+    const galView = document.getElementById('gallery-view');
+    const btnOpt = document.getElementById('tab-optimizer');
+    const btnGal = document.getElementById('tab-gallery');
 
-    this.updateNavbarUser('DemoManager (Simulazione)');
-    this.updateTelemetry();
-    this.runOptimizer();
-    this.notify('🎮 Modalità Demo attiva');
-  },
-
-  updateNavbarUser(name) {
-    const el = document.getElementById('login-btn-text') || document.querySelector('.btn-connect') || document.querySelector('.btn-login');
-    if (el) {
-      el.textContent = `👤 @${name}`;
+    if (viewName === 'gallery') {
+      if (optView) optView.classList.add('hidden');
+      if (galView) galView.classList.remove('hidden');
+      if (btnOpt) btnOpt.classList.remove('active');
+      if (btnGal) btnGal.classList.add('active');
+      this.filterGallery();
+    } else {
+      if (galView) galView.classList.add('hidden');
+      if (optView) optView.classList.remove('hidden');
+      if (btnGal) btnGal.classList.remove('active');
+      if (btnOpt) btnOpt.classList.add('active');
     }
   },
 
-  safeSetText(idOrSelector, text) {
-    const el = document.getElementById(idOrSelector) || document.querySelector(idOrSelector);
-    if (el) el.textContent = text;
-  },
+  buildCardHtml(card, isSlot = false) {
+    const fallback = 'https://assets.sorare.com/placeholder.png';
+    const capBadge = card.isCaptain ? '<div style="position:absolute;bottom:6px;left:6px;background:#f59e0b;color:#000;font-weight:900;border-radius:4px;padding:1px 5px;font-size:10px;">(C)</div>' : '';
+    const slotStyle = isSlot ? 'style="width: 140px; flex-shrink: 0;"' : '';
 
-  updateTelemetry() {
-    const total = this.state.cards.length;
-    const inSeason = this.state.cards.filter(c => c.isInSeason).length;
-    const starters = this.state.cards.filter(c => c.confirmedXi).length;
-
-    this.safeSetText('stat-total-cards', total);
-    this.safeSetText('stat-inseason-cards', inSeason);
-    this.safeSetText('stat-starters', starters);
-    this.safeSetText('stat-user-slug', `@${this.state.user?.nickname || this.state.user?.slug || 'Manager'}`);
-
-    const statCards = document.querySelectorAll('.stat-card .stat-value, .metric-box .metric-val');
-    if (statCards.length >= 3) {
-      statCards[0].textContent = total;
-      statCards[1].textContent = inSeason;
-      statCards[2].textContent = starters;
-    }
-  },
-
-  runOptimizer() {
-    const comp = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === this.state.selectedCompetitionId);
-    if (!comp) return;
-
-    const lineups = OptimizerEngine.buildCascadePortfolio(
-      this.state.cards,
-      comp,
-      this.state.selectedScarcity,
-      this.state.selectedStrategy
-    );
-
-    this.safeSetText('stat-lineups-built', lineups.length);
-    this.renderLineups(lineups, comp);
-  },
-
-  renderLineups(lineups, comp) {
-    const container = document.getElementById('lineups-output') || 
-                      document.getElementById('lineups-container') || 
-                      document.querySelector('.lineups-grid') || 
-                      document.querySelector('.main-content-area');
-
-    if (!container) return;
-
-    if (lineups.length === 0) {
-      container.innerHTML = `
-        <div style="background:#111418; border:1px solid #2d3540; border-radius:12px; padding:32px; text-align:center; margin-top:20px; color:#e1e7ec;">
-          <div style="font-size:36px; margin-bottom:12px;">⚠️</div>
-          <h3 style="color:#d4af37; margin-bottom:8px;">Nessuna squadra completabile per ${comp.name}</h3>
-          <p style="color:#8b9baa; font-size:14px; max-width:550px; margin:0 auto;">
-            Le carte disponibili per questa competizione (${comp.format}, rarità <strong>${this.state.selectedScarcity.toUpperCase()}</strong>) non sono sufficienti per formare un team completo con tutti i ruoli richiesti.<br><br>
-            Prova a cambiare rarità o selezionare un'altra competizione dal menu in alto.
-          </p>
+    return `
+      <div class="sorare-card-box ${card.scarcity}" ${slotStyle}>
+        <div class="card-image-wrap" style="position:relative; width:100%; aspect-ratio:0.75; background:#0b1120; overflow:hidden; border-radius:8px 8px 0 0;">
+          <span class="card-pos-badge" style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.8);color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:bold;">${card.position}</span>
+          <span class="card-bonus-badge" style="position:absolute;top:6px;right:6px;background:#10b981;color:#fff;padding:2px 5px;border-radius:4px;font-size:10px;font-weight:bold;">+${card.bonusPct}%</span>
+          <img src="${card.pictureUrl || fallback}" alt="${card.name}" loading="lazy" style="width:100%; height:100%; object-fit:cover;" onerror="this.src='${fallback}'" />
+          ${capBadge}
         </div>
-      `;
+        <div style="padding: 8px; background:#1e293b; border-radius:0 0 8px 8px;">
+          <div style="font-weight:bold; font-size:13px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${card.name}">${card.name}</div>
+          <div style="font-size:11px; color:#94a3b8; margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${card.club}</div>
+          <div style="display:flex; justify-content:space-between; background:#0f172a; padding:4px 6px; border-radius:4px; font-size:11px;">
+            <div style="text-align:center;"><span style="color:#64748b; font-size:9px; display:block;">L5</span><strong style="color:#38bdf8;">${card.l5}</strong></div>
+            <div style="text-align:center;"><span style="color:#64748b; font-size:9px; display:block;">L15</span><strong style="color:#38bdf8;">${card.l15}</strong></div>
+            <div style="text-align:center;"><span style="color:#64748b; font-size:9px; display:block;">AAS</span><strong style="color:#10b981;">${card.optaAas}</strong></div>
+          </div>
+        </div>
+      </div>
+    `;
+  },
+
+  renderGallery(cards) {
+    const grid = document.getElementById('cards-grid');
+    if (!grid) return;
+
+    if (!cards || cards.length === 0) {
+      grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #94a3b8; padding: 40px;">Nessuna carta trovata con questi filtri.</div>';
       return;
     }
 
-    let html = '<div style="display:flex; flex-direction:column; gap:20px; margin-top:20px;">';
-    lineups.forEach((team) => {
-      html += `
-        <div style="background:#12151b; border:1px solid #232936; border-radius:12px; padding:20px; box-shadow:0 8px 24px rgba(0,0,0,0.5);">
-          <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1f2530; padding-bottom:12px; margin-bottom:16px;">
-            <div>
-              <span style="background:#d4af37; color:#0b0d11; font-weight:800; font-size:12px; padding:4px 10px; border-radius:6px; text-transform:uppercase;">${team.rankLabel}</span>
-              <span style="color:#8b9baa; font-size:13px; margin-left:10px;">${comp.name} • Formato <strong>${team.format}</strong></span>
-            </div>
-            <div>
-              <span style="color:#8b9baa; font-size:13px;">Proiezione Opta: </span>
-              <span style="color:#d4af37; font-weight:800; font-size:18px;">${team.totalProjected} pts</span>
-            </div>
-          </div>
-
-          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:12px;">
-            ${team.starters.map(p => `
-              <div style="background:#181d24; border:1px solid ${p.isCaptain ? '#d4af37' : '#262d38'}; border-radius:10px; padding:12px; text-align:center; position:relative;">
-                ${p.isCaptain ? '<div style="position:absolute; top:-8px; right:8px; background:#d4af37; color:#0b0d11; font-size:9px; font-weight:900; padding:2px 6px; border-radius:4px;">CAP (+50%)</div>' : ''}
-                <div style="font-size:11px; font-weight:800; color:#8b9baa; text-transform:uppercase; margin-bottom:4px;">${p.slotRole}</div>
-                <div style="font-size:14px; font-weight:700; color:#ffffff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.name}</div>
-                <div style="font-size:11px; color:#6b7c8f; margin-bottom:8px;">${p.club}</div>
-                <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid #222933; padding-top:6px; font-size:11px;">
-                  <span style="background:${p.isInSeason ? '#0f3822' : '#2b2313'}; color:${p.isInSeason ? '#38d37a' : '#d4af37'}; padding:2px 5px; border-radius:4px; font-weight:700;">${p.isInSeason ? 'IN-SEASON' : 'CLASSIC'}</span>
-                  <span style="color:#d4af37; font-weight:800;">${p.projectedScore}p</span>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `;
-    });
-    html += '</div>';
-
-    container.innerHTML = html;
+    grid.innerHTML = cards.map(c => this.buildCardHtml(c)).join('');
   },
 
-  getMockDemoCards() {
-    return [
-      { id: 'p1', name: 'Erling Haaland', club: 'Manchester City', leagueSlug: 'premier-league-gb-eng', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.15, optaAas: 62, xgXa: 0.95, confirmedXi: true },
-      { id: 'p2', name: 'Bukayo Saka', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.12, optaAas: 58, xgXa: 0.80, confirmedXi: true },
-      { id: 'p3', name: 'William Saliba', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 54, xgXa: 0.20, confirmedXi: true },
-      { id: 'p4', name: 'David Raya', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'GK', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 50, xgXa: 0.05, confirmedXi: true },
-      { id: 'p5', name: 'Declan Rice', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 56, xgXa: 0.35, confirmedXi: true },
-      { id: 'p6', name: 'Cole Palmer', club: 'Chelsea', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: true, isUefaContender: true, powerMultiplier: 1.15, optaAas: 60, xgXa: 0.90, confirmedXi: true },
-      { id: 'p7', name: 'Virgil van Dijk', club: 'Liverpool', leagueSlug: 'premier-league-gb-eng', position: 'DEF', scarcity: 'limited', isInSeason: false, isU23: false, isUefaChampions: true, powerMultiplier: 1.05, optaAas: 58, xgXa: 0.25, confirmedXi: true }
-    ];
+  filterGallery() {
+    const search = (document.getElementById('gallery-search')?.value || '').toLowerCase();
+    const pos = document.getElementById('gallery-filter-pos')?.value || 'ALL';
+    const scarcity = document.getElementById('gallery-filter-scarcity')?.value || 'ALL';
+    const sort = document.getElementById('gallery-sort')?.value || 'l15-desc';
+
+    let list = this.userCards.filter(c => {
+      const matchSearch = c.name.toLowerCase().includes(search) || c.club.toLowerCase().includes(search);
+      const matchPos = pos === 'ALL' || c.position === pos;
+      const matchScarcity = scarcity === 'ALL' || c.scarcity === scarcity;
+      return matchSearch && matchPos && matchScarcity;
+    });
+
+    list.sort((a, b) => {
+      if (sort === 'l15-desc') return (b.l15 || 0) - (a.l15 || 0);
+      if (sort === 'l5-desc') return (b.l5 || 0) - (a.l5 || 0);
+      if (sort === 'bonus-desc') return b.bonusPct - a.bonusPct;
+      if (sort === 'name-asc') return a.name.localeCompare(b.name);
+      return 0;
+    });
+
+    this.renderGallery(list);
+  },
+
+  generateOptimizedLineups() {
+    if (!this.userCards || this.userCards.length < 5) {
+      this.notify('❌ Servono almeno 5 carte per calcolare una formazione.', true);
+      return;
+    }
+
+    const targetLineups = parseInt(document.getElementById('target-lineups')?.value || '3', 10);
+    const tournament = document.getElementById('tournament-select')?.value || 'ALL_STAR';
+
+    const usedIds = new Set();
+    const lineups = [];
+
+    for (let i = 0; i < targetLineups; i++) {
+      const available = this.userCards.filter(c => !usedIds.has(c.id));
+      const gk = available.filter(c => c.position === 'GK').sort((a, b) => (b.l15 * b.powerMultiplier) - (a.l15 * a.powerMultiplier))[0];
+      const def = available.filter(c => c.position === 'DEF' && c.id !== gk?.id).sort((a, b) => (b.l15 * b.powerMultiplier) - (a.l15 * a.powerMultiplier))[0];
+      const mid = available.filter(c => c.position === 'MID' && c.id !== gk?.id && c.id !== def?.id).sort((a, b) => (b.l15 * b.powerMultiplier) - (a.l15 * a.powerMultiplier))[0];
+      const fwd = available.filter(c => c.position === 'FWD' && c.id !== gk?.id && c.id !== def?.id && c.id !== mid?.id).sort((a, b) => (b.l15 * b.powerMultiplier) - (a.l15 * a.powerMultiplier))[0];
+
+      if (!gk || !def || !mid || !fwd) break;
+
+      const taken = new Set([gk.id, def.id, mid.id, fwd.id]);
+      const extra = available.filter(c => !taken.has(c.id) && c.position !== 'GK').sort((a, b) => (b.l15 * b.powerMultiplier) - (a.l15 * a.powerMultiplier))[0];
+
+      if (!extra) break;
+
+      const squad = [gk, def, mid, fwd, extra];
+      squad.forEach(c => usedIds.add(c.id));
+
+      // Capitano al punteggio potenziale più alto
+      let bestCap = squad[0];
+      squad.forEach(c => {
+        if ((c.l15 * c.powerMultiplier) > (bestCap.l15 * bestCap.powerMultiplier)) {
+          bestCap = c;
+        }
+      });
+      bestCap.isCaptain = true;
+
+      const totalProjected = squad.reduce((sum, c) => sum + (c.l15 * (c.isCaptain ? c.powerMultiplier * 1.2 : c.powerMultiplier)), 0);
+
+      lineups.push({
+        rank: i + 1,
+        tournament: tournament,
+        projectedScore: Math.round(totalProjected),
+        cards: squad
+      });
+    }
+
+    this.renderLineups(lineups);
+  },
+
+  renderLineups(lineups) {
+    const container = document.getElementById('lineups-results-container');
+    if (!container) return;
+
+    if (lineups.length === 0) {
+      container.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:20px;">Carte insufficienti per creare formazioni complete con questi criteri.</div>';
+      return;
+    }
+
+    container.innerHTML = lineups.map(l => `
+      <div style="background:#111827; border:1px solid #1f2937; border-radius:12px; padding:16px; margin-top:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <div>
+            <h3 style="color:#fff; font-size:16px; margin:0;">Formazione #${l.rank} - ${l.tournament}</h3>
+            <span style="color:#94a3b8; font-size:12px;">5 carte uniche senza sovrapposizioni</span>
+          </div>
+          <div style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:6px 12px; border-radius:8px; font-weight:bold; font-size:14px;">
+            Previsto: ${l.projectedScore} pts
+          </div>
+        </div>
+        <div style="display:flex; gap:12px; overflow-x:auto; padding-bottom:8px;">
+          ${l.cards.map(c => this.buildCardHtml(c, true)).join('')}
+        </div>
+      </div>
+    `).join('');
   }
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-  App.init();
-});
-
+document.addEventListener('DOMContentLoaded', () => App.init());
 window.App = App;
