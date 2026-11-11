@@ -21,7 +21,6 @@ const App = {
 
     compSelect.innerHTML = '';
 
-    // Raggruppa per tipologia visiva
     const inSeasonGroup = document.createElement('optgroup');
     inSeasonGroup.label = '— IN-SEASON (SO5: Min 4 In-Season, Mono-Lega) —';
 
@@ -47,6 +46,7 @@ const App = {
   },
 
   bindEvents() {
+    // 1. Cambio competizione
     const compSelect = document.getElementById('comp-select');
     if (compSelect) {
       compSelect.addEventListener('change', (e) => {
@@ -55,59 +55,73 @@ const App = {
       });
     }
 
-    const scarcityContainer = document.getElementById('scarcity-selector');
+    // 2. Selettore Rarità
+    const scarcityContainer = document.getElementById('scarcity-selector') || document.querySelector('.rarity-selector');
     if (scarcityContainer) {
       scarcityContainer.addEventListener('click', (e) => {
-        const btn = e.target.closest('.pill-btn');
+        const btn = e.target.closest('button, .pill-btn');
         if (!btn) return;
-        scarcityContainer.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+        scarcityContainer.querySelectorAll('button, .pill-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        this.state.selectedScarcity = btn.dataset.scarcity;
+        this.state.selectedScarcity = (btn.dataset.scarcity || btn.textContent || 'limited').trim().toLowerCase();
         if (this.state.cards.length > 0) this.runOptimizer();
       });
     }
 
-    const strategyContainer = document.getElementById('strategy-selector');
+    // 3. Selettore Strategia Algoritmo
+    const strategyContainer = document.getElementById('strategy-selector') || document.querySelector('.strategy-selector');
     if (strategyContainer) {
       strategyContainer.addEventListener('click', (e) => {
-        const btn = e.target.closest('.pill-btn');
+        const btn = e.target.closest('button, .pill-btn');
         if (!btn) return;
-        strategyContainer.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+        strategyContainer.querySelectorAll('button, .pill-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        this.state.selectedStrategy = btn.dataset.strategy;
+        const text = btn.textContent.toLowerCase();
+        this.state.selectedStrategy = text.includes('ceiling') ? 'ceiling' : 'floor';
         if (this.state.cards.length > 0) this.runOptimizer();
       });
     }
 
-    const runBtn = document.getElementById('run-optimizer-btn');
+    // 4. Genera Portfolio
+    const runBtn = document.getElementById('run-optimizer-btn') || document.querySelector('.btn-generate');
     if (runBtn) {
       runBtn.addEventListener('click', () => this.runOptimizer());
     }
 
-    const demoBtn = document.getElementById('demo-btn');
-    if (demoBtn) {
-      demoBtn.addEventListener('click', () => this.loadDemoGallery());
-    }
+    // 5. Pulsante Demo (intercetta sia id che classi che click su testo)
+    document.querySelectorAll('#demo-btn, #demo-mode-btn, .btn-demo').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.loadDemoGallery();
+      });
+    });
+
+    // Fallback generico per qualsiasi bottone con scritto "demo"
+    document.querySelectorAll('button').forEach(btn => {
+      if (btn.textContent.toLowerCase().includes('demo')) {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          this.loadDemoGallery();
+        });
+      }
+    });
   },
 
   async checkOAuthCallback() {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
 
-    // Se c'è un codice nell'URL, lo consumiamo e puliamo subito la barra degli indirizzi
-    // per non rieseguire la richiesta ad ogni reload
     if (code) {
       window.history.replaceState({}, document.title, window.location.pathname);
-      const token = await SorareAPI.handleOAuthCallback(code);
-      if (token) {
-        await this.loadUserGallery();
+      if (window.SorareAPI && SorareAPI.handleOAuthCallback) {
+        const token = await SorareAPI.handleOAuthCallback(code);
+        if (token) await this.loadUserGallery();
       }
       return;
     }
 
-    // Se abbiamo già un token salvato, carichiamo la galleria
     const existingToken = localStorage.getItem('sorare_access_token');
-    if (existingToken) {
+    if (existingToken && window.SorareAPI && SorareAPI.fetchCurrentUserGallery) {
       await this.loadUserGallery();
     }
   },
@@ -140,10 +154,15 @@ const App = {
   },
 
   updateNavbarUser(name) {
-    const loginBtnText = document.getElementById('login-btn-text');
-    if (loginBtnText) {
-      loginBtnText.textContent = `👤 @${name}`;
+    const el = document.getElementById('login-btn-text') || document.querySelector('.btn-connect') || document.querySelector('.btn-login');
+    if (el) {
+      el.textContent = `👤 @${name}`;
     }
+  },
+
+  safeSetText(idOrSelector, text) {
+    const el = document.getElementById(idOrSelector) || document.querySelector(idOrSelector);
+    if (el) el.textContent = text;
   },
 
   updateTelemetry() {
@@ -151,10 +170,17 @@ const App = {
     const inSeason = this.state.cards.filter(c => c.isInSeason).length;
     const starters = this.state.cards.filter(c => c.confirmedXi).length;
 
-    document.getElementById('stat-total-cards').textContent = total;
-    document.getElementById('stat-inseason-cards').textContent = inSeason;
-    document.getElementById('stat-starters').textContent = starters;
-    document.getElementById('stat-user-slug').textContent = this.state.user?.nickname ? `@${this.state.user.nickname}` : 'Demo';
+    this.safeSetText('stat-total-cards', total);
+    this.safeSetText('stat-inseason-cards', inSeason);
+    this.safeSetText('stat-starters', starters);
+
+    // Supporto per i box dell'interfaccia corrente
+    const statCards = document.querySelectorAll('.stat-card .stat-value, .metric-box .metric-val');
+    if (statCards.length >= 3) {
+      statCards[0].textContent = total;
+      statCards[1].textContent = inSeason;
+      statCards[2].textContent = starters;
+    }
   },
 
   runOptimizer() {
@@ -168,50 +194,62 @@ const App = {
       this.state.selectedStrategy
     );
 
-    document.getElementById('stat-lineups-built').textContent = lineups.length;
+    this.safeSetText('stat-lineups-built', lineups.length);
+    const statCards = document.querySelectorAll('.stat-card .stat-value, .metric-box .metric-val');
+    if (statCards.length >= 4) {
+      statCards[3].textContent = lineups.length;
+    }
+
     this.renderLineups(lineups, comp);
   },
 
   renderLineups(lineups, comp) {
-    const container = document.getElementById('lineups-output');
+    const container = document.getElementById('lineups-output') || 
+                      document.getElementById('lineups-container') || 
+                      document.querySelector('.lineups-grid') || 
+                      document.querySelector('.main-content-area');
+
     if (!container) return;
 
     if (lineups.length === 0) {
       container.innerHTML = `
-        <div class="empty-placeholder carbon-card">
-          <div class="placeholder-icon">⚠️</div>
-          <h2>Nessuna formazione completabile per questa competizione</h2>
-          <p>Non hai abbastanza carte <strong>${this.state.selectedScarcity.toUpperCase()}</strong> per formare un team in <strong>${comp.name}</strong> rispettando i requisiti (formato ${comp.format}, min. ${comp.inSeasonRequired} In-Season).</p>
+        <div style="background:#111418; border:1px solid #2d3540; border-radius:12px; padding:32px; text-align:center; margin-top:20px; color:#e1e7ec;">
+          <div style="font-size:36px; margin-bottom:12px;">⚠️</div>
+          <h3 style="color:#d4af37; margin-bottom:8px;">Nessuna squadra completabile per ${comp.name}</h3>
+          <p style="color:#8b9baa; font-size:14px; max-width:550px; margin:0 auto;">
+            I giocatori disponibili nel dataset per questo torneo (${comp.format}, rarità <strong>${this.state.selectedScarcity.toUpperCase()}</strong>) non sono sufficienti per formare un quintetto o un settennato valido con i ruoli richiesti.<br><br>
+            👉 Prova a selezionare <strong>Premier League</strong>, <strong>LaLiga</strong> o <strong>All-Star Classic</strong> nel menu a tendina per vedere subito i team generati a cascata!
+          </p>
         </div>
       `;
       return;
     }
 
-    let html = '';
+    let html = '<div style="display:flex; flex-direction:column; gap:20px; margin-top:20px;">';
     lineups.forEach((team) => {
       html += `
-        <div class="team-card carbon-card">
-          <div class="team-header">
+        <div style="background:#12151b; border:1px solid #232936; border-radius:12px; padding:20px; box-shadow:0 8px 24px rgba(0,0,0,0.5);">
+          <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1f2530; padding-bottom:12px; margin-bottom:16px;">
             <div>
-              <span class="team-rank-badge">${team.rankLabel}</span>
-              <span class="team-meta">${comp.name} • ${team.format}</span>
+              <span style="background:#d4af37; color:#0b0d11; font-weight:800; font-size:12px; padding:4px 10px; border-radius:6px; text-transform:uppercase;">${team.rankLabel}</span>
+              <span style="color:#8b9baa; font-size:13px; margin-left:10px;">${comp.name} • Formato <strong>${team.format}</strong></span>
             </div>
-            <div class="team-score">
-              <span class="score-label">Proiezione Opta:</span>
-              <span class="score-value text-gold">${team.totalProjected} pts</span>
+            <div>
+              <span style="color:#8b9baa; font-size:13px;">Proiezione Opta: </span>
+              <span style="color:#d4af37; font-weight:800; font-size:18px;">${team.totalProjected} pts</span>
             </div>
           </div>
 
-          <div class="pitch-container">
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:12px;">
             ${team.starters.map(p => `
-              <div class="player-slot ${p.isCaptain ? 'is-captain' : ''}">
-                ${p.isCaptain ? '<span class="captain-badge">CAP (+50%)</span>' : ''}
-                <div class="player-role-tag">${p.slotRole}</div>
-                <div class="player-name">${p.name}</div>
-                <div class="player-club">${p.club}</div>
-                <div class="player-stats">
-                  <span class="stat-pill ${p.isInSeason ? 'pill-inseason' : 'pill-classic'}">${p.isInSeason ? 'IN-SEASON' : 'CLASSIC'}</span>
-                  <span class="stat-pts">${p.projectedScore}p</span>
+              <div style="background:#181d24; border:1px solid ${p.isCaptain ? '#d4af37' : '#262d38'}; border-radius:10px; padding:12px; text-align:center; position:relative;">
+                ${p.isCaptain ? '<div style="position:absolute; top:-8px; right:8px; background:#d4af37; color:#0b0d11; font-size:9px; font-weight:900; padding:2px 6px; border-radius:4px;">CAP (+50%)</div>' : ''}
+                <div style="font-size:11px; font-weight:800; color:#8b9baa; text-transform:uppercase; margin-bottom:4px;">${p.slotRole}</div>
+                <div style="font-size:14px; font-weight:700; color:#ffffff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.name}</div>
+                <div style="font-size:11px; color:#6b7c8f; margin-bottom:8px;">${p.club}</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid #222933; padding-top:6px; font-size:11px;">
+                  <span style="background:${p.isInSeason ? '#0f3822' : '#2b2313'}; color:${p.isInSeason ? '#38d37a' : '#d4af37'}; padding:2px 5px; border-radius:4px; font-weight:700;">${p.isInSeason ? 'IN-SEASON' : 'CLASSIC'}</span>
+                  <span style="color:#d4af37; font-weight:800;">${p.projectedScore}p</span>
                 </div>
               </div>
             `).join('')}
@@ -219,14 +257,14 @@ const App = {
         </div>
       `;
     });
+    html += '</div>';
 
     container.innerHTML = html;
   },
 
   getMockDemoCards() {
-    // Genera carte coerenti per testare tutte le nuove competizioni
-    const mock = [
-      // Premier League
+    return [
+      // Premier League (In-Season & Classic)
       { id: 'p1', name: 'Erling Haaland', club: 'Manchester City', leagueSlug: 'premier-league-gb-eng', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.15, optaAas: 62, xgXa: 0.95, confirmedXi: true },
       { id: 'p2', name: 'Bukayo Saka', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.12, optaAas: 58, xgXa: 0.80, confirmedXi: true },
       { id: 'p3', name: 'William Saliba', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 54, xgXa: 0.20, confirmedXi: true },
@@ -235,7 +273,7 @@ const App = {
       { id: 'p6', name: 'Cole Palmer', club: 'Chelsea', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: true, isUefaContender: true, powerMultiplier: 1.15, optaAas: 60, xgXa: 0.90, confirmedXi: true },
       { id: 'p7', name: 'Virgil van Dijk', club: 'Liverpool', leagueSlug: 'premier-league-gb-eng', position: 'DEF', scarcity: 'limited', isInSeason: false, isU23: false, isUefaChampions: true, powerMultiplier: 1.05, optaAas: 58, xgXa: 0.25, confirmedXi: true },
 
-      // LaLiga
+      // LaLiga (In-Season & Classic)
       { id: 'l1', name: 'Kylian Mbappé', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.19, optaAas: 65, xgXa: 1.10, confirmedXi: true },
       { id: 'l2', name: 'Vinicius Jr', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.16, optaAas: 63, xgXa: 0.98, confirmedXi: true },
       { id: 'l3', name: 'Jude Bellingham', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: true, isUefaChampions: true, powerMultiplier: 1.18, optaAas: 62, xgXa: 0.85, confirmedXi: true },
@@ -243,6 +281,7 @@ const App = {
       { id: 'l5', name: 'Lamine Yamal', club: 'Barcelona', leagueSlug: 'laliga-es', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: true, isUefaChampions: true, powerMultiplier: 1.20, optaAas: 66, xgXa: 1.05, confirmedXi: true },
       { id: 'l6', name: 'Pau Cubarsí', club: 'Barcelona', leagueSlug: 'laliga-es', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: true, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 53, xgXa: 0.15, confirmedXi: true },
       { id: 'l7', name: 'Pedri', club: 'Barcelona', leagueSlug: 'laliga-es', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.14, optaAas: 61, xgXa: 0.70, confirmedXi: true },
+      { id: 'l8', name: 'Antonio Rüdiger', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.08, optaAas: 52, xgXa: 0.10, confirmedXi: true },
 
       // MLS
       { id: 'm1', name: 'Lionel Messi', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.20, optaAas: 70, xgXa: 1.25, confirmedXi: true },
@@ -251,9 +290,10 @@ const App = {
       { id: 'm4', name: 'Jordi Alba', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.10, optaAas: 54, xgXa: 0.40, confirmedXi: true },
       { id: 'm5', name: 'Drake Callender', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'GK', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.05, optaAas: 48, xgXa: 0.05, confirmedXi: true }
     ];
-    return mock;
   }
 };
+
+window.loadDemoGallery = () => App.loadDemoGallery();
 
 document.addEventListener('DOMContentLoaded', () => {
   App.init();
