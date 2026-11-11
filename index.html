@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SorareHub - Opta Statsbomb 26/27</title>
-  <link rel="stylesheet" href="style.css?v=4" />
+  <link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
   <div id="toast-container" class="toast-container"></div>
 
-  <!-- Header Ufficiale SorareHub -->
+  <!-- Header Ufficiale SorareHub (1:1 Screenshot) -->
   <header class="app-header">
     <div class="header-left">
       <div class="logo-wrap">
@@ -35,119 +35,112 @@
   </header>
 
   <main class="app-container">
-    <!-- Switcher Viste -->
-    <div class="top-nav-tabs">
-      <button id="tab-optimizer" class="nav-tab-btn active" onclick="App.switchView('optimizer')">
-        ⚡ Motore Formazioni
-      </button>
-      <button id="tab-gallery" class="nav-tab-btn" onclick="App.switchView('gallery')">
-        🃏 Collezione (<span id="gallery-count-badge">0</span>)
-      </button>
+    <!-- Toolbar Configurazione Esatta da Screenshot -->
+    <div class="toolbar-card">
+      <!-- 1. Competizione con la suddivisione esatta In-Season e Classic concordata -->
+      <div class="toolbar-column">
+        <label class="toolbar-label">1. COMPETIZIONE UFFICIALE SORARE</label>
+        <select id="competition-select" class="toolbar-select">
+          <optgroup label="── IN-SEASON (Bonus 4/5) ──">
+            <option value="PREMIER_LEAGUE_IN_SEASON" selected>Premier League — In-Season</option>
+            <option value="SERIE_A_IN_SEASON">Serie A — In-Season</option>
+            <option value="LA_LIGA_IN_SEASON">LaLiga — In-Season</option>
+            <option value="BUNDESLIGA_IN_SEASON">Bundesliga — In-Season</option>
+            <option value="LIGUE_1_IN_SEASON">Ligue 1 — In-Season</option>
+            <option value="CHAMPION_IN_SEASON">Champion Europe — In-Season</option>
+            <option value="CHALLENGER_IN_SEASON">Challenger Europe — In-Season</option>
+            <option value="CONTENDER_IN_SEASON">Contender Europe — In-Season</option>
+            <option value="U23_IN_SEASON">Under 23 — In-Season</option>
+          </optgroup>
+          <optgroup label="── CLASSIC (Tutte le stagioni) ──">
+            <option value="ALL_STAR_CLASSIC">All-Star — Classic</option>
+            <option value="PREMIER_LEAGUE_CLASSIC">Premier League — Classic</option>
+            <option value="SERIE_A_CLASSIC">Serie A — Classic</option>
+            <option value="LA_LIGA_CLASSIC">LaLiga — Classic</option>
+            <option value="BUNDESLIGA_CLASSIC">Bundesliga — Classic</option>
+            <option value="LIGUE_1_CLASSIC">Ligue 1 — Classic</option>
+            <option value="CHAMPION_CLASSIC">Champion Europe — Classic</option>
+            <option value="CHALLENGER_CLASSIC">Challenger Europe — Classic</option>
+            <option value="CONTENDER_CLASSIC">Contender Europe — Classic</option>
+            <option value="U23_CLASSIC">Under 23 — Classic</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <!-- 2. Rarità Carte (Tasti Squadrati) -->
+      <div class="toolbar-column">
+        <label class="toolbar-label">2. RARITÀ CARTE</label>
+        <div class="btn-group-rect">
+          <button class="btn-rect active" id="btn-rarity-limited" onclick="App.setRarity('limited')">Limited</button>
+          <button class="btn-rect" id="btn-rarity-rare" onclick="App.setRarity('rare')">Rare</button>
+          <button class="btn-rect" id="btn-rarity-super_rare" onclick="App.setRarity('super_rare')">Super Rare</button>
+          <button class="btn-rect" id="btn-rarity-unique" onclick="App.setRarity('unique')">Unique</button>
+        </div>
+      </div>
+
+      <!-- 3. Strategia Algoritmo (Max Floor vs Max Ceiling) -->
+      <div class="toolbar-column">
+        <label class="toolbar-label">3. STRATEGIA ALGORITMO</label>
+        <div class="btn-group-rect">
+          <button class="btn-rect active" id="btn-strat-floor" onclick="App.setStrategy('floor')">🛡️ Max Floor (Volume AAS)</button>
+          <button class="btn-rect" id="btn-strat-ceiling" onclick="App.setStrategy('ceiling')">🚀 Max Ceiling (Podio Secco)</button>
+        </div>
+      </div>
+
+      <!-- Tasto Dorato Genera -->
+      <div class="toolbar-column">
+        <button class="btn-generate-portfolio" onclick="App.generateOptimizedLineups()">
+          ⚡ GENERA PORTFOLIO A CASCATA
+        </button>
+      </div>
     </div>
 
-    <!-- VISTA 1: OTTIMIZZATORE UFFICIALE -->
-    <section id="optimizer-view">
-      <!-- Toolbar Parametri Ufficiali Sorare -->
-      <div class="toolbar-card">
-        <!-- 1. Competizione con distinzione IN-SEASON e CLASSIC -->
-        <div class="toolbar-column">
-          <label class="toolbar-label">1. COMPETIZIONE UFFICIALE SORARE</label>
-          <select id="competition-select" class="toolbar-select">
-            <optgroup label="── IN-SEASON (Bonus 4/5) ──">
-              <option value="PREMIER_LEAGUE_IN_SEASON" selected>Premier League — In-Season</option>
-              <option value="SERIE_A_IN_SEASON">Serie A — In-Season</option>
-              <option value="LA_LIGA_IN_SEASON">LaLiga — In-Season</option>
-              <option value="BUNDESLIGA_IN_SEASON">Bundesliga — In-Season</option>
-              <option value="LIGUE_1_IN_SEASON">Ligue 1 — In-Season</option>
-              <option value="CHAMPION_IN_SEASON">Champion Europe — In-Season</option>
-              <option value="CHALLENGER_IN_SEASON">Challenger Europe — In-Season</option>
-              <option value="CONTENDER_IN_SEASON">Contender Europe — In-Season</option>
-              <option value="U23_IN_SEASON">Under 23 — In-Season</option>
-            </optgroup>
-            <optgroup label="── CLASSIC (Tutte le stagioni) ──">
-              <option value="ALL_STAR_CLASSIC">All-Star — Classic</option>
-              <option value="PREMIER_LEAGUE_CLASSIC">Premier League — Classic</option>
-              <option value="SERIE_A_CLASSIC">Serie A — Classic</option>
-              <option value="LA_LIGA_CLASSIC">LaLiga — Classic</option>
-              <option value="BUNDESLIGA_CLASSIC">Bundesliga — Classic</option>
-              <option value="LIGUE_1_CLASSIC">Ligue 1 — Classic</option>
-              <option value="CHAMPION_CLASSIC">Champion Europe — Classic</option>
-              <option value="CHALLENGER_CLASSIC">Challenger Europe — Classic</option>
-              <option value="CONTENDER_CLASSIC">Contender Europe — Classic</option>
-              <option value="U23_CLASSIC">Under 23 — Classic</option>
-            </optgroup>
-          </select>
-        </div>
-
-        <!-- 2. Rarità Carte -->
-        <div class="toolbar-column">
-          <label class="toolbar-label">2. RARITÀ CARTE</label>
-          <div class="btn-pill-group">
-            <button class="btn-pill active" id="btn-rarity-limited" onclick="App.setRarity('limited')">Limited</button>
-            <button class="btn-pill" id="btn-rarity-rare" onclick="App.setRarity('rare')">Rare</button>
-            <button class="btn-pill" id="btn-rarity-super_rare" onclick="App.setRarity('super_rare')">Super Rare</button>
-            <button class="btn-pill" id="btn-rarity-unique" onclick="App.setRarity('unique')">Unique</button>
-          </div>
-        </div>
-
-        <!-- 3. Strategia Algoritmo -->
-        <div class="toolbar-column">
-          <label class="toolbar-label">3. STRATEGIA ALGORITMO</label>
-          <div class="btn-pill-group">
-            <button class="btn-pill active" id="btn-strat-floor" onclick="App.setStrategy('floor')">🛡️ Max Floor (AAS)</button>
-            <button class="btn-pill" id="btn-strat-ceiling" onclick="App.setStrategy('ceiling')">🚀 Max Ceiling (Podio)</button>
-          </div>
-        </div>
-
-        <!-- Tasto Genera -->
-        <div class="toolbar-column">
-          <button class="btn-generate-portfolio" onclick="App.generateOptimizedLineups()">
-            ⚡ GENERA PORTFOLIO A CASCATA
-          </button>
-        </div>
+    <!-- Le 4 Card Statistiche Identiche allo Screenshot -->
+    <div class="stats-strip">
+      <div class="stat-box">
+        <span class="stat-box-label">CARTE IN GALLERIA</span>
+        <div class="stat-box-value" id="stat-cards-count">0</div>
+        <span class="stat-box-sub" id="stat-status-sub">Non connesso</span>
       </div>
 
-      <!-- Le 4 Card Statistiche Identiche allo Screenshot -->
-      <div class="stats-strip">
-        <div class="stat-box">
-          <span class="stat-box-label">CARTE IN GALLERIA</span>
-          <div class="stat-box-value" id="stat-cards-count">0</div>
-          <span class="stat-box-sub" id="stat-status-sub">Non connesso</span>
-        </div>
-
-        <div class="stat-box">
-          <span class="stat-box-label">CARTE IN-SEASON</span>
-          <div class="stat-box-value" id="stat-inseason-count" style="color:var(--text-gold);">0</div>
-          <span class="stat-box-sub">Regola 4/5 Pronta</span>
-        </div>
-
-        <div class="stat-box">
-          <span class="stat-box-label">CONFIRMED XI / TITOLARI</span>
-          <div class="stat-box-value" id="stat-confirmed-count" style="color:var(--accent-green);">0</div>
-          <span class="stat-box-sub">Feed Formazioni Attivo</span>
-        </div>
-
-        <div class="stat-box">
-          <span class="stat-box-label">SQUADRE GENERATE</span>
-          <div class="stat-box-value" id="stat-teams-count" style="color:var(--accent-blue);">0</div>
-          <span class="stat-box-sub">Zero Riserve • Max Teams</span>
-        </div>
+      <div class="stat-box">
+        <span class="stat-box-label">CARTE IN-SEASON</span>
+        <div class="stat-box-value" id="stat-inseason-count" style="color:var(--text-gold);">0</div>
+        <span class="stat-box-sub">Regola 4/5 Pronta</span>
       </div>
 
-      <!-- Risultati / Slate Iniziale -->
-      <div id="lineups-results-container">
-        <div class="empty-center-slate">
-          <div class="empty-icon-gear">⚙️</div>
-          <h2 class="empty-title">Motore SorareHub Pronto</h2>
-          <p class="empty-sub">Tocca Connetti Sorare in alto per sincronizzare la tua collezione oppure testa il solver con Modalità Demo.</p>
-        </div>
+      <div class="stat-box">
+        <span class="stat-box-label">CONFIRMED XI / TITOLARI</span>
+        <div class="stat-box-value" id="stat-confirmed-count" style="color:var(--accent-green);">0</div>
+        <span class="stat-box-sub">Feed Formazioni Attivo</span>
       </div>
-    </section>
 
-    <!-- VISTA 2: GALLERIA CARTE (Limited separate da Common) -->
-    <section id="gallery-view" class="hidden">
+      <div class="stat-box">
+        <span class="stat-box-label">SQUADRE GENERATE</span>
+        <div class="stat-box-value" id="stat-teams-count" style="color:var(--accent-blue);">0</div>
+        <span class="stat-box-sub">Zero Riserve • Max Teams</span>
+      </div>
+    </div>
+
+    <!-- Risultati Lineup / Slate Iniziale -->
+    <div id="lineups-results-container">
+      <div class="empty-center-slate">
+        <div class="empty-icon-gear">⚙️</div>
+        <h2 class="empty-title">Motore SorareHub Pronto</h2>
+        <p class="empty-sub">Tocca Connetti Sorare in alto per sincronizzare la tua collezione oppure testa il solver con Modalità Demo.</p>
+      </div>
+    </div>
+
+    <!-- Vetrina Carte Integrata (Sotto, pulita e con filtri) -->
+    <section class="gallery-section-wrap" id="gallery-section">
+      <div class="gallery-section-header">
+        <h3 class="gallery-section-title">
+          <span>🃏</span> Vetrina Carte (<span id="gallery-counter-num">0</span>)
+        </h3>
+      </div>
+
       <div class="gallery-controls-bar">
-        <input type="text" id="gallery-search" class="gallery-search-input" placeholder="🔍 Cerca per calciatore o club..." oninput="App.filterGallery()" />
+        <input type="text" id="gallery-search" class="gallery-search-input" placeholder="🔍 Cerca calciatore o club..." oninput="App.filterGallery()" />
         
         <select id="gallery-filter-pool" class="toolbar-select" onchange="App.filterGallery()">
           <option value="limited_only" selected>Solo Limited (Pro)</option>
@@ -164,9 +157,9 @@
         </select>
 
         <select id="gallery-sort" class="toolbar-select" onchange="App.filterGallery()">
-          <option value="l15-desc">L15 più alto</option>
-          <option value="l5-desc">L5 più alto</option>
-          <option value="bonus-desc">Bonus XP</option>
+          <option value="l15-desc">Punteggio L15 (Decrescente)</option>
+          <option value="l5-desc">Forma L5 (Decrescente)</option>
+          <option value="bonus-desc">Bonus XP (Decrescente)</option>
           <option value="name-asc">Nome (A-Z)</option>
         </select>
       </div>
@@ -176,7 +169,7 @@
   </main>
 
   <script src="config.js"></script>
-  <script src="sorare_api.js?v=4"></script>
-  <script src="app.js?v=4"></script>
+  <script src="sorare_api.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
