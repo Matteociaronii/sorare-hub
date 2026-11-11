@@ -11,7 +11,8 @@ const CONFIG = {
   RULES: {
     MIN_IN_SEASON_SO5: 4,
     IN_SEASON_BONUS: 0.05,
-    STACK_CORRELATION_BONUS: 3.5
+    COLLECTION_MAX_BONUS: 0.05,
+    CAPTAIN_BONUS_MULTIPLIER: 1.50
   },
 
   WEIGHTS: {
@@ -20,60 +21,143 @@ const CONFIG = {
   },
 
   OFFICIAL_COMPETITIONS: [
+    // --- IN-SEASON (SO5: Min 4 In-Season, Max 1 Classic - Mono-Lega Rigido) ---
     {
-      id: 'champion_in_season',
-      name: 'Champion — In-Season (Top 5 Leghe)',
+      id: 'premier_league_in_season',
+      name: 'Premier League — In-Season (SO5)',
       format: 'SO5',
       inSeasonRequired: 4,
-      leagues: ['premier-league-gb-eng', 'laliga-es', 'serie-a-it', 'bundesliga-de', 'ligue-1-fr']
+      leagues: ['premier-league-gb-eng']
     },
     {
-      id: 'champion_classic',
-      name: 'Champion — Classic (Tutte le Annate)',
-      format: 'SO5',
-      inSeasonRequired: 0,
-      leagues: ['premier-league-gb-eng', 'laliga-es', 'serie-a-it', 'bundesliga-de', 'ligue-1-fr']
-    },
-    {
-      id: 'challenger_in_season',
-      name: 'Challenger — In-Season (Eredivisie, Liga Portugal, Belgio, Turchia)',
+      id: 'laliga_in_season',
+      name: 'LaLiga — In-Season (SO5)',
       format: 'SO5',
       inSeasonRequired: 4,
-      leagues: ['eredivisie-nl', 'primeira-liga-pt', 'jupiler-pro-league-be', 'premiership-gb-sct', 'super-lig-tr', 'championship-gb-eng']
+      leagues: ['laliga-es']
     },
     {
-      id: 'challenger_classic',
-      name: 'Challenger — Classic',
+      id: 'bundesliga_in_season',
+      name: 'Bundesliga — In-Season (SO5)',
       format: 'SO5',
-      inSeasonRequired: 0,
-      leagues: ['eredivisie-nl', 'primeira-liga-pt', 'jupiler-pro-league-be', 'premiership-gb-sct', 'super-lig-tr', 'championship-gb-eng']
+      inSeasonRequired: 4,
+      leagues: ['bundesliga-de']
+    },
+    {
+      id: 'ligue1_in_season',
+      name: 'Ligue 1 — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      leagues: ['ligue-1-fr']
+    },
+    {
+      id: 'championship_in_season',
+      name: 'EFL Championship — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      leagues: ['championship-gb-eng']
+    },
+    {
+      id: 'liga_portugal_in_season',
+      name: 'Liga Portugal — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      leagues: ['primeira-liga-pt']
+    },
+    {
+      id: 'jupiler_in_season',
+      name: 'Jupiler Pro League — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      leagues: ['jupiler-pro-league-be']
+    },
+    {
+      id: 'eredivisie_in_season',
+      name: 'Eredivisie — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      leagues: ['eredivisie-nl']
+    },
+    {
+      id: 'scottish_in_season',
+      name: 'Scottish Premiership — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      leagues: ['premiership-gb-sct']
+    },
+    {
+      id: 'mls_in_season',
+      name: 'MLS — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      leagues: ['mls-us']
+    },
+    {
+      id: 'j1_league_in_season',
+      name: 'J1 League — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      leagues: ['j1-league-jp']
+    },
+    {
+      id: 'k_league_in_season',
+      name: 'K League 1 — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      leagues: ['k-league-1-kr']
     },
     {
       id: 'contender_in_season',
-      name: 'Contender — In-Season',
+      name: 'Contender — In-Season (Multi-Lega Minori SO5)',
       format: 'SO5',
       inSeasonRequired: 4,
-      leagues: ['2-bundesliga-de', 'segunda-division-es', 'serie-b-it', 'superliga-dk', 'eliteserien-no', 'bundesliga-at', 'super-league-ch', 'ekstraklasa-pl']
+      leagues: [
+        '2-bundesliga-de',
+        'segunda-division-es',
+        'serie-b-it',
+        'superliga-dk',
+        'eliteserien-no',
+        'bundesliga-at',
+        'super-league-ch',
+        'ekstraklasa-pl'
+      ]
+    },
+
+    // --- CLASSIC (SO7: 7 Titolari - Nessun vincolo di annata) ---
+    {
+      id: 'champions_europe_classic_so7',
+      name: 'CHAMPIONS EUROPE — Classic (UEFA Champions League SO7)',
+      format: 'SO7',
+      inSeasonRequired: 0,
+      isUefaChampions: true,
+      leagues: ['uefa-champions-league']
     },
     {
-      id: 'u23_in_season',
-      name: 'Under 23 — In-Season',
-      format: 'SO5',
-      inSeasonRequired: 4,
-      u23Only: true,
-      leagues: ['ALL']
+      id: 'contender_europe_classic_so7',
+      name: 'CONTENDER EUROPE — Classic (Europa & Conference League SO7)',
+      format: 'SO7',
+      inSeasonRequired: 0,
+      isUefaContender: true,
+      leagues: ['uefa-europa-league', 'uefa-conference-league']
     },
     {
-      id: 'u23_classic',
-      name: 'Under 23 — Classic',
-      format: 'SO5',
+      id: 'champion_europe_classic_so7',
+      name: 'Champion Europe — Classic (Premier, Liga, Bundes, Ligue 1 SO7)',
+      format: 'SO7',
+      inSeasonRequired: 0,
+      leagues: ['premier-league-gb-eng', 'laliga-es', 'bundesliga-de', 'ligue-1-fr']
+    },
+    {
+      id: 'u23_classic_so7',
+      name: 'Under 23 — Classic (Tutte le leghe SO7)',
+      format: 'SO7',
       inSeasonRequired: 0,
       u23Only: true,
       leagues: ['ALL']
     },
     {
-      id: 'global_all_star_so7',
-      name: 'All-Star — Classic SO7 (7 vs 7)',
+      id: 'all_star_classic_so7',
+      name: 'All-Star — Classic (Bacino Universale a Cascata SO7)',
       format: 'SO7',
       inSeasonRequired: 0,
       leagues: ['ALL']
