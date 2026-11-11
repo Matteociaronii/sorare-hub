@@ -1,134 +1,150 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>SorareHub — Portfolio & Lineup Optimizer</title>
-  <link rel="stylesheet" href="style.css?v=5">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SorareHub - 2026/2027 Lineup Optimizer & Gallery</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
-<body class="carbon-theme">
-  <!-- Top Navigation Bar -->
-  <header class="navbar">
-    <div class="nav-inner">
-      <div class="brand-group">
-        <div class="brand-logo">
-          <svg viewBox="0 0 40 40" class="logo-svg">
-            <circle cx="20" cy="20" r="16" fill="none" stroke="url(#goldGrad)" stroke-width="2.5"/>
-            <circle cx="20" cy="20" r="10" fill="none" stroke="#9ca3af" stroke-width="2"/>
-            <path d="M8 32 L18 22 L23 26 L33 10 M33 10 L26 10 M33 10 L33 17" fill="none" stroke="url(#goldGrad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-            <defs>
-              <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#f5d061"/>
-                <stop offset="100%" stop-color="#b8860b"/>
-              </linearGradient>
-            </defs>
-          </svg>
-          <div class="brand-titles">
-            <span class="title-sorare">SORARE</span>
-            <span class="title-hub">HUB</span>
-          </div>
-        </div>
-        <span class="engine-badge">OPTA × STATSBOMB 26/27</span>
-      </div>
+<body>
+  <div id="toast-container" class="toast-container"></div>
 
-      <div class="nav-actions">
-        <div class="gw-pill" id="gw-status-pill">
-          <span class="status-dot"></span>
-          <span id="gw-label">GW Live Sync</span>
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-box">
+        <span class="logo-icon">⚽</span>
+        <div>
+          <h1 class="logo-title">SorareHub</h1>
+          <span class="logo-subtitle">Lineup Optimizer & Collection Engine</span>
         </div>
-        <button id="demo-btn" class="btn-secondary" title="Simula con una Gallery di test">
-          Modalità Demo
-        </button>
-        <button id="login-btn" class="btn-gold" onclick="directOAuthLogin()">
-          <span id="login-btn-text">Connetti Sorare</span>
-        </button>
       </div>
+    </div>
+
+    <div class="header-right">
+      <div id="user-badge" class="user-badge hidden">
+        <span class="status-dot"></span>
+        <span id="user-nickname">@Manager</span>
+      </div>
+      <button id="btn-login" class="btn btn-primary" onclick="SorareAPI.startOAuthFlow()">
+        Connetti Sorare
+      </button>
     </div>
   </header>
 
-  <main class="main-container">
-    <!-- Control Deck -->
-    <section class="control-deck carbon-card">
-      <div class="control-group">
-        <label class="field-label">1. COMPETIZIONE UFFICIALE SORARE</label>
-        <select id="comp-select" class="input-select"></select>
-      </div>
+  <main class="app-container">
+    <!-- Barra Switcher Tab -->
+    <div class="view-tabs-bar">
+      <button id="tab-optimizer" class="tab-btn active" onclick="App.switchView('optimizer')">
+        ⚡ Ottimizzatore Lineup
+      </button>
+      <button id="tab-gallery" class="tab-btn" onclick="App.switchView('gallery')">
+        🃏 La Mia Galleria (<span id="gallery-count-badge">0</span>)
+      </button>
+    </div>
 
-      <div class="control-group">
-        <label class="field-label">2. RARITÀ CARTE</label>
-        <div class="pill-selector" id="scarcity-selector">
-          <button class="pill-btn active" data-scarcity="limited">Limited</button>
-          <button class="pill-btn" data-scarcity="rare">Rare</button>
-          <button class="pill-btn" data-scarcity="super_rare">Super Rare</button>
-          <button class="pill-btn" data-scarcity="unique">Unique</button>
+    <!-- VISTA 1: OTTIMIZZATORE -->
+    <section id="optimizer-view" class="view-section">
+      <div class="stats-overview">
+        <div class="stat-card">
+          <span class="stat-label">CARTE IN GALLERIA</span>
+          <div class="stat-value" id="stat-cards-count">0</div>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">MODALITÀ ATTIVA</span>
+          <div class="stat-value text-accent">SO5 (Opta Rules)</div>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">STAGIONE</span>
+          <div class="stat-value">2026/2027</div>
         </div>
       </div>
 
-      <div class="control-group action-col">
-        <button id="run-optimizer-btn" class="btn-execute">
-          ⚡ GENERA PORTFOLIO A CASCATA
-        </button>
+      <div class="controls-card">
+        <div class="controls-header">
+          <h2>Parametri di Calcolo Formazioni</h2>
+          <p>Algoritmo a cascata senza sovrapposizione: ogni carta viene usata in un solo torneo.</p>
+        </div>
+
+        <div class="controls-form">
+          <div class="input-group">
+            <label for="tournament-select">Torneo Primario</label>
+            <select id="tournament-select">
+              <option value="ALL_STAR">All-Star (Libero)</option>
+              <option value="UNDER_23">Under 23 (U23)</option>
+              <option value="CHAMPION_EUROPE">Champion Europe (Top 5 Leghe)</option>
+              <option value="CHALLENGER_EUROPE">Challenger Europe</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label for="target-lineups">Numero Formazioni da Generare</label>
+            <select id="target-lineups">
+              <option value="1">1 Miglior Formazione</option>
+              <option value="2">2 Formazioni a cascata</option>
+              <option value="3" selected>3 Formazioni a cascata</option>
+              <option value="4">4 Formazioni a cascata</option>
+              <option value="5">5 Formazioni a cascata</option>
+            </select>
+          </div>
+
+          <div class="input-actions">
+            <button id="btn-optimize" class="btn btn-accent" onclick="App.generateOptimizedLineups()">
+              🚀 Calcola Lineup Ottimali
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="lineups-results-container" class="results-container">
+        <!-- Risultati formazioni a cascata -->
       </div>
     </section>
 
-    <!-- Gallery Telemetry Bar -->
-    <section class="telemetry-bar">
-      <div class="telemetry-card carbon-card">
-        <span class="telemetry-title">CARTE IN GALLERIA</span>
-        <div class="telemetry-val" id="stat-total-cards">0</div>
-        <span class="telemetry-sub" id="stat-user-slug">Non connesso</span>
-      </div>
-      <div class="telemetry-card carbon-card">
-        <span class="telemetry-title">CARTE IN-SEASON</span>
-        <div class="telemetry-val text-gold" id="stat-inseason-cards">0</div>
-        <span class="telemetry-sub">Regola 4/5 Pronta</span>
-      </div>
-      <div class="telemetry-card carbon-card">
-        <span class="telemetry-title">CONFIRMED XI / TITOLARI</span>
-        <div class="telemetry-val text-emerald" id="stat-starters">0</div>
-        <span class="telemetry-sub">Feed Formazioni Attivo</span>
-      </div>
-      <div class="telemetry-card carbon-card">
-        <span class="telemetry-title">SQUADRE GENERATE</span>
-        <div class="telemetry-val text-cyan" id="stat-lineups-built">0</div>
-        <span class="telemetry-sub">Zero Riserve • Max Teams</span>
-      </div>
-    </section>
+    <!-- VISTA 2: GALLERIA CARTE COMPLETA -->
+    <section id="gallery-view" class="view-section hidden">
+      <div class="gallery-controls-bar">
+        <div class="search-input-wrap">
+          <input type="text" id="gallery-search" placeholder="🔍 Cerca calciatore o club..." oninput="App.filterGallery()" />
+        </div>
+        
+        <div class="select-filters-wrap">
+          <select id="gallery-filter-pos" onchange="App.filterGallery()">
+            <option value="ALL">Tutti i Ruoli</option>
+            <option value="GK">Portieri (POR)</option>
+            <option value="DEF">Difensori (DIF)</option>
+            <option value="MID">Centrocampisti (CEN)</option>
+            <option value="FWD">Attaccanti (ATT)</option>
+          </select>
 
-    <!-- Cascade Lineups Output -->
-    <section id="lineups-output" class="lineups-wrapper">
-      <div class="empty-placeholder carbon-card">
-        <div class="placeholder-icon">⚙️</div>
-        <h2>Motore SorareHub Pronto</h2>
-        <p>Tocca <strong>Connetti Sorare</strong> in alto per sincronizzare la tua collezione oppure testa il solver con <strong>Modalità Demo</strong>.</p>
+          <select id="gallery-filter-scarcity" onchange="App.filterGallery()">
+            <option value="ALL">Tutte le Rarità</option>
+            <option value="limited">Limited</option>
+            <option value="rare">Rare</option>
+            <option value="super_rare">Super Rare</option>
+            <option value="unique">Unique</option>
+          </select>
+
+          <select id="gallery-sort" onchange="App.filterGallery()">
+            <option value="l15-desc">Punteggio L15 (Più alto)</option>
+            <option value="l5-desc">Forma L5 (Più alto)</option>
+            <option value="bonus-desc">Bonus XP (Più alto)</option>
+            <option value="name-asc">Nome (A-Z)</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="cards-grid" class="cards-grid-container">
+        <!-- Vetrina delle oltre 300 carte -->
       </div>
     </section>
   </main>
 
-  <footer class="footer">
-    <p>SorareHub Pro • Architettura Universale Cloudflare • Regolamento Ufficiale Sorare</p>
-  </footer>
-
-  <script>
-    function directOAuthLogin() {
-      if (window.App && App.notify) {
-        App.notify('🔄 Avvio connessione con Sorare...');
-      }
-      if (window.SorareAPI && SorareAPI.startOAuthFlow) {
-        SorareAPI.startOAuthFlow();
-      } else {
-        alert("Caricamento in corso, attendi 2 secondi.");
-      }
-    }
-  </script>
-
-  <!-- Il parametro ?v=5 obbliga il browser a scaricare il file senza usare la vecchia cache -->
-  <script src="config.js?v=5"></script>
-  <script src="sorare_api.js?v=5"></script>
-  <script src="optimizer.js?v=5"></script>
-  <script src="app.js?v=5"></script>
+  <script src="config.js"></script>
+  <!-- Versioning anti-cache per caricare forzatamente il nuovo script -->
+  <script src="sorare_api.js?v=2"></script>
+  <script src="app.js"></script>
 </body>
 </html>
