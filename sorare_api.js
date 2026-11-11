@@ -91,7 +91,7 @@ const SorareAPI = {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
-    // Query GraphQL compatibile con lo schema Sorare
+    // Schema compatibile: cards dirette dall'utente autenticato
     const query = `
       query GetCurrentUserCards {
         currentUser {
@@ -160,7 +160,7 @@ const SorareAPI = {
     return rawCards
       .filter(c => c && c.player)
       .map((card, index) => {
-        const rawPos = (card.positions && card.positions[0]) || (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
+        const rawPos = (card.positions && card.positions[0]) || 'FORWARD';
         const pos = this.normalizePosition(rawPos);
         const leagueSlug = card.player.activeClub?.domesticLeague?.slug || 'premier-league-gb-eng';
         const clubName = card.player.activeClub?.name || 'Club';
