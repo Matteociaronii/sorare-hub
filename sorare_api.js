@@ -91,29 +91,31 @@ const SorareAPI = {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
-    // Schema compatibile: cards dirette dall'utente autenticato
+    // Struttura corretta per AnyCardInterfaceConnection con nodes
     const query = `
       query GetCurrentUserCards {
         currentUser {
           slug
           nickname
           cards {
-            slug
-            name
-            rarityTyped
-            seasonYear
-            power
-            positions
-            player {
-              displayName
+            nodes {
               slug
-              birthDate
-              activeClub {
-                name
+              name
+              rarityTyped
+              seasonYear
+              power
+              positions
+              player {
+                displayName
                 slug
-                domesticLeague {
+                birthDate
+                activeClub {
+                  name
                   slug
-                  displayName
+                  domesticLeague {
+                    slug
+                    displayName
+                  }
                 }
               }
             }
@@ -148,7 +150,7 @@ const SorareAPI = {
       throw new Error('Nessun dato utente ricevuto da Sorare.');
     }
 
-    const rawCards = json.data.currentUser.cards || [];
+    const rawCards = json.data.currentUser.cards?.nodes || [];
     return {
       user: json.data.currentUser,
       cards: this.enrichCardsWithOptaMetrics(rawCards)
