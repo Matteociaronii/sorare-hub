@@ -1,16 +1,17 @@
 /* ==========================================================================
-   SorareHub - Pure Carbon & Gold UI Theme
+   SorareHub - Original Carbon & Gold UI Theme
    ========================================================================== */
 
 :root {
-  --bg-carbon: #0b0c10;
-  --bg-panel: #12141a;
-  --bg-card: #181b22;
-  --bg-hover: #1f232d;
-  --border-subtle: #242834;
-  --border-strong: #32384a;
+  --bg-carbon: #0a0b0e;
+  --bg-panel: #111317;
+  --bg-card: #16181f;
+  --bg-input: #0e1014;
+  --border-subtle: #20232b;
+  --border-strong: #2d323e;
+  --border-highlight: #3b4252;
   --text-main: #f3f4f6;
-  --text-muted: #8c93a4;
+  --text-muted: #8b92a1;
   --text-gold: #f59e0b;
   --accent-gold: #f59e0b;
   --accent-gold-gradient: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
@@ -29,9 +30,9 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   background-color: var(--bg-carbon);
   background-image: 
-    radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(to bottom, #0e1015, #08090c);
-  background-size: 20px 20px, 100% 100%;
+    radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, #0d0f13, #07080a);
+  background-size: 18px 18px, 100% 100%;
   color: var(--text-main);
   line-height: 1.4;
   min-height: 100vh;
@@ -48,7 +49,7 @@ body {
   gap: 8px;
 }
 
-/* Header */
+/* Header Ufficiale SorareHub */
 .app-header {
   background: rgba(14, 16, 21, 0.95);
   backdrop-filter: blur(10px);
@@ -79,7 +80,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 15px;
   box-shadow: 0 0 10px rgba(245, 158, 11, 0.25);
 }
 
@@ -104,9 +105,9 @@ body {
 }
 
 .badge-tag {
-  background: #181b22;
+  background: #16181f;
   border: 1px solid var(--border-strong);
-  color: #d1d5db;
+  color: #c7cbd3;
   font-size: 10px;
   font-weight: 700;
   padding: 4px 8px;
@@ -124,9 +125,9 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(16, 185, 129, 0.08);
   border: 1px solid rgba(16, 185, 129, 0.25);
-  padding: 4px 10px;
+  padding: 5px 12px;
   border-radius: 20px;
   font-size: 11px;
   font-weight: 600;
@@ -142,7 +143,7 @@ body {
 }
 
 .btn-demo {
-  background: #181b22;
+  background: #16181f;
   border: 1px solid var(--border-strong);
   color: var(--text-main);
   padding: 7px 14px;
@@ -175,33 +176,7 @@ body {
   padding: 20px 24px 60px;
 }
 
-/* Nav Switcher Tab */
-.top-nav-tabs {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 18px;
-  border-bottom: 1px solid var(--border-subtle);
-  padding-bottom: 10px;
-}
-
-.nav-tab-btn {
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid transparent;
-  padding: 7px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.nav-tab-btn.active {
-  background: var(--bg-card);
-  color: var(--accent-gold);
-  border-color: var(--border-strong);
-}
-
-/* Parametri Header Toolbar */
+/* Toolbar Configurazione (Esatta come da screenshot) */
 .toolbar-card {
   background: var(--bg-panel);
   border: 1px solid var(--border-subtle);
@@ -209,9 +184,9 @@ body {
   padding: 16px 20px;
   margin-bottom: 20px;
   display: grid;
-  grid-template-columns: 2fr 1.8fr 2fr auto;
-  gap: 18px;
-  align-items: center;
+  grid-template-columns: 1.8fr 1.6fr 1.8fr auto;
+  gap: 16px;
+  align-items: flex-end;
 }
 
 .toolbar-column {
@@ -237,61 +212,68 @@ body {
   font-size: 13px;
   font-weight: 600;
   outline: none;
+  height: 40px;
 }
 
-/* Pulsanti Toggle Rarità */
-.btn-pill-group {
+/* Box Squadrati Rarità */
+.btn-group-rect {
   display: flex;
+  gap: 6px;
+  height: 40px;
+}
+
+.btn-rect {
+  flex: 1;
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  padding: 2px;
-  gap: 2px;
-}
-
-.btn-pill {
-  flex: 1;
-  background: transparent;
-  border: none;
   color: var(--text-muted);
-  padding: 7px 8px;
   font-size: 12px;
   font-weight: 700;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
 }
 
-.btn-pill.active {
+.btn-rect:hover {
+  background: #1c1f28;
+  color: #fff;
+}
+
+.btn-rect.active {
   background: #252a37;
   color: #fff;
+  border-color: var(--border-highlight);
   box-shadow: 0 1px 4px rgba(0,0,0,0.4);
 }
 
-/* Tasto Genera Portfolio */
+/* Tasto Dorato Genera */
 .btn-generate-portfolio {
   background: var(--accent-gold-gradient);
   border: none;
-  color: #0b0c10;
+  color: #0a0b0e;
   font-weight: 900;
-  font-size: 13px;
+  font-size: 12px;
   letter-spacing: 0.5px;
-  padding: 12px 24px;
-  border-radius: 8px;
+  padding: 0 20px;
+  border-radius: 6px;
   cursor: pointer;
   box-shadow: 0 0 15px rgba(245, 158, 11, 0.35);
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  transition: transform 0.15s;
-  height: 44px;
+  height: 40px;
+  white-space: nowrap;
 }
 .btn-generate-portfolio:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
   box-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
 }
 
-/* Stat Box Grid */
+/* Le 4 Card Statistiche (Screenshot 1:1) */
 .stats-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -357,20 +339,38 @@ body {
   color: var(--text-muted);
 }
 
-/* Galleria Toolbar & Cards */
+/* Sezione Vetrina Carte Integrata */
+.gallery-section-wrap {
+  margin-top: 36px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 24px;
+}
+
+.gallery-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.gallery-section-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .gallery-controls-bar {
   display: flex;
-  gap: 12px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-subtle);
-  padding: 12px 16px;
-  border-radius: 8px;
-  margin-bottom: 20px;
+  gap: 10px;
+  margin-bottom: 18px;
 }
 
 .gallery-search-input {
   flex: 1;
-  background: var(--bg-card);
+  background: var(--bg-panel);
   border: 1px solid var(--border-strong);
   color: #fff;
   padding: 8px 12px;
