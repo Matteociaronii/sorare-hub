@@ -1,4 +1,4 @@
-// SorareHub - Main Application Controller (v2.3)
+// SorareHub - Main Application Controller (v2.4 Anti-Loop)
 const App = {
   state: {
     cards: [],
@@ -9,21 +9,26 @@ const App = {
     isDemo: false
   },
 
-  init() {
+  async init() {
     this.populateCompetitionsMenu();
     this.bindEvents();
-    
+
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
-    const existingToken = localStorage.getItem('sorare_access_token');
 
     if (code) {
-      this.checkOAuthCallback();
-    } else if (existingToken) {
-      this.notify('🔑 Sessione attiva trovata! Carico la tua galleria...');
-      this.loadUserGallery();
+      // Pulisce immediatamente l'URL per non rimandare il codice al refresh
+      window.history.replaceState({}, document.title, window.location.pathname);
+      await this.checkOAuthCallback(code);
+      return;
+    }
+
+    const existingToken = localStorage.getItem('sorare_access_token');
+    if (existingToken) {
+      this.notify('🔑 Sessione attiva: sincronizzazione galleria...');
+      await this.loadUserGallery();
     } else {
-      this.notify('⚡ SorareHub v2.3 Pronto — Tocca "Connetti Sorare"');
+      this.notify('⚡ SorareHub Pronto — Tocca "Connetti Sorare"');
     }
   },
 
@@ -53,7 +58,7 @@ const App = {
     box.style.border = isError ? '2px solid #ef4444' : '2px solid #10b981';
     box.textContent = msg;
 
-    if (!isError && !msg.includes('Avvio') && !msg.includes('corso') && !msg.includes('Sincronizzazione')) {
+    if (!isError && !msg.includes('corso') && !msg.includes('sincronizzazione')) {
       setTimeout(() => { if (box) box.style.display = 'none'; }, 6000);
     }
   },
@@ -135,19 +140,13 @@ const App = {
     });
   },
 
-  async checkOAuthCallback() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-
-    if (!code) return;
-
+  async checkOAuthCallback(code) {
     this.notify('🔄 Scambio codice OAuth con Sorare...');
 
     if (window.SorareAPI && SorareAPI.handleOAuthCallback) {
       try {
         const token = await SorareAPI.handleOAuthCallback(code);
         if (token) {
-          window.history.replaceState({}, document.title, window.location.pathname);
           this.notify('✅ Token ricevuto! Caricamento carte...');
           await this.loadUserGallery();
         }
