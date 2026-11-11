@@ -1,4 +1,4 @@
-// SorareHub - OAuth2 PKCE & Direct Sorare GraphQL Layer (No 3rd-party Proxy)
+// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer
 const SorareAPI = {
   generateRandomString(length = 64) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -123,8 +123,10 @@ const SorareAPI = {
       }
     `;
 
-    // Chiamata GraphQL diretta ufficiale a Sorare autenticata con Bearer
-    const res = await fetch('https://api.sorare.com/graphql', {
+    // Chiamata GraphQL veicolata tramite il tuo Cloudflare Worker (niente CORS issues)
+    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
+
+    const res = await fetch(workerGraphqlEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -164,7 +166,7 @@ const SorareAPI = {
         }
       }
     `;
-    const res = await fetch('https://api.sorare.com/graphql', {
+    const res = await fetch(`${CONFIG.TOKEN_ENDPOINT}/graphql`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
