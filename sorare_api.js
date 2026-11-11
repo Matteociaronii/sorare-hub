@@ -85,7 +85,6 @@ const SorareAPI = {
       if (tokenData.access_token) {
         localStorage.setItem('sorare_access_token', tokenData.access_token);
         
-        // Pulisce l'URL per evitare chiamate duplicate di scambio token
         const cleanUrl = window.location.origin + window.location.pathname;
         window.history.replaceState({}, document.title, cleanUrl);
 
@@ -111,7 +110,6 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
 
-    // Query corretta che passa da footballUserProfile e scarica le immagini per la visualizzazione grafica
     const query = `
       query GetFootballUserProfileGallery($after: String) {
         currentUser {
@@ -208,7 +206,6 @@ const SorareAPI = {
 
       if (!cursor || !hasNext) break;
 
-      // Pausa di 150ms per proteggere le chiamate ripetute da rate limit
       await new Promise(resolve => setTimeout(resolve, 150));
     }
 
@@ -239,7 +236,6 @@ const SorareAPI = {
         const oppXga = (0.90 + ((seed % 80) / 100)).toFixed(2);
         const starterProb = 85 + (seed % 15);
 
-        // Calcolo metriche L5 e L15 per la gallery
         const baseScore = pos === 'GK' ? 48 : (pos === 'DEF' ? 46 : (pos === 'MID' ? 51 : 47));
         const l15 = Math.min(85, Math.max(30, baseScore + ((seed % 21) - 10)));
         const l5 = Math.min(95, Math.max(25, l15 + ((seed % 15) - 7)));
