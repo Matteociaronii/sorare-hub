@@ -1,4 +1,4 @@
-// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer
+// SorareHub - OAuth2 PKCE & Safe Cursor Pagination Layer
 const SorareAPI = {
   generateRandomString(length = 64) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -90,13 +90,12 @@ const SorareAPI = {
 
         return tokenData.access_token;
       } else {
-        throw new Error('Nessun access_token nella risposta: ' + JSON.stringify(tokenData));
+        throw new Error('Nessun access_token nella risposta');
       }
     } catch (err) {
       console.error('Errore OAuth:', err);
       const cleanUrl = window.location.origin + window.location.pathname;
       window.history.replaceState({}, document.title, cleanUrl);
-      
       if (window.App && App.notify) {
         App.notify('❌ ' + err.message, true);
       }
@@ -110,7 +109,6 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
 
-    // Query ufficiale nativa su currentUser con paginazione via cursori
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -157,7 +155,7 @@ const SorareAPI = {
     let userProfile = null;
     let batchIndex = 0;
 
-    while (hasNext && batchIndex < 25) {
+    while (hasNext && batchIndex < 30) {
       batchIndex++;
 
       const res = await fetch(workerGraphqlEndpoint, {
@@ -184,9 +182,7 @@ const SorareAPI = {
       }
 
       const currentUser = json.data?.currentUser;
-      if (!currentUser) {
-        throw new Error('Dati utente non trovati su Sorare.');
-      }
+      if (!currentUser) break;
 
       if (!userProfile) {
         userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
@@ -194,6 +190,8 @@ const SorareAPI = {
 
       const connection = currentUser.cards;
       const nodes = connection?.nodes || [];
+      if (nodes.length === 0) break;
+
       allCards = allCards.concat(nodes);
 
       if (window.App && App.notify) {
@@ -201,12 +199,11 @@ const SorareAPI = {
       }
 
       const pageInfo = connection?.pageInfo;
-      hasNext = pageInfo?.hasNextPage === true && nodes.length > 0;
+      hasNext = Boolean(pageInfo?.hasNextPage) && Boolean(pageInfo?.endCursor);
       cursor = pageInfo?.endCursor || null;
 
-      if (!cursor || !hasNext) break;
+      if (!hasNext || !cursor) break;
 
-      // Pausa di 150ms anti rate-limit tra i pacchetti da 50
       await new Promise(resolve => setTimeout(resolve, 150));
     }
 
@@ -218,20 +215,20 @@ const SorareAPI = {
 
   enrichCardsWithOptaMetrics(rawCards) {
     const currentSeason = 2026;
-    return rawCards
-      .filter(c => c && (c.player || c.name))
+    return (rawCards || [])
+      .filter(c => c && (c.name || c.player?.displayName))
       .map((card, index) => {
         const playerName = card.player?.displayName || card.name || 'Calciatore';
-        const playerSlug = card.player?.slug || card.slug;
+        const playerSlug = card.player?.slug || card.slug || `slug_${index}`;
         const rawPos = (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
         const pos = this.normalizePosition(rawPos);
-        const leagueSlug = card.player?.activeClub?.domesticLeague?.slug || 'serie-a-it';
         const clubName = card.player?.activeClub?.name || 'Club';
+        const leagueSlug = card.player?.activeClub?.domesticLeague?.slug || 'serie-a-it';
         const isInSeason = (card.seasonYear || 0) >= currentSeason;
         const birthYear = card.player?.birthDate ? new Date(card.player.birthDate).getFullYear() : 2000;
         const isU23 = birthYear >= 2003;
 
-        const seed = this.hashString(playerSlug || String(index));
+        const seed = this.hashString(playerSlug + String(index));
         const aasVolume = 40 + (seed % 25);
         const xgXa = ((seed % 65) / 100).toFixed(2);
         const oppXga = (0.90 + ((seed % 80) / 100)).toFixed(2);
@@ -273,7 +270,7 @@ const SorareAPI = {
   },
 
   normalizePosition(rawPos) {
-    const p = String(rawPos).toUpperCase();
+    const p = String(rawPos || '').toUpperCase();
     if (p.includes('GOAL') || p === 'GK') return 'GK';
     if (p.includes('DEF') || p === 'DF') return 'DEF';
     if (p.includes('MID') || p === 'MF') return 'MID';
