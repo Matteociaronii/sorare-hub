@@ -110,38 +110,62 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
 
-    const query = `
-      query GetFootballUserProfileGallery($after: String) {
+    // 1. Ottieni identità e slug univoco dell'utente
+    const meQuery = `
+      query GetCurrentUserInfo {
         currentUser {
           slug
           nickname
-          footballUserProfile {
-            cards(after: $after, first: 50) {
-              pageInfo {
-                hasNextPage
-                endCursor
-              }
-              nodes {
-                slug
-                name
-                rarityTyped
-                seasonYear
-                power
-                anyPositions
-                pictureUrl
-                ... on Card {
-                  player {
-                    displayName
+        }
+      }
+    `;
+
+    const meRes = await fetch(workerGraphqlEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ query: meQuery })
+    });
+
+    const meJson = await meRes.json();
+    if (!meJson.data || !meJson.data.currentUser) {
+      throw new Error('Impossibile recuperare il profilo utente da Sorare.');
+    }
+
+    const userProfile = meJson.data.currentUser;
+    const userSlug = userProfile.slug;
+
+    // 2. Query paginata con cursore su paginatedCards filtrando per calcio
+    const pagedQuery = `
+      query GetUserFootballCards($slug: String!, $after: String) {
+        user(slug: $slug) {
+          paginatedCards(after: $after, first: 50, sports: [FOOTBALL]) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              slug
+              name
+              rarityTyped
+              seasonYear
+              power
+              anyPositions
+              pictureUrl
+              ... on Card {
+                player {
+                  displayName
+                  slug
+                  birthDate
+                  pictureUrl
+                  activeClub {
+                    name
                     slug
-                    birthDate
-                    pictureUrl
-                    activeClub {
-                      name
+                    domesticLeague {
                       slug
-                      domesticLeague {
-                        slug
-                        displayName
-                      }
+                      displayName
                     }
                   }
                 }
@@ -155,7 +179,6 @@ const SorareAPI = {
     let allCards = [];
     let hasNext = true;
     let cursor = null;
-    let userProfile = null;
     let batchIndex = 0;
 
     while (hasNext && batchIndex < 25) {
@@ -168,8 +191,8 @@ const SorareAPI = {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          query: query,
-          variables: { after: cursor }
+          query: pagedQuery,
+          variables: { slug: userSlug, after: cursor }
         })
       });
 
@@ -180,32 +203,29 @@ const SorareAPI = {
 
       const json = await res.json();
       if (json.errors && json.errors.length > 0) {
-        console.error('Errore GraphQL su footballUserProfile:', json.errors);
+        console.error('Errore GraphQL durante paginazione:', json.errors);
         throw new Error(json.errors[0].message);
       }
 
-      const currentUser = json.data?.currentUser;
-      if (!currentUser) {
-        throw new Error('Impossibile ottenere il profilo utente da Sorare.');
+      const user = json.data?.user;
+      if (!user) {
+        throw new Error('Dati utente non trovati su Sorare.');
       }
 
-      if (!userProfile) {
-        userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
-      }
-
-      const cardsConnection = currentUser.footballUserProfile?.cards;
-      const nodes = cardsConnection?.nodes || [];
+      const connection = user.paginatedCards;
+      const nodes = connection?.nodes || [];
       allCards = allCards.concat(nodes);
 
       if (window.App && App.notify) {
         App.notify(`📥 Caricate ${allCards.length} carte...`);
       }
 
-      hasNext = cardsConnection?.pageInfo?.hasNextPage === true && nodes.length > 0;
-      cursor = cardsConnection?.pageInfo?.endCursor || null;
+      hasNext = connection?.pageInfo?.hasNextPage === true && nodes.length > 0;
+      cursor = connection?.pageInfo?.endCursor || null;
 
       if (!cursor || !hasNext) break;
 
+      // Throttle di sicurezza anti-429
       await new Promise(resolve => setTimeout(resolve, 150));
     }
 
