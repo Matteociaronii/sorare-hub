@@ -1,19 +1,22 @@
 /* ==========================================================================
-   SorareHub - Carbon Dark Minimalist Theme
+   SorareHub - Pure Carbon & Gold UI Theme
    ========================================================================== */
 
 :root {
-  --bg-body: #0d0e12;
-  --bg-card: #15171e;
-  --bg-surface: #1c1f28;
-  --border-subtle: #262a36;
-  --border-strong: #363c4d;
-  --text-main: #f1f3f7;
-  --text-muted: #8b949e;
-  --accent-gold: #eab308;
-  --accent-gray: #64748b;
-  --btn-carbon: #222734;
-  --btn-carbon-hover: #2d3345;
+  --bg-carbon: #0b0c10;
+  --bg-panel: #12141a;
+  --bg-card: #181b22;
+  --bg-hover: #1f232d;
+  --border-subtle: #242834;
+  --border-strong: #32384a;
+  --text-main: #f3f4f6;
+  --text-muted: #8c93a4;
+  --text-gold: #f59e0b;
+  --accent-gold: #f59e0b;
+  --accent-gold-gradient: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  --accent-green: #10b981;
+  --accent-blue: #3b82f6;
+  --accent-red: #ef4444;
 }
 
 * {
@@ -24,15 +27,31 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background-color: var(--bg-body);
+  background-color: var(--bg-carbon);
+  background-image: 
+    radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, #0e1015, #08090c);
+  background-size: 20px 20px, 100% 100%;
   color: var(--text-main);
   line-height: 1.4;
   min-height: 100vh;
 }
 
+/* Toast container */
+.toast-container {
+  position: fixed;
+  top: 15px;
+  right: 15px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* Header */
 .app-header {
-  background: #111318;
+  background: rgba(14, 16, 21, 0.95);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border-subtle);
   padding: 12px 24px;
   display: flex;
@@ -43,14 +62,56 @@ body {
 .header-left {
   display: flex;
   align-items: center;
+  gap: 12px;
+}
+
+.logo-wrap {
+  display: flex;
+  align-items: center;
   gap: 10px;
 }
 
-.logo-title {
+.logo-badge-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.3px;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.25);
+}
+
+.logo-text-block {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.logo-brand {
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: 1px;
   color: #fff;
+}
+
+.logo-sub {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--accent-gold);
+}
+
+.badge-tag {
+  background: #181b22;
+  border: 1px solid var(--border-strong);
+  color: #d1d5db;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
 }
 
 .header-right {
@@ -59,181 +120,286 @@ body {
   gap: 12px;
 }
 
-.user-badge {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  padding: 4px 12px;
-  border-radius: 6px;
-  font-size: 12px;
+.gw-sync-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
   font-weight: 600;
-  color: #cbd5e1;
+  color: var(--accent-green);
 }
 
-.btn-carbon {
-  background: var(--btn-carbon);
-  color: #fff;
+.dot-pulse {
+  width: 6px;
+  height: 6px;
+  background: var(--accent-green);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--accent-green);
+}
+
+.btn-demo {
+  background: #181b22;
   border: 1px solid var(--border-strong);
+  color: var(--text-main);
   padding: 7px 14px;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s;
 }
-.btn-carbon:hover {
-  background: var(--btn-carbon-hover);
+
+.btn-connect-sorare {
+  background: var(--accent-gold-gradient);
+  color: #000;
+  font-weight: 800;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.3);
+  transition: transform 0.1s ease;
+}
+.btn-connect-sorare:hover {
+  transform: translateY(-1px);
 }
 
 /* Container */
 .app-container {
-  max-width: 1240px;
+  max-width: 1320px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 20px 24px 60px;
 }
 
-/* Tab Navigation */
-.view-tabs-bar {
+/* Nav Switcher Tab */
+.top-nav-tabs {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+  margin-bottom: 18px;
   border-bottom: 1px solid var(--border-subtle);
-  padding-bottom: 12px;
-  margin-bottom: 20px;
+  padding-bottom: 10px;
 }
 
-.tab-btn {
-  background: var(--bg-card);
+.nav-tab-btn {
+  background: transparent;
   color: var(--text-muted);
-  border: 1px solid var(--border-subtle);
-  padding: 8px 16px;
+  border: 1px solid transparent;
+  padding: 7px 14px;
   border-radius: 6px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
 }
 
-.tab-btn.active {
-  background: var(--bg-surface);
-  color: #fff;
-  border-color: var(--accent-gold);
+.nav-tab-btn.active {
+  background: var(--bg-card);
+  color: var(--accent-gold);
+  border-color: var(--border-strong);
 }
 
-/* Stat Cards */
-.stats-overview {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
+/* Parametri Header Toolbar */
+.toolbar-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 16px 20px;
   margin-bottom: 20px;
+  display: grid;
+  grid-template-columns: 2fr 1.8fr 2fr auto;
+  gap: 18px;
+  align-items: center;
 }
 
-.stat-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  padding: 14px 16px;
-  border-radius: 8px;
-}
-
-.stat-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  display: block;
-  margin-bottom: 4px;
-  text-transform: uppercase;
-}
-
-.stat-value {
-  font-size: 20px;
-  font-weight: 700;
-}
-
-/* Parametri Form */
-.controls-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  padding: 18px;
-  border-radius: 8px;
-  margin-bottom: 24px;
-}
-
-.controls-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  align-items: flex-end;
-}
-
-.input-group {
+.toolbar-column {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  flex: 1;
-  min-width: 200px;
 }
 
-.input-group label {
+.toolbar-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.toolbar-select {
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  color: var(--text-main);
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+
+/* Pulsanti Toggle Rarità */
+.btn-pill-group {
+  display: flex;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.btn-pill {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 7px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.btn-pill.active {
+  background: #252a37;
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+
+/* Tasto Genera Portfolio */
+.btn-generate-portfolio {
+  background: var(--accent-gold-gradient);
+  border: none;
+  color: #0b0c10;
+  font-weight: 900;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  padding: 12px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.35);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: transform 0.15s;
+  height: 44px;
+}
+.btn-generate-portfolio:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
+}
+
+/* Stat Box Grid */
+.stats-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.stat-box {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 14px 18px;
+}
+
+.stat-box-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  display: block;
+}
+
+.stat-box-value {
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--text-main);
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.stat-box-sub {
   font-size: 11px;
   color: var(--text-muted);
 }
 
-.input-group select,
-.gallery-controls-bar input,
-.gallery-controls-bar select {
-  background: var(--bg-surface);
+/* Empty Center Slate */
+.empty-center-slate {
+  background: var(--bg-panel);
   border: 1px solid var(--border-subtle);
-  color: var(--text-main);
-  padding: 8px 10px;
-  border-radius: 6px;
-  font-size: 13px;
-  outline: none;
+  border-radius: 12px;
+  padding: 60px 20px;
+  text-align: center;
+  margin-top: 10px;
 }
 
-/* Galleria Toolbar */
+.empty-icon-gear {
+  font-size: 40px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.empty-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.empty-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Galleria Toolbar & Cards */
 .gallery-controls-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  background: var(--bg-card);
+  gap: 12px;
+  background: var(--bg-panel);
   border: 1px solid var(--border-subtle);
-  padding: 12px;
+  padding: 12px 16px;
   border-radius: 8px;
   margin-bottom: 20px;
 }
 
-.search-input-wrap {
+.gallery-search-input {
   flex: 1;
-  min-width: 220px;
-}
-.search-input-wrap input {
-  width: 100%;
-}
-
-.select-filters-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* Griglia Carte */
-.cards-grid-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  gap: 14px;
-}
-
-/* Card Sorare */
-.sorare-card-box {
   background: var(--bg-card);
-  border-radius: 8px;
-  overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  position: relative;
+  border: 1px solid var(--border-strong);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
 }
 
-/* Rarità */
-.sorare-card-box.limited { border-color: #eab308; }
-.sorare-card-box.common { border-color: #475569; opacity: 0.85; }
-.sorare-card-box.rare { border-color: #ef4444; }
-.sorare-card-box.super_rare { border-color: #3b82f6; }
+.cards-grid-wrap {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+/* Schede Carte Sorare Grafiche */
+.sorare-card-box {
+  background: var(--bg-panel);
+  border: 2px solid var(--border-subtle);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  transition: transform 0.15s ease;
+}
+.sorare-card-box:hover {
+  transform: translateY(-4px);
+}
+
+.sorare-card-box.limited { border-color: var(--accent-gold); box-shadow: 0 0 10px rgba(245, 158, 11, 0.2); }
+.sorare-card-box.rare { border-color: var(--accent-red); box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }
+.sorare-card-box.super_rare { border-color: var(--accent-blue); box-shadow: 0 0 10px rgba(59, 130, 246, 0.2); }
+.sorare-card-box.common { border-color: #475569; opacity: 0.8; }
 
 .hidden { display: none !important; }
