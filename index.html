@@ -3,126 +3,180 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SorareHub</title>
-  <link rel="stylesheet" href="style.css?v=3" />
+  <title>SorareHub - Opta Statsbomb 26/27</title>
+  <link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
-  <div id="toast-container" style="position:fixed;top:15px;right:15px;z-index:9999;"></div>
+  <div id="toast-container" class="toast-container"></div>
 
+  <!-- Header Ufficiale SorareHub -->
   <header class="app-header">
     <div class="header-left">
-      <span style="font-size:20px;">⚽</span>
-      <h1 class="logo-title">SorareHub</h1>
+      <div class="logo-wrap">
+        <div class="logo-badge-icon">⚽</div>
+        <div class="logo-text-block">
+          <span class="logo-brand">SORARE</span>
+          <span class="logo-sub">HUB</span>
+        </div>
+      </div>
+      <div class="badge-tag">OPTA ★ STATSBOMB 26/27</div>
     </div>
 
     <div class="header-right">
-      <div id="user-badge" class="user-badge hidden">
-        <span id="user-nickname">@Manager</span>
+      <div class="gw-sync-pill">
+        <span class="dot-pulse"></span>
+        <span>GW Live Sync</span>
       </div>
-      <button id="btn-login" class="btn-carbon" onclick="SorareAPI.startOAuthFlow()">
+      <button class="btn-demo" onclick="App.runDemoMode()">Modalità Demo</button>
+      <button id="btn-login" class="btn-connect-sorare" onclick="SorareAPI.startOAuthFlow()">
         Connetti Sorare
       </button>
     </div>
   </header>
 
   <main class="app-container">
-    <div class="view-tabs-bar">
-      <button id="tab-optimizer" class="tab-btn active" onclick="App.switchView('optimizer')">
-        ⚡ Ottimizzatore Lineup
+    <!-- Switcher Viste -->
+    <div class="top-nav-tabs">
+      <button id="tab-optimizer" class="nav-tab-btn active" onclick="App.switchView('optimizer')">
+        ⚡ Motore Formazioni
       </button>
-      <button id="tab-gallery" class="tab-btn" onclick="App.switchView('gallery')">
+      <button id="tab-gallery" class="nav-tab-btn" onclick="App.switchView('gallery')">
         🃏 Collezione (<span id="gallery-count-badge">0</span>)
       </button>
     </div>
 
-    <!-- SEZIONE OTTIMIZZATORE -->
+    <!-- VISTA 1: OTTIMIZZATORE UFFICIALE -->
     <section id="optimizer-view">
-      <div class="stats-overview">
-        <div class="stat-card">
-          <span class="stat-label">Carte Limited</span>
-          <div class="stat-value" id="stat-limited-count" style="color:var(--accent-gold);">0</div>
+      <!-- Toolbar Parametri Ufficiali Sorare -->
+      <div class="toolbar-card">
+        <!-- 1. Competizione con distinzione IN-SEASON e CLASSIC -->
+        <div class="toolbar-column">
+          <label class="toolbar-label">1. COMPETIZIONE UFFICIALE SORARE</label>
+          <select id="competition-select" class="toolbar-select">
+            <optgroup label="── IN-SEASON (Bonus 4/5) ──">
+              <option value="PREMIER_LEAGUE_IN_SEASON" selected>Premier League — In-Season</option>
+              <option value="SERIE_A_IN_SEASON">Serie A — In-Season</option>
+              <option value="LA_LIGA_IN_SEASON">LaLiga — In-Season</option>
+              <option value="BUNDESLIGA_IN_SEASON">Bundesliga — In-Season</option>
+              <option value="LIGUE_1_IN_SEASON">Ligue 1 — In-Season</option>
+              <option value="CHAMPION_IN_SEASON">Champion Europe — In-Season</option>
+              <option value="CHALLENGER_IN_SEASON">Challenger Europe — In-Season</option>
+              <option value="CONTENDER_IN_SEASON">Contender Europe — In-Season</option>
+              <option value="U23_IN_SEASON">Under 23 — In-Season</option>
+            </optgroup>
+            <optgroup label="── CLASSIC (Tutte le stagioni) ──">
+              <option value="ALL_STAR_CLASSIC">All-Star — Classic</option>
+              <option value="PREMIER_LEAGUE_CLASSIC">Premier League — Classic</option>
+              <option value="SERIE_A_CLASSIC">Serie A — Classic</option>
+              <option value="LA_LIGA_CLASSIC">LaLiga — Classic</option>
+              <option value="BUNDESLIGA_CLASSIC">Bundesliga — Classic</option>
+              <option value="LIGUE_1_CLASSIC">Ligue 1 — Classic</option>
+              <option value="CHAMPION_CLASSIC">Champion Europe — Classic</option>
+              <option value="CHALLENGER_CLASSIC">Challenger Europe — Classic</option>
+              <option value="CONTENDER_CLASSIC">Contender Europe — Classic</option>
+              <option value="U23_CLASSIC">Under 23 — Classic</option>
+            </optgroup>
+          </select>
         </div>
-        <div class="stat-card">
-          <span class="stat-label">Carte Common</span>
-          <div class="stat-value" id="stat-common-count" style="color:var(--accent-gray);">0</div>
+
+        <!-- 2. Rarità Carte -->
+        <div class="toolbar-column">
+          <label class="toolbar-label">2. RARITÀ CARTE</label>
+          <div class="btn-pill-group">
+            <button class="btn-pill active" id="btn-rarity-limited" onclick="App.setRarity('limited')">Limited</button>
+            <button class="btn-pill" id="btn-rarity-rare" onclick="App.setRarity('rare')">Rare</button>
+            <button class="btn-pill" id="btn-rarity-super_rare" onclick="App.setRarity('super_rare')">Super Rare</button>
+            <button class="btn-pill" id="btn-rarity-unique" onclick="App.setRarity('unique')">Unique</button>
+          </div>
         </div>
-        <div class="stat-card">
-          <span class="stat-label">Totale Collezione</span>
-          <div class="stat-value" id="stat-cards-count">0</div>
+
+        <!-- 3. Strategia Algoritmo -->
+        <div class="toolbar-column">
+          <label class="toolbar-label">3. STRATEGIA ALGORITMO</label>
+          <div class="btn-pill-group">
+            <button class="btn-pill active" id="btn-strat-floor" onclick="App.setStrategy('floor')">🛡️ Max Floor (AAS)</button>
+            <button class="btn-pill" id="btn-strat-ceiling" onclick="App.setStrategy('ceiling')">🚀 Max Ceiling (Podio)</button>
+          </div>
+        </div>
+
+        <!-- Tasto Genera -->
+        <div class="toolbar-column">
+          <button class="btn-generate-portfolio" onclick="App.generateOptimizedLineups()">
+            ⚡ GENERA PORTFOLIO A CASCATA
+          </button>
         </div>
       </div>
 
-      <div class="controls-card">
-        <div class="controls-form">
-          <div class="input-group">
-            <label for="tournament-select">Torneo</label>
-            <select id="tournament-select">
-              <option value="ALL_STAR">All-Star</option>
-              <option value="UNDER_23">Under 23</option>
-              <option value="CHAMPION_EUROPE">Champion Europe</option>
-              <option value="CHALLENGER_EUROPE">Challenger Europe</option>
-            </select>
-          </div>
+      <!-- Le 4 Card Statistiche Identiche allo Screenshot -->
+      <div class="stats-strip">
+        <div class="stat-box">
+          <span class="stat-box-label">CARTE IN GALLERIA</span>
+          <div class="stat-box-value" id="stat-cards-count">0</div>
+          <span class="stat-box-sub" id="stat-status-sub">Non connesso</span>
+        </div>
 
-          <div class="input-group">
-            <label for="target-lineups">Formazioni da generare</label>
-            <select id="target-lineups">
-              <option value="1">1 Formazione</option>
-              <option value="2">2 Formazioni a cascata</option>
-              <option value="3" selected>3 Formazioni a cascata</option>
-              <option value="4">4 Formazioni a cascata</option>
-            </select>
-          </div>
+        <div class="stat-box">
+          <span class="stat-box-label">CARTE IN-SEASON</span>
+          <div class="stat-box-value" id="stat-inseason-count" style="color:var(--text-gold);">0</div>
+          <span class="stat-box-sub">Regola 4/5 Pronta</span>
+        </div>
 
-          <div>
-            <button class="btn-carbon" style="background:#2563eb;border-color:#3b82f6;padding:9px 18px;" onclick="App.generateOptimizedLineups()">
-              Calcola Formazioni (Solo Limited)
-            </button>
-          </div>
+        <div class="stat-box">
+          <span class="stat-box-label">CONFIRMED XI / TITOLARI</span>
+          <div class="stat-box-value" id="stat-confirmed-count" style="color:var(--accent-green);">0</div>
+          <span class="stat-box-sub">Feed Formazioni Attivo</span>
+        </div>
+
+        <div class="stat-box">
+          <span class="stat-box-label">SQUADRE GENERATE</span>
+          <div class="stat-box-value" id="stat-teams-count" style="color:var(--accent-blue);">0</div>
+          <span class="stat-box-sub">Zero Riserve • Max Teams</span>
         </div>
       </div>
 
-      <div id="lineups-results-container"></div>
+      <!-- Risultati / Slate Iniziale -->
+      <div id="lineups-results-container">
+        <div class="empty-center-slate">
+          <div class="empty-icon-gear">⚙️</div>
+          <h2 class="empty-title">Motore SorareHub Pronto</h2>
+          <p class="empty-sub">Tocca Connetti Sorare in alto per sincronizzare la tua collezione oppure testa il solver con Modalità Demo.</p>
+        </div>
+      </div>
     </section>
 
-    <!-- SEZIONE GALLERIA -->
+    <!-- VISTA 2: GALLERIA CARTE (Limited separate da Common) -->
     <section id="gallery-view" class="hidden">
       <div class="gallery-controls-bar">
-        <div class="search-input-wrap">
-          <input type="text" id="gallery-search" placeholder="Cerca calciatore o club..." oninput="App.filterGallery()" />
-        </div>
+        <input type="text" id="gallery-search" class="gallery-search-input" placeholder="🔍 Cerca per calciatore o club..." oninput="App.filterGallery()" />
         
-        <div class="select-filters-wrap">
-          <!-- Filtro Scelta Collezione: Limited di default, o Common a parte -->
-          <select id="gallery-filter-pool" onchange="App.filterGallery()">
-            <option value="limited_only" selected>Solo Limited (Pro)</option>
-            <option value="common_only">Solo Common (Tutorial)</option>
-            <option value="all">Tutte le Carte</option>
-          </select>
+        <select id="gallery-filter-pool" class="toolbar-select" onchange="App.filterGallery()">
+          <option value="limited_only" selected>Solo Limited (Pro)</option>
+          <option value="common_only">Solo Common (Tutorial)</option>
+          <option value="all">Tutta la Collezione</option>
+        </select>
 
-          <select id="gallery-filter-pos" onchange="App.filterGallery()">
-            <option value="ALL">Tutti i Ruoli</option>
-            <option value="GK">POR</option>
-            <option value="DEF">DIF</option>
-            <option value="MID">CEN</option>
-            <option value="FWD">ATT</option>
-          </select>
+        <select id="gallery-filter-pos" class="toolbar-select" onchange="App.filterGallery()">
+          <option value="ALL">Tutti i Ruoli</option>
+          <option value="GK">POR</option>
+          <option value="DEF">DIF</option>
+          <option value="MID">CEN</option>
+          <option value="FWD">ATT</option>
+        </select>
 
-          <select id="gallery-sort" onchange="App.filterGallery()">
-            <option value="l15-desc">L15 decrescente</option>
-            <option value="l5-desc">L5 decrescente</option>
-            <option value="bonus-desc">Bonus XP</option>
-            <option value="name-asc">Nome (A-Z)</option>
-          </select>
-        </div>
+        <select id="gallery-sort" class="toolbar-select" onchange="App.filterGallery()">
+          <option value="l15-desc">L15 più alto</option>
+          <option value="l5-desc">L5 più alto</option>
+          <option value="bonus-desc">Bonus XP</option>
+          <option value="name-asc">Nome (A-Z)</option>
+        </select>
       </div>
 
-      <div id="cards-grid" class="cards-grid-container"></div>
+      <div id="cards-grid" class="cards-grid-wrap"></div>
     </section>
   </main>
 
   <script src="config.js"></script>
-  <script src="sorare_api.js?v=3"></script>
-  <script src="app.js?v=3"></script>
+  <script src="sorare_api.js?v=4"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
