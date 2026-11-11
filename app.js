@@ -15,6 +15,34 @@ const App = {
     this.checkOAuthCallback();
   },
 
+  notify(msg, isError = false) {
+    let box = document.getElementById('debug-status-banner');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'debug-status-banner';
+      box.style.position = 'fixed';
+      box.style.bottom = '20px';
+      box.style.left = '50%';
+      box.style.transform = 'translateX(-50%)';
+      box.style.padding = '12px 24px';
+      box.style.borderRadius = '8px';
+      box.style.fontSize = '14px';
+      box.style.fontWeight = 'bold';
+      box.style.zIndex = '99999';
+      box.style.boxShadow = '0 10px 30px rgba(0,0,0,0.8)';
+      document.body.appendChild(box);
+    }
+    box.style.display = 'block';
+    box.style.background = isError ? '#8b0000' : '#1e3a29';
+    box.style.color = isError ? '#ffbaba' : '#69f0ae';
+    box.style.border = isError ? '1px solid #ff4d4d' : '1px solid #00e676';
+    box.textContent = msg;
+
+    if (!isError) {
+      setTimeout(() => { if (box) box.style.display = 'none'; }, 5000);
+    }
+  },
+
   populateCompetitionsMenu() {
     const compSelect = document.getElementById('comp-select');
     if (!compSelect || !CONFIG.OFFICIAL_COMPETITIONS) return;
@@ -46,7 +74,6 @@ const App = {
   },
 
   bindEvents() {
-    // 1. Cambio competizione
     const compSelect = document.getElementById('comp-select');
     if (compSelect) {
       compSelect.addEventListener('change', (e) => {
@@ -55,7 +82,6 @@ const App = {
       });
     }
 
-    // 2. Selettore Rarità
     const scarcityContainer = document.getElementById('scarcity-selector') || document.querySelector('.rarity-selector');
     if (scarcityContainer) {
       scarcityContainer.addEventListener('click', (e) => {
@@ -68,7 +94,6 @@ const App = {
       });
     }
 
-    // 3. Selettore Strategia Algoritmo
     const strategyContainer = document.getElementById('strategy-selector') || document.querySelector('.strategy-selector');
     if (strategyContainer) {
       strategyContainer.addEventListener('click', (e) => {
@@ -82,28 +107,16 @@ const App = {
       });
     }
 
-    // 4. Genera Portfolio
     const runBtn = document.getElementById('run-optimizer-btn') || document.querySelector('.btn-generate');
     if (runBtn) {
       runBtn.addEventListener('click', () => this.runOptimizer());
     }
 
-    // 5. Pulsante Demo (intercetta sia id che classi che click su testo)
     document.querySelectorAll('#demo-btn, #demo-mode-btn, .btn-demo').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         this.loadDemoGallery();
       });
-    });
-
-    // Fallback generico per qualsiasi bottone con scritto "demo"
-    document.querySelectorAll('button').forEach(btn => {
-      if (btn.textContent.toLowerCase().includes('demo')) {
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          this.loadDemoGallery();
-        });
-      }
     });
   },
 
@@ -112,10 +125,16 @@ const App = {
     const code = urlParams.get('code');
 
     if (code) {
-      window.history.replaceState({}, document.title, window.location.pathname);
+      this.notify('🔄 Autenticazione in corso: scambio token...');
       if (window.SorareAPI && SorareAPI.handleOAuthCallback) {
         const token = await SorareAPI.handleOAuthCallback(code);
-        if (token) await this.loadUserGallery();
+        if (token) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+          this.notify('✅ Token ricevuto! Caricamento carte...');
+          await this.loadUserGallery();
+        } else {
+          this.notify('❌ Errore durante lo scambio token. Controlla il Worker.', true);
+        }
       }
       return;
     }
@@ -128,8 +147,12 @@ const App = {
 
   async loadUserGallery() {
     try {
+      this.notify('📥 Sincronizzazione galleria Sorare...');
       const data = await SorareAPI.fetchCurrentUserGallery();
-      if (!data) return;
+      if (!data) {
+        this.notify('⚠️ Nessun dato ricevuto da Sorare', true);
+        return;
+      }
 
       this.state.user = data.user;
       this.state.cards = data.cards;
@@ -137,9 +160,11 @@ const App = {
 
       this.updateNavbarUser(data.user.nickname || data.user.slug);
       this.updateTelemetry();
+      this.notify(`🎉 Benvenuto @${data.user.nickname || data.user.slug}! ${data.cards.length} carte caricate.`);
       this.runOptimizer();
     } catch (err) {
-      console.error('Errore caricamento galleria utente:', err);
+      console.error('Errore caricamento galleria:', err);
+      this.notify(`❌ Errore Galleria: ${err.message}`, true);
     }
   },
 
@@ -151,6 +176,7 @@ const App = {
     this.updateNavbarUser('DemoManager (Simulazione)');
     this.updateTelemetry();
     this.runOptimizer();
+    this.notify('🎮 Modalità Demo attiva');
   },
 
   updateNavbarUser(name) {
@@ -173,8 +199,8 @@ const App = {
     this.safeSetText('stat-total-cards', total);
     this.safeSetText('stat-inseason-cards', inSeason);
     this.safeSetText('stat-starters', starters);
+    this.safeSetText('stat-user-slug', `@${this.state.user?.nickname || this.state.user?.slug || 'Manager'}`);
 
-    // Supporto per i box dell'interfaccia corrente
     const statCards = document.querySelectorAll('.stat-card .stat-value, .metric-box .metric-val');
     if (statCards.length >= 3) {
       statCards[0].textContent = total;
@@ -195,11 +221,6 @@ const App = {
     );
 
     this.safeSetText('stat-lineups-built', lineups.length);
-    const statCards = document.querySelectorAll('.stat-card .stat-value, .metric-box .metric-val');
-    if (statCards.length >= 4) {
-      statCards[3].textContent = lineups.length;
-    }
-
     this.renderLineups(lineups, comp);
   },
 
@@ -217,8 +238,8 @@ const App = {
           <div style="font-size:36px; margin-bottom:12px;">⚠️</div>
           <h3 style="color:#d4af37; margin-bottom:8px;">Nessuna squadra completabile per ${comp.name}</h3>
           <p style="color:#8b9baa; font-size:14px; max-width:550px; margin:0 auto;">
-            I giocatori disponibili nel dataset per questo torneo (${comp.format}, rarità <strong>${this.state.selectedScarcity.toUpperCase()}</strong>) non sono sufficienti per formare un quintetto o un settennato valido con i ruoli richiesti.<br><br>
-            👉 Prova a selezionare <strong>Premier League</strong>, <strong>LaLiga</strong> o <strong>All-Star Classic</strong> nel menu a tendina per vedere subito i team generati a cascata!
+            Le carte disponibili per questa competizione (${comp.format}, rarità <strong>${this.state.selectedScarcity.toUpperCase()}</strong>) non sono sufficienti per formare un team completo con tutti i ruoli richiesti.<br><br>
+            Prova a cambiare rarità o selezionare un'altra competizione dal menu in alto.
           </p>
         </div>
       `;
@@ -264,36 +285,16 @@ const App = {
 
   getMockDemoCards() {
     return [
-      // Premier League (In-Season & Classic)
       { id: 'p1', name: 'Erling Haaland', club: 'Manchester City', leagueSlug: 'premier-league-gb-eng', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.15, optaAas: 62, xgXa: 0.95, confirmedXi: true },
       { id: 'p2', name: 'Bukayo Saka', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.12, optaAas: 58, xgXa: 0.80, confirmedXi: true },
       { id: 'p3', name: 'William Saliba', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 54, xgXa: 0.20, confirmedXi: true },
       { id: 'p4', name: 'David Raya', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'GK', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 50, xgXa: 0.05, confirmedXi: true },
       { id: 'p5', name: 'Declan Rice', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 56, xgXa: 0.35, confirmedXi: true },
       { id: 'p6', name: 'Cole Palmer', club: 'Chelsea', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: true, isUefaContender: true, powerMultiplier: 1.15, optaAas: 60, xgXa: 0.90, confirmedXi: true },
-      { id: 'p7', name: 'Virgil van Dijk', club: 'Liverpool', leagueSlug: 'premier-league-gb-eng', position: 'DEF', scarcity: 'limited', isInSeason: false, isU23: false, isUefaChampions: true, powerMultiplier: 1.05, optaAas: 58, xgXa: 0.25, confirmedXi: true },
-
-      // LaLiga (In-Season & Classic)
-      { id: 'l1', name: 'Kylian Mbappé', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.19, optaAas: 65, xgXa: 1.10, confirmedXi: true },
-      { id: 'l2', name: 'Vinicius Jr', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.16, optaAas: 63, xgXa: 0.98, confirmedXi: true },
-      { id: 'l3', name: 'Jude Bellingham', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: true, isUefaChampions: true, powerMultiplier: 1.18, optaAas: 62, xgXa: 0.85, confirmedXi: true },
-      { id: 'l4', name: 'Thibaut Courtois', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'GK', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 52, xgXa: 0.05, confirmedXi: true },
-      { id: 'l5', name: 'Lamine Yamal', club: 'Barcelona', leagueSlug: 'laliga-es', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: true, isUefaChampions: true, powerMultiplier: 1.20, optaAas: 66, xgXa: 1.05, confirmedXi: true },
-      { id: 'l6', name: 'Pau Cubarsí', club: 'Barcelona', leagueSlug: 'laliga-es', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: true, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 53, xgXa: 0.15, confirmedXi: true },
-      { id: 'l7', name: 'Pedri', club: 'Barcelona', leagueSlug: 'laliga-es', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.14, optaAas: 61, xgXa: 0.70, confirmedXi: true },
-      { id: 'l8', name: 'Antonio Rüdiger', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.08, optaAas: 52, xgXa: 0.10, confirmedXi: true },
-
-      // MLS
-      { id: 'm1', name: 'Lionel Messi', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.20, optaAas: 70, xgXa: 1.25, confirmedXi: true },
-      { id: 'm2', name: 'Luis Suárez', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.10, optaAas: 55, xgXa: 0.75, confirmedXi: true },
-      { id: 'm3', name: 'Sergio Busquets', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.08, optaAas: 58, xgXa: 0.30, confirmedXi: true },
-      { id: 'm4', name: 'Jordi Alba', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.10, optaAas: 54, xgXa: 0.40, confirmedXi: true },
-      { id: 'm5', name: 'Drake Callender', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'GK', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.05, optaAas: 48, xgXa: 0.05, confirmedXi: true }
+      { id: 'p7', name: 'Virgil van Dijk', club: 'Liverpool', leagueSlug: 'premier-league-gb-eng', position: 'DEF', scarcity: 'limited', isInSeason: false, isU23: false, isUefaChampions: true, powerMultiplier: 1.05, optaAas: 58, xgXa: 0.25, confirmedXi: true }
     ];
   }
 };
-
-window.loadDemoGallery = () => App.loadDemoGallery();
 
 document.addEventListener('DOMContentLoaded', () => {
   App.init();
