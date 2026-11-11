@@ -1,4 +1,4 @@
-// SorareHub - Main Application Controller
+// SorareHub - Controller con separazione Limited / Common
 const App = {
   userCards: [],
   currentUser: null,
@@ -11,16 +11,15 @@ const App = {
     const container = document.getElementById('toast-container');
     if (!container) return;
     const toast = document.createElement('div');
-    toast.className = `toast ${isError ? 'toast-error' : ''}`;
     toast.textContent = message;
     toast.style.cssText = `
-      background: ${isError ? '#ef4444' : '#1e293b'};
+      background: ${isError ? '#7f1d1d' : '#1e293b'};
       color: #fff;
-      padding: 10px 16px;
-      margin-top: 8px;
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-      font-size: 13px;
+      padding: 8px 14px;
+      margin-top: 6px;
+      border-radius: 6px;
+      border: 1px solid ${isError ? '#dc2626' : '#334155'};
+      font-size: 12px;
       font-weight: 600;
     `;
     container.appendChild(toast);
@@ -32,19 +31,15 @@ const App = {
     const code = urlParams.get('code');
     
     let token = localStorage.getItem('sorare_access_token');
-
     if (code) {
-      this.notify('🔄 Finalizzazione accesso Sorare...');
       token = await SorareAPI.handleOAuthCallback(code);
     }
-
     if (token) {
       await this.initUserGallery();
     }
   },
 
   async initUserGallery() {
-    this.notify('📥 Connessione a Sorare in corso...');
     try {
       const data = await SorareAPI.fetchCurrentUserGallery();
       if (!data) return;
@@ -52,35 +47,36 @@ const App = {
       this.currentUser = data.user;
       this.userCards = data.cards || [];
 
-      // Aggiorna Header
+      // Statistiche per rarità
+      const limitedCards = this.userCards.filter(c => c.scarcity === 'limited');
+      const commonCards = this.userCards.filter(c => c.scarcity === 'common' || c.scarcity === 'custom');
+
+      // Update UI Header & Counters
       const userBadge = document.getElementById('user-badge');
       const userNick = document.getElementById('user-nickname');
-      const btnLogin = document.getElementById('btn-login');
-
       if (userBadge && userNick) {
         userNick.textContent = `@${this.currentUser.nickname || this.currentUser.slug}`;
         userBadge.classList.remove('hidden');
       }
-      if (btnLogin) {
-        btnLogin.textContent = 'Ricarica Collezione';
-      }
 
-      // Aggiorna Contatori
-      const countEl = document.getElementById('stat-cards-count');
-      if (countEl) countEl.textContent = this.userCards.length;
-
+      const elTot = document.getElementById('stat-cards-count');
+      const elLim = document.getElementById('stat-limited-count');
+      const elCom = document.getElementById('stat-common-count');
       const badgeCount = document.getElementById('gallery-count-badge');
-      if (badgeCount) badgeCount.textContent = this.userCards.length;
 
-      this.notify(`✅ Collezione caricata: ${this.userCards.length} carte!`);
+      if (elTot) elTot.textContent = this.userCards.length;
+      if (elLim) elLim.textContent = limitedCards.length;
+      if (elCom) elCom.textContent = commonCards.length;
+      if (badgeCount) badgeCount.textContent = limitedCards.length;
 
-      // Se la galleria è aperta, fai il render
-      if (document.getElementById('gallery-view') && !document.getElementById('gallery-view').classList.contains('hidden')) {
+      this.notify(`Collezione caricata: ${limitedCards.length} Limited, ${commonCards.length} Common.`);
+
+      if (!document.getElementById('gallery-view')?.classList.contains('hidden')) {
         this.filterGallery();
       }
     } catch (err) {
       console.error(err);
-      this.notify(`❌ Errore Galleria: ${err.message}`, true);
+      this.notify(`Errore: ${err.message}`, true);
     }
   },
 
@@ -91,68 +87,59 @@ const App = {
     const btnGal = document.getElementById('tab-gallery');
 
     if (viewName === 'gallery') {
-      if (optView) optView.classList.add('hidden');
-      if (galView) galView.classList.remove('hidden');
-      if (btnOpt) btnOpt.classList.remove('active');
-      if (btnGal) btnGal.classList.add('active');
+      optView.classList.add('hidden');
+      galView.classList.remove('hidden');
+      btnOpt.classList.remove('active');
+      btnGal.classList.add('active');
       this.filterGallery();
     } else {
-      if (galView) galView.classList.add('hidden');
-      if (optView) optView.classList.remove('hidden');
-      if (btnGal) btnGal.classList.remove('active');
-      if (btnOpt) btnOpt.classList.add('active');
+      galView.classList.add('hidden');
+      optView.classList.remove('hidden');
+      btnGal.classList.remove('active');
+      btnOpt.classList.add('active');
     }
   },
 
   buildCardHtml(card, isSlot = false) {
     const fallback = 'https://assets.sorare.com/placeholder.png';
-    const capBadge = card.isCaptain ? '<div style="position:absolute;bottom:6px;left:6px;background:#f59e0b;color:#000;font-weight:900;border-radius:4px;padding:1px 5px;font-size:10px;">(C)</div>' : '';
-    const slotStyle = isSlot ? 'style="width: 140px; flex-shrink: 0;"' : '';
+    const cap = card.isCaptain ? '<div style="position:absolute;bottom:4px;left:4px;background:#f59e0b;color:#000;font-weight:800;border-radius:3px;padding:1px 4px;font-size:9px;">(C)</div>' : '';
+    const slotStyle = isSlot ? 'style="width: 130px; flex-shrink: 0;"' : '';
 
     return `
       <div class="sorare-card-box ${card.scarcity}" ${slotStyle}>
-        <div class="card-image-wrap" style="position:relative; width:100%; aspect-ratio:0.75; background:#0b1120; overflow:hidden; border-radius:8px 8px 0 0;">
-          <span class="card-pos-badge" style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.8);color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:bold;">${card.position}</span>
-          <span class="card-bonus-badge" style="position:absolute;top:6px;right:6px;background:#10b981;color:#fff;padding:2px 5px;border-radius:4px;font-size:10px;font-weight:bold;">+${card.bonusPct}%</span>
+        <div style="position:relative; width:100%; aspect-ratio:0.75; background:#0a0c10; overflow:hidden;">
+          <span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.8);color:#fff;padding:2px 5px;border-radius:3px;font-size:10px;font-weight:700;">${card.position}</span>
+          <span style="position:absolute;top:4px;right:4px;background:rgba(16,185,129,0.9);color:#fff;padding:2px 4px;border-radius:3px;font-size:9px;font-weight:700;">+${card.bonusPct}%</span>
           <img src="${card.pictureUrl || fallback}" alt="${card.name}" loading="lazy" style="width:100%; height:100%; object-fit:cover;" onerror="this.src='${fallback}'" />
-          ${capBadge}
+          ${cap}
         </div>
-        <div style="padding: 8px; background:#1e293b; border-radius:0 0 8px 8px;">
-          <div style="font-weight:bold; font-size:13px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${card.name}">${card.name}</div>
-          <div style="font-size:11px; color:#94a3b8; margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${card.club}</div>
-          <div style="display:flex; justify-content:space-between; background:#0f172a; padding:4px 6px; border-radius:4px; font-size:11px;">
-            <div style="text-align:center;"><span style="color:#64748b; font-size:9px; display:block;">L5</span><strong style="color:#38bdf8;">${card.l5}</strong></div>
-            <div style="text-align:center;"><span style="color:#64748b; font-size:9px; display:block;">L15</span><strong style="color:#38bdf8;">${card.l15}</strong></div>
-            <div style="text-align:center;"><span style="color:#64748b; font-size:9px; display:block;">AAS</span><strong style="color:#10b981;">${card.optaAas}</strong></div>
+        <div style="padding: 7px; background:#14171f;">
+          <div style="font-weight:700; font-size:12px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${card.name}</div>
+          <div style="font-size:10px; color:#8b949e; margin-bottom:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${card.club}</div>
+          <div style="display:flex; justify-content:space-between; background:#0b0d12; padding:3px 5px; border-radius:4px; font-size:10px;">
+            <div><span style="color:#64748b; font-size:8px; display:block;">L5</span><strong>${card.l5}</strong></div>
+            <div><span style="color:#64748b; font-size:8px; display:block;">L15</span><strong>${card.l15}</strong></div>
+            <div><span style="color:#64748b; font-size:8px; display:block;">AAS</span><strong style="color:#10b981;">${card.optaAas}</strong></div>
           </div>
         </div>
       </div>
     `;
   },
 
-  renderGallery(cards) {
-    const grid = document.getElementById('cards-grid');
-    if (!grid) return;
-
-    if (!cards || cards.length === 0) {
-      grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #94a3b8; padding: 40px;">Nessuna carta trovata con questi filtri.</div>';
-      return;
-    }
-
-    grid.innerHTML = cards.map(c => this.buildCardHtml(c)).join('');
-  },
-
   filterGallery() {
     const search = (document.getElementById('gallery-search')?.value || '').toLowerCase();
     const pos = document.getElementById('gallery-filter-pos')?.value || 'ALL';
-    const scarcity = document.getElementById('gallery-filter-scarcity')?.value || 'ALL';
+    const pool = document.getElementById('gallery-filter-pool')?.value || 'limited_only';
     const sort = document.getElementById('gallery-sort')?.value || 'l15-desc';
 
     let list = this.userCards.filter(c => {
+      // Filtro per gruppo di rarità
+      if (pool === 'limited_only' && c.scarcity !== 'limited') return false;
+      if (pool === 'common_only' && (c.scarcity !== 'common' && c.scarcity !== 'custom')) return false;
+
       const matchSearch = c.name.toLowerCase().includes(search) || c.club.toLowerCase().includes(search);
       const matchPos = pos === 'ALL' || c.position === pos;
-      const matchScarcity = scarcity === 'ALL' || c.scarcity === scarcity;
-      return matchSearch && matchPos && matchScarcity;
+      return matchSearch && matchPos;
     });
 
     list.sort((a, b) => {
@@ -163,12 +150,21 @@ const App = {
       return 0;
     });
 
-    this.renderGallery(list);
+    const grid = document.getElementById('cards-grid');
+    if (!grid) return;
+    if (list.length === 0) {
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#8b949e;padding:30px;">Nessuna carta trovata con questi filtri.</div>';
+      return;
+    }
+    grid.innerHTML = list.map(c => this.buildCardHtml(c)).join('');
   },
 
   generateOptimizedLineups() {
-    if (!this.userCards || this.userCards.length < 5) {
-      this.notify('❌ Servono almeno 5 carte per calcolare una formazione.', true);
+    // ESCLUDI RIGOROSAMENTE LE COMMON: usa solo carte Limited
+    const playablePool = this.userCards.filter(c => c.scarcity === 'limited');
+
+    if (playablePool.length < 5) {
+      this.notify('Servono almeno 5 carte Limited per schierare.', true);
       return;
     }
 
@@ -179,7 +175,7 @@ const App = {
     const lineups = [];
 
     for (let i = 0; i < targetLineups; i++) {
-      const available = this.userCards.filter(c => !usedIds.has(c.id));
+      const available = playablePool.filter(c => !usedIds.has(c.id));
       const gk = available.filter(c => c.position === 'GK').sort((a, b) => (b.l15 * b.powerMultiplier) - (a.l15 * a.powerMultiplier))[0];
       const def = available.filter(c => c.position === 'DEF' && c.id !== gk?.id).sort((a, b) => (b.l15 * b.powerMultiplier) - (a.l15 * a.powerMultiplier))[0];
       const mid = available.filter(c => c.position === 'MID' && c.id !== gk?.id && c.id !== def?.id).sort((a, b) => (b.l15 * b.powerMultiplier) - (a.l15 * a.powerMultiplier))[0];
@@ -195,7 +191,6 @@ const App = {
       const squad = [gk, def, mid, fwd, extra];
       squad.forEach(c => usedIds.add(c.id));
 
-      // Capitano al punteggio potenziale più alto
       let bestCap = squad[0];
       squad.forEach(c => {
         if ((c.l15 * c.powerMultiplier) > (bestCap.l15 * bestCap.powerMultiplier)) {
@@ -214,30 +209,25 @@ const App = {
       });
     }
 
-    this.renderLineups(lineups);
-  },
-
-  renderLineups(lineups) {
     const container = document.getElementById('lineups-results-container');
     if (!container) return;
-
     if (lineups.length === 0) {
-      container.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:20px;">Carte insufficienti per creare formazioni complete con questi criteri.</div>';
+      container.innerHTML = '<div style="color:#8b949e;padding:16px;">Limited insufficienti per comporre formazioni complete con portiere.</div>';
       return;
     }
 
     container.innerHTML = lineups.map(l => `
-      <div style="background:#111827; border:1px solid #1f2937; border-radius:12px; padding:16px; margin-top:20px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <div style="background:#15171e; border:1px solid #262a36; border-radius:8px; padding:14px; margin-top:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
           <div>
-            <h3 style="color:#fff; font-size:16px; margin:0;">Formazione #${l.rank} - ${l.tournament}</h3>
-            <span style="color:#94a3b8; font-size:12px;">5 carte uniche senza sovrapposizioni</span>
+            <strong style="color:#fff; font-size:14px;">Formazione #${l.rank} - ${l.tournament}</strong>
+            <span style="color:#8b949e; font-size:11px; margin-left:8px;">5 Limited uniche</span>
           </div>
-          <div style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:6px 12px; border-radius:8px; font-weight:bold; font-size:14px;">
+          <div style="background:#1c1f28; border:1px solid #363c4d; padding:4px 10px; border-radius:6px; font-weight:700; font-size:13px; color:#eab308;">
             Previsto: ${l.projectedScore} pts
           </div>
         </div>
-        <div style="display:flex; gap:12px; overflow-x:auto; padding-bottom:8px;">
+        <div style="display:flex; gap:10px; overflow-x:auto; padding-bottom:6px;">
           ${l.cards.map(c => this.buildCardHtml(c, true)).join('')}
         </div>
       </div>
