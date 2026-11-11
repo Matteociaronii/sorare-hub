@@ -1,4 +1,4 @@
-// SorareHub - Core Logic & Visual Engine
+// SorareHub - Core Logic with Opta & StatsBomb Engine
 const App = {
   userCards: [],
   currentUser: null,
@@ -64,12 +64,12 @@ const App = {
       this.currentUser = data.user;
       this.userCards = data.cards || [];
 
-      // Filtra le limited (che costituiscono la tua vera collezione giocabile)
+      // Filtra le limited (la tua collezione giocabile nei tornei)
       const limiteds = this.userCards.filter(c => c.scarcity === 'limited');
       const inSeasons = limiteds.filter(c => c.isInSeason);
       const starters = limiteds.filter(c => c.confirmedXi);
 
-      // Aggiorna indicatori identici allo screenshot
+      // Aggiorna gli indicatori dello screenshot originale
       const btnLogin = document.getElementById('btn-login');
       if (btnLogin) {
         btnLogin.textContent = `@${this.currentUser.nickname || this.currentUser.slug}`;
@@ -82,36 +82,17 @@ const App = {
       document.getElementById('stat-status-sub').textContent = 'Sincronizzato Live';
       document.getElementById('stat-inseason-count').textContent = inSeasons.length;
       document.getElementById('stat-confirmed-count').textContent = starters.length;
-      document.getElementById('gallery-count-badge').textContent = limiteds.length;
+      document.getElementById('gallery-counter-num').textContent = limiteds.length;
 
       this.notify(`✅ Sincronizzazione completata: ${limiteds.length} Limited pronte!`);
+      this.filterGallery();
     } catch (err) {
       console.error(err);
       this.notify(`Errore: ${err.message}`, true);
     }
   },
 
-  switchView(view) {
-    const optView = document.getElementById('optimizer-view');
-    const galView = document.getElementById('gallery-view');
-    const btnOpt = document.getElementById('tab-optimizer');
-    const btnGal = document.getElementById('tab-gallery');
-
-    if (view === 'gallery') {
-      optView.classList.add('hidden');
-      galView.classList.remove('hidden');
-      btnOpt.classList.remove('active');
-      btnGal.classList.add('active');
-      this.filterGallery();
-    } else {
-      galView.classList.add('hidden');
-      optView.classList.remove('hidden');
-      btnGal.classList.remove('active');
-      btnOpt.classList.add('active');
-    }
-  },
-
-  // Generatore Carte Grafiche
+  // Generatore HTML per singola card grafica con badge Opta & StatsBomb
   buildCardHtml(card, isSlot = false) {
     const fallback = 'https://assets.sorare.com/placeholder.png';
     const cap = card.isCaptain ? '<div style="position:absolute;bottom:4px;left:4px;background:#f59e0b;color:#000;font-weight:900;border-radius:3px;padding:1px 5px;font-size:9px;">(C)</div>' : '';
@@ -138,6 +119,7 @@ const App = {
     `;
   },
 
+  // Filtra e ordina la vetrina carte
   filterGallery() {
     const search = (document.getElementById('gallery-search')?.value || '').toLowerCase();
     const pool = document.getElementById('gallery-filter-pool')?.value || 'limited_only';
@@ -164,32 +146,31 @@ const App = {
     const grid = document.getElementById('cards-grid');
     if (!grid) return;
     if (list.length === 0) {
-      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#8c93a4;padding:40px;">Nessuna carta trovata con questi parametri.</div>';
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#8c93a4;padding:30px;">Nessuna carta trovata con questi filtri.</div>';
       return;
     }
     grid.innerHTML = list.map(c => this.buildCardHtml(c)).join('');
   },
 
+  // Risolutore Portfolio a cascata senza sovrapposizione di carte
   generateOptimizedLineups() {
     const competition = document.getElementById('competition-select')?.value || 'PREMIER_LEAGUE_IN_SEASON';
-    const isInSeasonReq = competition.includes('IN_SEASON');
-
-    // Filtra per la rarità attiva scelta nei bottoni (es. solo Limited)
-    let pool = this.userCards.filter(c => c.scarcity === this.activeRarity);
+    const pool = this.userCards.filter(c => c.scarcity === this.activeRarity);
 
     if (pool.length < 5) {
-      this.notify(`Servono almeno 5 carte ${this.activeRarity} per generare un lineup!`, true);
+      this.notify(`Servono almeno 5 carte ${this.activeRarity} per comporre formazioni.`, true);
       return;
     }
 
-    // Risoluzione a cascata (fino a 5 formazioni senza riuso della stessa carta)
     const usedIds = new Set();
     const lineups = [];
 
-    // Funzione di punteggio in base alla strategia (Floor AAS vs Ceiling)
-    const scoreFn = (card) => {
-      const base = this.activeStrategy === 'floor' ? (card.l15 * 0.7 + card.optaAas * 0.3) : (card.l5 * 0.6 + card.l15 * 0.4);
-      return base * card.powerMultiplier;
+    // Funzione di punteggio strategica (Floor AAS vs Ceiling con metriche Opta/StatsBomb)
+    const scoreFn = (c) => {
+      const base = this.activeStrategy === 'floor'
+        ? (c.l15 * 0.65 + c.optaAas * 0.35)
+        : (c.l5 * 0.55 + c.l15 * 0.25 + (c.xgXa * 25));
+      return base * c.powerMultiplier;
     };
 
     for (let r = 0; r < 5; r++) {
@@ -209,7 +190,6 @@ const App = {
       const team = [gk, def, mid, fwd, extra];
       team.forEach(c => usedIds.add(c.id));
 
-      // Assegna capitano al miglior punteggio
       let bestCap = team[0];
       team.forEach(c => {
         if (scoreFn(c) > scoreFn(bestCap)) bestCap = c;
@@ -256,25 +236,27 @@ const App = {
 
   runDemoMode() {
     this.notify('Caricamento modalità Demo simulata...');
-    // Genera 20 carte fake dimostrative
-    const mockCards = ['GK', 'DEF', 'DEF', 'MID', 'MID', 'FWD', 'FWD'].flatMap((pos, idx) => [
+    const positions = ['GK', 'DEF', 'DEF', 'MID', 'MID', 'FWD', 'FWD'];
+    const mock = positions.flatMap((pos, i) => [
       {
-        id: `mock_${pos}_${idx}`,
-        name: `${pos} Pro 2026`,
-        club: 'Demo FC',
+        id: `demo_${pos}_${i}`,
+        name: `${pos} Starter`,
+        club: 'Demo Club',
         position: pos,
         scarcity: 'limited',
         isInSeason: true,
         confirmedXi: true,
-        l5: 58,
-        l15: 55,
+        l5: 56 + (i * 2),
+        l15: 53 + (i * 2),
         bonusPct: 5,
         powerMultiplier: 1.05,
         optaAas: 48,
+        xgXa: 0.35,
+        oppXga: 1.10,
         pictureUrl: 'https://assets.sorare.com/placeholder.png'
       }
     ]);
-    this.userCards = mockCards;
+    this.userCards = mock;
     this.initUserGallery();
   }
 };
