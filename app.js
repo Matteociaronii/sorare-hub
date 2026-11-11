@@ -1,4 +1,4 @@
-// SorareHub - Main UI Controller
+// SorareHub - Main Application Controller
 document.addEventListener('DOMContentLoaded', async () => {
   let currentGallery = [];
   let selectedScarcity = 'limited';
@@ -8,19 +8,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   const loginBtn = document.getElementById('login-btn');
   const demoBtn = document.getElementById('demo-btn');
   const runBtn = document.getElementById('run-optimizer-btn');
-  const slugInput = document.getElementById('slug-input');
-  const slugLoadBtn = document.getElementById('slug-load-btn');
   const lineupsOutput = document.getElementById('lineups-output');
 
-  // 1. Popola Menu Competizioni Ufficiali Sorare
-  CONFIG.OFFICIAL_COMPETITIONS.forEach(comp => {
-    const opt = document.createElement('option');
-    opt.value = comp.id;
-    opt.textContent = comp.name;
-    compSelect.appendChild(opt);
-  });
+  // 1. Popola selettore competizioni ufficiali Sorare
+  if (compSelect && CONFIG.OFFICIAL_COMPETITIONS) {
+    compSelect.innerHTML = '';
+    CONFIG.OFFICIAL_COMPETITIONS.forEach(comp => {
+      const opt = document.createElement('option');
+      opt.value = comp.id;
+      opt.textContent = comp.name;
+      compSelect.appendChild(opt);
+    });
+  }
 
-  // 2. Gestione Selettori Rarità e Strategia
+  // 2. Selettori Rarità e Strategia
   document.querySelectorAll('#scarcity-selector .pill-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#scarcity-selector .pill-btn').forEach(b => b.classList.remove('active'));
@@ -39,56 +40,79 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  compSelect.addEventListener('change', () => {
-    if (currentGallery.length) executeOptimization();
-  });
+  if (compSelect) {
+    compSelect.addEventListener('change', () => {
+      if (currentGallery.length) executeOptimization();
+    });
+  }
 
-  // 3. Controllo Callback OAuth Sorare
-  await SorareAPI.handleOAuthCallback();
+  // 3. Gestione Click Pulsante Login OAuth
+  if (loginBtn) {
+    loginBtn.addEventListener('click', () => {
+      loginBtn.innerHTML = '<span>Reindirizzamento...</span>';
+      SorareAPI.startOAuthFlow();
+    });
+  }
 
-  // 4. Event Listeners Login, Slug e Demo
-  loginBtn.addEventListener('click', () => {
-    SorareAPI.startOAuthFlow();
-  });
-
-  demoBtn.addEventListener('click', () => {
-    currentGallery = SorareAPI.getDemoGallery();
-    updateTelemetryUI('Gallery Demo Pro (21 Carte)', currentGallery);
-    executeOptimization();
-  });
-
-  slugLoadBtn.addEventListener('click', async () => {
-    const slug = slugInput.value.trim();
-    if (!slug) return;
-    slugLoadBtn.textContent = 'Caricamento...';
-    try {
-      currentGallery = await SorareAPI.fetchGalleryBySlug(slug);
-      updateTelemetryUI(`@${slug}`, currentGallery);
-      executeOptimization();
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      slugLoadBtn.textContent = 'Carica Gallery';
-    }
-  });
-
-  runBtn.addEventListener('click', () => {
-    if (!currentGallery.length) {
+  // 4. Modalità Demo
+  if (demoBtn) {
+    demoBtn.addEventListener('click', () => {
       currentGallery = SorareAPI.getDemoGallery();
-      updateTelemetryUI('Gallery Demo Attivata', currentGallery);
+      updateTelemetryUI('Demo Mode Pro', currentGallery);
+      executeOptimization();
+    });
+  }
+
+  if (runBtn) {
+    runBtn.addEventListener('click', () => {
+      if (!currentGallery.length) {
+        currentGallery = SorareAPI.getDemoGallery();
+        updateTelemetryUI('Demo Mode Pro', currentGallery);
+      }
+      executeOptimization();
+    });
+  }
+
+  // 5. Verifica Ritorno da Sorare (OAuth Callback)
+  const token = await SorareAPI.handleOAuthCallback();
+  const storedToken = token || localStorage.getItem('sorare_access_token');
+
+  if (storedToken) {
+    if (loginBtn) {
+      loginBtn.innerHTML = '<span>Caricamento Gallery...</span>';
     }
-    executeOptimization();
-  });
+    try {
+      const data = await SorareAPI.fetchCurrentUserGallery();
+      if (data && data.cards) {
+        currentGallery = data.cards;
+        updateTelemetryUI(`@${data.user.nickname || data.user.slug}`, currentGallery);
+        if (loginBtn) {
+          loginBtn.innerHTML = '<span>Connesso</span>';
+          loginBtn.classList.remove('btn-gold');
+          loginBtn.classList.add('btn-secondary');
+        }
+        executeOptimization();
+      }
+    } catch (e) {
+      console.error(e);
+      if (loginBtn) loginBtn.innerHTML = '<span>Connetti Sorare</span>';
+    }
+  }
 
   function updateTelemetryUI(userLabel, cards) {
-    document.getElementById('stat-total-cards').textContent = cards.length;
-    document.getElementById('stat-user-slug').textContent = userLabel;
-    document.getElementById('stat-inseason-cards').textContent = cards.filter(c => c.isInSeason).length;
-    document.getElementById('stat-starters').textContent = cards.filter(c => c.confirmedXi).length;
+    const totalEl = document.getElementById('stat-total-cards');
+    const slugEl = document.getElementById('stat-user-slug');
+    const inSeasonEl = document.getElementById('stat-inseason-cards');
+    const startersEl = document.getElementById('stat-starters');
+
+    if (totalEl) totalEl.textContent = cards.length;
+    if (slugEl) slugEl.textContent = userLabel;
+    if (inSeasonEl) inSeasonEl.textContent = cards.filter(c => c.isInSeason).length;
+    if (startersEl) startersEl.textContent = cards.filter(c => c.confirmedXi).length;
   }
 
   function executeOptimization() {
-    const compId = compSelect.value;
+    const compId = compSelect ? compSelect.value : CONFIG.OFFICIAL_COMPETITIONS[0].id;
     const competition = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === compId) || CONFIG.OFFICIAL_COMPETITIONS[0];
 
     const lineups = OptimizerEngine.buildCascadePortfolio(
@@ -98,17 +122,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       selectedStrategy
     );
 
-    document.getElementById('stat-lineups-built').textContent = lineups.length;
+    const builtEl = document.getElementById('stat-lineups-built');
+    if (builtEl) builtEl.textContent = lineups.length;
     renderLineups(lineups, competition);
   }
 
   function renderLineups(lineups, competition) {
+    if (!lineupsOutput) return;
+
     if (!lineups.length) {
       lineupsOutput.innerHTML = `
         <div class="empty-placeholder carbon-card">
           <div class="placeholder-icon">⚠️</div>
           <h2>Carte Insufficienti per ${competition.name}</h2>
-          <p>Non ci sono abbastanza carte eleggibili (o almeno ${competition.inSeasonRequired} carte In-Season) nella rarità selezionata per completare una formazione valida.</p>
+          <p>Non ci sono abbastanza carte eleggibili (richieste minimo ${competition.inSeasonRequired} In-Season) nella rarità ${selectedScarcity.toUpperCase()} per completare la formazione.</p>
         </div>
       `;
       return;
@@ -134,11 +161,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div class="slot-header">
                   <span class="pos-tag">${p.slotRole} ${p.isCaptain ? '© CAP' : ''}</span>
                   <span class="season-tag ${p.isInSeason ? 'in-season' : 'classic'}">
-                    ${p.isInSeason ? '26/27 IN-SEASON' : 'CLASSIC'} (+${p.bonusPct}%)
+                    ${p.isInSeason ? 'IN-SEASON' : 'CLASSIC'} (+${p.bonusPct}%)
                   </span>
                 </div>
                 <div class="player-name">${p.name}</div>
-                <div class="player-club">${p.club} • Titolarità ${p.starterProb}%</div>
+                <div class="player-club">${p.club}</div>
                 <div class="metrics-box">
                   <div class="metric-row"><span>Opta AAS:</span><span>${p.optaAas} pt</span></div>
                   <div class="metric-row"><span>xG + xA:</span><span>${p.xgXa}</span></div>
@@ -151,27 +178,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             </div>
           `).join('')}
         </div>
-
-        ${lineup.bench.length ? `
-          <div class="bench-section">
-            <div class="bench-title">PANCHINA SMART (2 SLOT • REGOLA BASE FLOOR 35 PT GARANTITA SUBENTRANTI)</div>
-            <div class="bench-grid">
-              ${lineup.bench.map((sub, idx) => `
-                <div class="player-card">
-                  <div class="slot-header">
-                    <span class="pos-tag">SUB ${idx + 1} (${sub.position})</span>
-                    <span class="season-tag ${sub.isInSeason ? 'in-season' : 'classic'}">+${sub.bonusPct}%</span>
-                  </div>
-                  <div class="player-name">${sub.name} (${sub.club})</div>
-                  <div class="metrics-box" style="margin-top:6px;margin-bottom:0;">
-                    <div class="metric-row"><span>Floor Subentrante:</span><span>35.0 pt</span></div>
-                    <div class="metric-row"><span>Proiezione Attesa:</span><span>${sub.projectedScore} pt</span></div>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
       </div>
     `).join('');
   }
