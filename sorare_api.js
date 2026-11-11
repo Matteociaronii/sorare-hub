@@ -20,7 +20,6 @@ const SorareAPI = {
   },
 
   async startOAuthFlow() {
-    // Se c'è già un token valido, non rifare il login
     if (localStorage.getItem('sorare_access_token')) {
       if (window.App && App.initUserGallery) {
         App.initUserGallery();
@@ -55,7 +54,6 @@ const SorareAPI = {
       code = urlParams.get('code');
     }
     
-    // Se non c'è code, controlla se abbiamo già il token salvato
     if (!code) {
       return localStorage.getItem('sorare_access_token') || null;
     }
@@ -87,7 +85,7 @@ const SorareAPI = {
       if (tokenData.access_token) {
         localStorage.setItem('sorare_access_token', tokenData.access_token);
         
-        // Pulisci l'URL da ?code=... per evitare scambi doppi al refresh
+        // Pulisce l'URL per evitare chiamate duplicate di scambio token
         const cleanUrl = window.location.origin + window.location.pathname;
         window.history.replaceState({}, document.title, cleanUrl);
 
@@ -97,7 +95,6 @@ const SorareAPI = {
       }
     } catch (err) {
       console.error('Errore OAuth:', err);
-      // Pulisci comunque l'URL per non rimanere bloccati sul code vecchio
       const cleanUrl = window.location.origin + window.location.pathname;
       window.history.replaceState({}, document.title, cleanUrl);
       
@@ -114,7 +111,7 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
 
-    // Query per footballUserProfile includendo immagine carta e statistiche recenti
+    // Query corretta che passa da footballUserProfile e scarica le immagini per la visualizzazione grafica
     const query = `
       query GetFootballUserProfileGallery($after: String) {
         currentUser {
@@ -211,7 +208,7 @@ const SorareAPI = {
 
       if (!cursor || !hasNext) break;
 
-      // Pausa di sicurezza di 150ms tra le chiamate per evitare 429
+      // Pausa di 150ms per proteggere le chiamate ripetute da rate limit
       await new Promise(resolve => setTimeout(resolve, 150));
     }
 
@@ -230,7 +227,7 @@ const SorareAPI = {
         const playerSlug = card.player?.slug || card.slug;
         const rawPos = (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
         const pos = this.normalizePosition(rawPos);
-        const leagueSlug = card.player?.activeClub?.domesticLeague?.slug || 'premier-league-gb-eng';
+        const leagueSlug = card.player?.activeClub?.domesticLeague?.slug || 'serie-a-it';
         const clubName = card.player?.activeClub?.name || 'Club';
         const isInSeason = (card.seasonYear || 0) >= currentSeason;
         const birthYear = card.player?.birthDate ? new Date(card.player.birthDate).getFullYear() : 2000;
@@ -242,7 +239,7 @@ const SorareAPI = {
         const oppXga = (0.90 + ((seed % 80) / 100)).toFixed(2);
         const starterProb = 85 + (seed % 15);
 
-        // Calcolo metriche L5 e L15 stimate realistiche in base a seed e ruolo
+        // Calcolo metriche L5 e L15 per la gallery
         const baseScore = pos === 'GK' ? 48 : (pos === 'DEF' ? 46 : (pos === 'MID' ? 51 : 47));
         const l15 = Math.min(85, Math.max(30, baseScore + ((seed % 21) - 10)));
         const l5 = Math.min(95, Math.max(25, l15 + ((seed % 15) - 7)));
