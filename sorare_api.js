@@ -47,19 +47,24 @@ const SorareAPI = {
     if (!code) return null;
 
     const verifier = localStorage.getItem('sorare_pkce_verifier');
+    // Pulisce l'URL mantenendo la pagina pulita
     window.history.replaceState({}, document.title, CONFIG.REDIRECT_URI);
 
     try {
+      // Parametri form-urlencoded standard OAuth2
+      const bodyParams = new URLSearchParams();
+      bodyParams.append('client_id', CONFIG.CLIENT_ID);
+      bodyParams.append('grant_type', 'authorization_code');
+      bodyParams.append('code', code);
+      bodyParams.append('redirect_uri', CONFIG.REDIRECT_URI);
+      if (verifier) {
+        bodyParams.append('code_verifier', verifier);
+      }
+
       const response = await fetch(CONFIG.TOKEN_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_id: CONFIG.CLIENT_ID,
-          code: code,
-          grant_type: 'authorization_code',
-          redirect_uri: CONFIG.REDIRECT_URI,
-          code_verifier: verifier
-        })
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: bodyParams.toString()
       });
 
       if (!response.ok) {
@@ -83,6 +88,7 @@ const SorareAPI = {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
+    // Chiamata GraphQL diretta autenticata con il Bearer Token dell'utente
     const query = `
       query GetCurrentUser {
         currentUser {
@@ -115,6 +121,7 @@ const SorareAPI = {
       }
     `;
 
+    // Con il token Bearer usiamo il proxy GraphQL
     const endpoint = `${CONFIG.CORS_PROXY}${encodeURIComponent(CONFIG.GRAPHQL_ENDPOINT)}`;
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -127,7 +134,7 @@ const SorareAPI = {
 
     const json = await res.json();
     if (!json.data || !json.data.currentUser) {
-      throw new Error('Impossibile recuperare il profilo utente.');
+      throw new Error('Impossibile recuperare il profilo utente da Sorare.');
     }
 
     return {
@@ -139,16 +146,16 @@ const SorareAPI = {
   enrichCardsWithOptaMetrics(rawCards) {
     const currentSeason = 2026;
     return rawCards
-      .filter(c => c.player && c.anyPositions && c.anyPositions.length > 0)
+      .filter(c => c && c.player && c.anyPositions && c.anyPositions.length > 0)
       .map((card, index) => {
         const pos = this.normalizePosition(card.anyPositions[0]);
         const leagueSlug = card.player.activeClub?.domesticLeague?.slug || 'serie-a-it';
         const clubName = card.player.activeClub?.name || 'Club';
-        const isInSeason = card.seasonYear >= currentSeason;
+        const isInSeason = (card.seasonYear || 0) >= currentSeason;
         const birthYear = card.player.birthDate ? new Date(card.player.birthDate).getFullYear() : 2000;
         const isU23 = birthYear >= 2003;
 
-        const seed = this.hashString(card.player.slug || card.slug);
+        const seed = this.hashString(card.player.slug || card.slug || String(index));
         const aasVolume = 38 + (seed % 22);
         const xgXa = ((seed % 60) / 100).toFixed(2);
         const oppXga = (0.90 + ((seed % 80) / 100)).toFixed(2);
@@ -166,7 +173,7 @@ const SorareAPI = {
           leagueSlug: leagueSlug,
           position: pos,
           scarcity: (card.rarityTyped || 'limited').toLowerCase(),
-          seasonYear: card.seasonYear || 2026,
+          seasonYear: card.seasonYear || currentSeason,
           isInSeason: isInSeason,
           isU23: isU23,
           bonusPct: totalBonusPct,
