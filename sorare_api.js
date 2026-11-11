@@ -1,4 +1,4 @@
-// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer
+// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer (con Auto-Pagination)
 const SorareAPI = {
   generateRandomString(length = 64) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -91,13 +91,19 @@ const SorareAPI = {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
-    // Fragment condizionale su Card per estrarre player in AnyCardInterface
-    const query = `
-      query GetCurrentUserCards {
+    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
+
+    // Query GraphQL con paginazione via cursore (first: 50, after: $after)
+    const paginatedQuery = `
+      query GetCurrentUserCards($after: String) {
         currentUser {
           slug
           nickname
-          cards {
+          cards(first: 50, after: $after) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
             nodes {
               slug
               name
@@ -126,36 +132,64 @@ const SorareAPI = {
       }
     `;
 
-    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
+    let allCards = [];
+    let hasNextPage = true;
+    let endCursor = null;
+    let userProfile = null;
+    let pageCount = 0;
 
-    const res = await fetch(workerGraphqlEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ query })
-    });
+    while (hasNextPage) {
+      pageCount++;
+      if (window.App && App.notify) {
+        App.notify(`📥 Caricamento carte... (${allCards.length} caricate)`);
+      }
 
-    if (!res.ok) {
-      const errBody = await res.text();
-      throw new Error(`Errore API Sorare (${res.status}): ${errBody}`);
+      const res = await fetch(workerGraphqlEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          query: paginatedQuery,
+          variables: { after: endCursor }
+        })
+      });
+
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(`Errore API Sorare (${res.status}): ${errBody}`);
+      }
+
+      const json = await res.json();
+      if (json.errors && json.errors.length > 0) {
+        console.error('Errori GraphQL:', json.errors);
+        throw new Error(json.errors[0].message);
+      }
+
+      if (!json.data || !json.data.currentUser) {
+        throw new Error('Nessun dato utente ricevuto da Sorare.');
+      }
+
+      const currentUser = json.data.currentUser;
+      if (!userProfile) {
+        userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
+      }
+
+      const cardNodes = currentUser.cards?.nodes || [];
+      allCards = allCards.concat(cardNodes);
+
+      const pageInfo = currentUser.cards?.pageInfo;
+      hasNextPage = pageInfo?.hasNextPage === true;
+      endCursor = pageInfo?.endCursor || null;
+
+      // Salvaguardia per evitare loop infiniti
+      if (pageCount > 25) break;
     }
 
-    const json = await res.json();
-    if (json.errors && json.errors.length > 0) {
-      console.error('Errori GraphQL:', json.errors);
-      throw new Error(json.errors[0].message);
-    }
-
-    if (!json.data || !json.data.currentUser) {
-      throw new Error('Nessun dato utente ricevuto da Sorare.');
-    }
-
-    const rawCards = json.data.currentUser.cards?.nodes || [];
     return {
-      user: json.data.currentUser,
-      cards: this.enrichCardsWithOptaMetrics(rawCards)
+      user: userProfile,
+      cards: this.enrichCardsWithOptaMetrics(allCards)
     };
   },
 
