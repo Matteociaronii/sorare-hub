@@ -1,4 +1,4 @@
-// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer (Full Gallery Pagination)
+// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer (Cursor-Based Pagination)
 const SorareAPI = {
   generateRandomString(length = 64) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -93,38 +93,13 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
 
-    // 1. Identifica lo slug dell'utente
-    const meQuery = `
-      query GetMySlug {
+    // Query ufficiale Sorare AnyCardInterfaceConnection con cursori endCursor
+    const pagedCardsQuery = `
+      query GetPagedCards($afterCursor: String) {
         currentUser {
           slug
           nickname
-        }
-      }
-    `;
-
-    const meRes = await fetch(workerGraphqlEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ query: meQuery })
-    });
-
-    const meJson = await meRes.json();
-    if (!meJson.data || !meJson.data.currentUser) {
-      throw new Error('Impossibile recuperare il profilo utente da Sorare.');
-    }
-
-    const userProfile = meJson.data.currentUser;
-    const userSlug = userProfile.slug;
-
-    // 2. Query paginata per scaricare tutte le carte (FOOTBALL) dell'utente
-    const galleryQuery = `
-      query GetFullUserCards($slug: String!, $cursor: String) {
-        user(slug: $slug) {
-          paginatedCards(after: $cursor, first: 50) {
+          cards(after: $afterCursor) {
             pageInfo {
               hasNextPage
               endCursor
@@ -158,15 +133,20 @@ const SorareAPI = {
     `;
 
     let allCards = [];
-    let hasNextPage = true;
-    let cursor = null;
-    let pageCount = 0;
+    let hasNext = true;
+    let currentCursor = null;
+    let userProfile = null;
+    let safetyCounter = 0;
 
-    while (hasNextPage) {
-      pageCount++;
-      if (window.App && App.notify) {
-        App.notify(`📥 Sincronizzazione galleria... (${allCards.length} carte caricate)`);
-      }
+    while (hasNext && safetyCounter < 25) {
+      safetyCounter++;
+      
+      const payload = {
+        query: pagedCardsQuery,
+        variables: {
+          afterCursor: currentCursor
+        }
+      };
 
       const res = await fetch(workerGraphqlEndpoint, {
         method: 'POST',
@@ -174,10 +154,7 @@ const SorareAPI = {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          query: galleryQuery,
-          variables: { slug: userSlug, cursor: cursor }
-        })
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
@@ -186,75 +163,44 @@ const SorareAPI = {
       }
 
       const json = await res.json();
-
-      // Fallback: se paginatedCards non è supportato dall'account, usa cards standard
       if (json.errors && json.errors.length > 0) {
-        console.warn('Errore paginatedCards, fallback su currentUser.cards:', json.errors);
-        return await this.fetchFallbackCards(token, userProfile);
+        console.error('Errore GraphQL durante paginazione:', json.errors);
+        throw new Error(json.errors[0].message);
       }
 
-      const paginatedData = json.data?.user?.paginatedCards;
-      const nodes = paginatedData?.nodes || [];
+      const currentUser = json.data?.currentUser;
+      if (!currentUser) {
+        throw new Error('Impossibile ottenere i dati utente da Sorare.');
+      }
+
+      if (!userProfile) {
+        userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
+      }
+
+      const connection = currentUser.cards;
+      const nodes = connection?.nodes || [];
+      
+      if (nodes.length === 0) break;
+
       allCards = allCards.concat(nodes);
 
-      hasNextPage = paginatedData?.pageInfo?.hasNextPage === true && nodes.length > 0;
-      cursor = paginatedData?.pageInfo?.endCursor || null;
+      if (window.App && App.notify) {
+        App.notify(`📥 Scaricate ${allCards.length} carte...`);
+      }
 
-      if (pageCount >= 30) break; // limite di sicurezza per non saturare la memoria
+      const pageInfo = connection?.pageInfo;
+      hasNext = pageInfo?.hasNextPage === true;
+      currentCursor = pageInfo?.endCursor || null;
+
+      // Se non c'è cursore o hasNextPage è false, abbiamo preso tutto
+      if (!currentCursor || !hasNext) {
+        break;
+      }
     }
 
     return {
       user: userProfile,
       cards: this.enrichCardsWithOptaMetrics(allCards)
-    };
-  },
-
-  async fetchFallbackCards(token, userProfile) {
-    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
-    const query = `
-      query FallbackGallery {
-        currentUser {
-          cards {
-            nodes {
-              slug
-              name
-              rarityTyped
-              seasonYear
-              power
-              anyPositions
-              ... on Card {
-                player {
-                  displayName
-                  slug
-                  birthDate
-                  activeClub {
-                    name
-                    slug
-                    domesticLeague {
-                      slug
-                      displayName
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-    const res = await fetch(workerGraphqlEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ query })
-    });
-    const json = await res.json();
-    const rawCards = json.data?.currentUser?.cards?.nodes || [];
-    return {
-      user: userProfile,
-      cards: this.enrichCardsWithOptaMetrics(rawCards)
     };
   },
 
