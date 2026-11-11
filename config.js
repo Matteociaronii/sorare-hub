@@ -1,16 +1,17 @@
 // SorareHub - Official Configuration & Rules Engine (2026/2027)
 const CONFIG = {
   CLIENT_ID: 'nb6KHL2pLACJu0KArFiJlejgfPzCQLm7hVT7_HghcGo',
-  // Chiave API generata dal tuo pannello Sorare Developer
-  API_KEY: 'd8fe705aa08e2e76d2026c63643',
   REDIRECT_URI: 'https://matteociaronii.github.io/sorare-hub/',
+  AUTH_ENDPOINT: 'https://sorare.com/oauth/authorize',
+  TOKEN_ENDPOINT: 'https://sorarehub-oauth.matty-ciaroni.workers.dev',
   GRAPHQL_ENDPOINT: 'https://api.sorare.com/graphql',
   CORS_PROXY: 'https://corsproxy.io/?',
+  SCOPES: 'read',
 
   RULES: {
-    MIN_IN_SEASON_SO5: 4,       // Minimo 4 carte su 5 In-Season
-    IN_SEASON_BONUS: 0.05,      // +5% bonus nativo
-    STACK_CORRELATION_BONUS: 3.5 // Bonus sinergia Clean Sheet (GK + DEF stesso club)
+    MIN_IN_SEASON_SO5: 4,
+    IN_SEASON_BONUS: 0.05,
+    STACK_CORRELATION_BONUS: 3.5
   },
 
   WEIGHTS: {
@@ -18,7 +19,6 @@ const CONFIG = {
     CEILING_MODE: { aas: 0.40, decisive: 0.60 }
   },
 
-  // Competizioni Ufficiali Sorare 2026/2027
   OFFICIAL_COMPETITIONS: [
     {
       id: 'champion_in_season',
