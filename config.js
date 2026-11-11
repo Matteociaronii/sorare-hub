@@ -21,7 +21,7 @@ const CONFIG = {
   },
 
   OFFICIAL_COMPETITIONS: [
-    // --- IN-SEASON (SO5: Min 4 In-Season, Max 1 Classic - Mono-Lega Rigido) ---
+    // === 1. CAMPIONATI DOMESTICI SINGOLI IN-SEASON (SO5: Min 4 In-Season, Mono-Lega) ===
     {
       id: 'premier_league_in_season',
       name: 'Premier League — In-Season (SO5)',
@@ -108,7 +108,7 @@ const CONFIG = {
     },
     {
       id: 'contender_in_season',
-      name: 'Contender — In-Season (Multi-Lega Minori SO5)',
+      name: 'Contender — In-Season (Leghe Minori SO5)',
       format: 'SO5',
       inSeasonRequired: 4,
       leagues: [
@@ -123,7 +123,7 @@ const CONFIG = {
       ]
     },
 
-    // --- CLASSIC (SO7: 7 Titolari - Nessun vincolo di annata) ---
+    // === 2. COMPETIZIONI CLASSIC (SO7: 7 Titolari, Nessun vincolo di annata) ===
     {
       id: 'champions_europe_classic_so7',
       name: 'CHAMPIONS EUROPE — Classic (UEFA Champions League SO7)',
@@ -149,7 +149,7 @@ const CONFIG = {
     },
     {
       id: 'u23_classic_so7',
-      name: 'Under 23 — Classic (Tutte le leghe SO7)',
+      name: 'Under 23 — Classic (Tutti gli U23 SO7)',
       format: 'SO7',
       inSeasonRequired: 0,
       u23Only: true,
