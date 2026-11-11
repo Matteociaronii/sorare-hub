@@ -1,4 +1,4 @@
-// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer (Full Football Gallery Pagination)
+// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer (footballUserProfile Pagination)
 const SorareAPI = {
   generateRandomString(length = 64) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -93,35 +93,38 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
 
-    // Query con footballCards paginata e cursori GraphQL standard
+    // Query ufficiale con footballUserProfile e paginazione cursor-based
     const query = `
-      query GetFootballGallery($after: String) {
+      query GetFootballUserProfileGallery($after: String) {
         currentUser {
           slug
           nickname
-          footballCards(after: $after, first: 50) {
-            totalCount
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
-            nodes {
-              slug
-              name
-              rarityTyped
-              seasonYear
-              power
-              anyPositions
-              player {
-                displayName
+          footballUserProfile {
+            cards(after: $after, first: 50) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              nodes {
                 slug
-                birthDate
-                activeClub {
-                  name
-                  slug
-                  domesticLeague {
-                    slug
+                name
+                rarityTyped
+                seasonYear
+                power
+                anyPositions
+                ... on Card {
+                  player {
                     displayName
+                    slug
+                    birthDate
+                    activeClub {
+                      name
+                      slug
+                      domesticLeague {
+                        slug
+                        displayName
+                      }
+                    }
                   }
                 }
               }
@@ -137,7 +140,7 @@ const SorareAPI = {
     let userProfile = null;
     let batchIndex = 0;
 
-    while (hasNext && batchIndex < 20) {
+    while (hasNext && batchIndex < 25) {
       batchIndex++;
 
       const res = await fetch(workerGraphqlEndpoint, {
@@ -159,109 +162,29 @@ const SorareAPI = {
 
       const json = await res.json();
       if (json.errors && json.errors.length > 0) {
-        // Se footballCards non è attivo, proviamo il fallback paginato con cards(after:)
-        console.warn('Errore footballCards, tentativo con fallback:', json.errors);
-        return await this.fetchGalleryCardsFallback(token);
+        console.error('Errore GraphQL su footballUserProfile:', json.errors);
+        throw new Error(json.errors[0].message);
       }
 
       const currentUser = json.data?.currentUser;
-      if (!currentUser || !currentUser.footballCards) {
-        return await this.fetchGalleryCardsFallback(token);
+      if (!currentUser) {
+        throw new Error('Impossibile ottenere il profilo utente da Sorare.');
       }
 
       if (!userProfile) {
         userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
       }
 
-      const connection = currentUser.footballCards;
-      const nodes = connection.nodes || [];
-      const totalCount = connection.totalCount || '300+';
-
+      const cardsConnection = currentUser.footballUserProfile?.cards;
+      const nodes = cardsConnection?.nodes || [];
       allCards = allCards.concat(nodes);
 
       if (window.App && App.notify) {
-        App.notify(`📥 Caricamento galleria: ${allCards.length} / ${totalCount} carte...`);
+        App.notify(`📥 Caricate ${allCards.length} carte...`);
       }
 
-      hasNext = connection.pageInfo?.hasNextPage === true && nodes.length > 0;
-      cursor = connection.pageInfo?.endCursor || null;
-
-      if (!cursor || !hasNext) break;
-    }
-
-    return {
-      user: userProfile,
-      cards: this.enrichCardsWithOptaMetrics(allCards)
-    };
-  },
-
-  // Fallback per schemi alternativi
-  async fetchGalleryCardsFallback(token) {
-    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
-    let allCards = [];
-    let cursor = null;
-    let hasNext = true;
-    let userProfile = null;
-    let batch = 0;
-
-    const fallbackQuery = `
-      query FallbackPaged($after: String) {
-        currentUser {
-          slug
-          nickname
-          cards(after: $after) {
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
-            nodes {
-              slug
-              name
-              rarityTyped
-              seasonYear
-              power
-              anyPositions
-              ... on Card {
-                player {
-                  displayName
-                  slug
-                  birthDate
-                  activeClub {
-                    name
-                    slug
-                    domesticLeague {
-                      slug
-                      displayName
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    while (hasNext && batch < 20) {
-      batch++;
-      const res = await fetch(workerGraphqlEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ query: fallbackQuery, variables: { after: cursor } })
-      });
-      const json = await res.json();
-      const cu = json.data?.currentUser;
-      if (!cu) break;
-      if (!userProfile) userProfile = { slug: cu.slug, nickname: cu.nickname };
-
-      const nodes = cu.cards?.nodes || [];
-      allCards = allCards.concat(nodes);
-
-      hasNext = cu.cards?.pageInfo?.hasNextPage === true && nodes.length > 0;
-      cursor = cu.cards?.pageInfo?.endCursor || null;
+      hasNext = cardsConnection?.pageInfo?.hasNextPage === true && nodes.length > 0;
+      cursor = cardsConnection?.pageInfo?.endCursor || null;
 
       if (!cursor || !hasNext) break;
     }
