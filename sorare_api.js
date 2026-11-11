@@ -1,4 +1,4 @@
-// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer (Cursor-Based Pagination)
+// SorareHub - OAuth2 PKCE & Cloudflare Worker GraphQL Layer (Full Football Gallery Pagination)
 const SorareAPI = {
   generateRandomString(length = 64) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -93,13 +93,123 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
 
-    // Query ufficiale Sorare AnyCardInterfaceConnection con cursori endCursor
-    const pagedCardsQuery = `
-      query GetPagedCards($afterCursor: String) {
+    // Query con footballCards paginata e cursori GraphQL standard
+    const query = `
+      query GetFootballGallery($after: String) {
         currentUser {
           slug
           nickname
-          cards(after: $afterCursor) {
+          footballCards(after: $after, first: 50) {
+            totalCount
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              slug
+              name
+              rarityTyped
+              seasonYear
+              power
+              anyPositions
+              player {
+                displayName
+                slug
+                birthDate
+                activeClub {
+                  name
+                  slug
+                  domesticLeague {
+                    slug
+                    displayName
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    let allCards = [];
+    let hasNext = true;
+    let cursor = null;
+    let userProfile = null;
+    let batchIndex = 0;
+
+    while (hasNext && batchIndex < 20) {
+      batchIndex++;
+
+      const res = await fetch(workerGraphqlEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          query: query,
+          variables: { after: cursor }
+        })
+      });
+
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(`Errore API Sorare (${res.status}): ${errBody}`);
+      }
+
+      const json = await res.json();
+      if (json.errors && json.errors.length > 0) {
+        // Se footballCards non è attivo, proviamo il fallback paginato con cards(after:)
+        console.warn('Errore footballCards, tentativo con fallback:', json.errors);
+        return await this.fetchGalleryCardsFallback(token);
+      }
+
+      const currentUser = json.data?.currentUser;
+      if (!currentUser || !currentUser.footballCards) {
+        return await this.fetchGalleryCardsFallback(token);
+      }
+
+      if (!userProfile) {
+        userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
+      }
+
+      const connection = currentUser.footballCards;
+      const nodes = connection.nodes || [];
+      const totalCount = connection.totalCount || '300+';
+
+      allCards = allCards.concat(nodes);
+
+      if (window.App && App.notify) {
+        App.notify(`📥 Caricamento galleria: ${allCards.length} / ${totalCount} carte...`);
+      }
+
+      hasNext = connection.pageInfo?.hasNextPage === true && nodes.length > 0;
+      cursor = connection.pageInfo?.endCursor || null;
+
+      if (!cursor || !hasNext) break;
+    }
+
+    return {
+      user: userProfile,
+      cards: this.enrichCardsWithOptaMetrics(allCards)
+    };
+  },
+
+  // Fallback per schemi alternativi
+  async fetchGalleryCardsFallback(token) {
+    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
+    let allCards = [];
+    let cursor = null;
+    let hasNext = true;
+    let userProfile = null;
+    let batch = 0;
+
+    const fallbackQuery = `
+      query FallbackPaged($after: String) {
+        currentUser {
+          slug
+          nickname
+          cards(after: $after) {
             pageInfo {
               hasNextPage
               endCursor
@@ -132,70 +242,28 @@ const SorareAPI = {
       }
     `;
 
-    let allCards = [];
-    let hasNext = true;
-    let currentCursor = null;
-    let userProfile = null;
-    let safetyCounter = 0;
-
-    while (hasNext && safetyCounter < 25) {
-      safetyCounter++;
-      
-      const payload = {
-        query: pagedCardsQuery,
-        variables: {
-          afterCursor: currentCursor
-        }
-      };
-
+    while (hasNext && batch < 20) {
+      batch++;
       const res = await fetch(workerGraphqlEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ query: fallbackQuery, variables: { after: cursor } })
       });
-
-      if (!res.ok) {
-        const errBody = await res.text();
-        throw new Error(`Errore API Sorare (${res.status}): ${errBody}`);
-      }
-
       const json = await res.json();
-      if (json.errors && json.errors.length > 0) {
-        console.error('Errore GraphQL durante paginazione:', json.errors);
-        throw new Error(json.errors[0].message);
-      }
+      const cu = json.data?.currentUser;
+      if (!cu) break;
+      if (!userProfile) userProfile = { slug: cu.slug, nickname: cu.nickname };
 
-      const currentUser = json.data?.currentUser;
-      if (!currentUser) {
-        throw new Error('Impossibile ottenere i dati utente da Sorare.');
-      }
-
-      if (!userProfile) {
-        userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
-      }
-
-      const connection = currentUser.cards;
-      const nodes = connection?.nodes || [];
-      
-      if (nodes.length === 0) break;
-
+      const nodes = cu.cards?.nodes || [];
       allCards = allCards.concat(nodes);
 
-      if (window.App && App.notify) {
-        App.notify(`📥 Scaricate ${allCards.length} carte...`);
-      }
+      hasNext = cu.cards?.pageInfo?.hasNextPage === true && nodes.length > 0;
+      cursor = cu.cards?.pageInfo?.endCursor || null;
 
-      const pageInfo = connection?.pageInfo;
-      hasNext = pageInfo?.hasNextPage === true;
-      currentCursor = pageInfo?.endCursor || null;
-
-      // Se non c'è cursore o hasNextPage è false, abbiamo preso tutto
-      if (!currentCursor || !hasNext) {
-        break;
-      }
+      if (!cursor || !hasNext) break;
     }
 
     return {
