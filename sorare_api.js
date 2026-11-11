@@ -110,38 +110,13 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
 
-    // 1. Ottieni identità e slug univoco dell'utente
-    const meQuery = `
-      query GetCurrentUserInfo {
+    // Query ufficiale nativa su currentUser con paginazione via cursori
+    const pagedQuery = `
+      query GetCurrentUserCards($after: String) {
         currentUser {
           slug
           nickname
-        }
-      }
-    `;
-
-    const meRes = await fetch(workerGraphqlEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ query: meQuery })
-    });
-
-    const meJson = await meRes.json();
-    if (!meJson.data || !meJson.data.currentUser) {
-      throw new Error('Impossibile recuperare il profilo utente da Sorare.');
-    }
-
-    const userProfile = meJson.data.currentUser;
-    const userSlug = userProfile.slug;
-
-    // 2. Query paginata con cursore su paginatedCards filtrando per calcio
-    const pagedQuery = `
-      query GetUserFootballCards($slug: String!, $after: String) {
-        user(slug: $slug) {
-          paginatedCards(after: $after, first: 50, sports: [FOOTBALL]) {
+          cards(first: 50, after: $after) {
             pageInfo {
               hasNextPage
               endCursor
@@ -179,6 +154,7 @@ const SorareAPI = {
     let allCards = [];
     let hasNext = true;
     let cursor = null;
+    let userProfile = null;
     let batchIndex = 0;
 
     while (hasNext && batchIndex < 25) {
@@ -192,7 +168,7 @@ const SorareAPI = {
         },
         body: JSON.stringify({
           query: pagedQuery,
-          variables: { slug: userSlug, after: cursor }
+          variables: { after: cursor }
         })
       });
 
@@ -203,16 +179,20 @@ const SorareAPI = {
 
       const json = await res.json();
       if (json.errors && json.errors.length > 0) {
-        console.error('Errore GraphQL durante paginazione:', json.errors);
+        console.error('Errore GraphQL:', json.errors);
         throw new Error(json.errors[0].message);
       }
 
-      const user = json.data?.user;
-      if (!user) {
+      const currentUser = json.data?.currentUser;
+      if (!currentUser) {
         throw new Error('Dati utente non trovati su Sorare.');
       }
 
-      const connection = user.paginatedCards;
+      if (!userProfile) {
+        userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
+      }
+
+      const connection = currentUser.cards;
       const nodes = connection?.nodes || [];
       allCards = allCards.concat(nodes);
 
@@ -220,12 +200,13 @@ const SorareAPI = {
         App.notify(`📥 Caricate ${allCards.length} carte...`);
       }
 
-      hasNext = connection?.pageInfo?.hasNextPage === true && nodes.length > 0;
-      cursor = connection?.pageInfo?.endCursor || null;
+      const pageInfo = connection?.pageInfo;
+      hasNext = pageInfo?.hasNextPage === true && nodes.length > 0;
+      cursor = pageInfo?.endCursor || null;
 
       if (!cursor || !hasNext) break;
 
-      // Throttle di sicurezza anti-429
+      // Pausa di 150ms anti rate-limit tra i pacchetti da 50
       await new Promise(resolve => setTimeout(resolve, 150));
     }
 
