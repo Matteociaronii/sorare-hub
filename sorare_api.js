@@ -91,7 +91,7 @@ const SorareAPI = {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
-    // Schema GraphQL ufficiale Sorare (AnyCardInterfaceConnection con anyPositions)
+    // Fragment condizionale su Card per estrarre player in AnyCardInterface
     const query = `
       query GetCurrentUserCards {
         currentUser {
@@ -105,16 +105,18 @@ const SorareAPI = {
               seasonYear
               power
               anyPositions
-              player {
-                displayName
-                slug
-                birthDate
-                activeClub {
-                  name
+              ... on Card {
+                player {
+                  displayName
                   slug
-                  domesticLeague {
+                  birthDate
+                  activeClub {
+                    name
                     slug
-                    displayName
+                    domesticLeague {
+                      slug
+                      displayName
+                    }
                   }
                 }
               }
@@ -160,17 +162,19 @@ const SorareAPI = {
   enrichCardsWithOptaMetrics(rawCards) {
     const currentSeason = 2026;
     return rawCards
-      .filter(c => c && c.player)
+      .filter(c => c && (c.player || c.name))
       .map((card, index) => {
+        const playerName = card.player?.displayName || card.name || 'Calciatore';
+        const playerSlug = card.player?.slug || card.slug;
         const rawPos = (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
         const pos = this.normalizePosition(rawPos);
-        const leagueSlug = card.player.activeClub?.domesticLeague?.slug || 'premier-league-gb-eng';
-        const clubName = card.player.activeClub?.name || 'Club';
+        const leagueSlug = card.player?.activeClub?.domesticLeague?.slug || 'premier-league-gb-eng';
+        const clubName = card.player?.activeClub?.name || 'Club';
         const isInSeason = (card.seasonYear || 0) >= currentSeason;
-        const birthYear = card.player.birthDate ? new Date(card.player.birthDate).getFullYear() : 2000;
+        const birthYear = card.player?.birthDate ? new Date(card.player.birthDate).getFullYear() : 2000;
         const isU23 = birthYear >= 2003;
 
-        const seed = this.hashString(card.player.slug || card.slug || String(index));
+        const seed = this.hashString(playerSlug || String(index));
         const aasVolume = 40 + (seed % 25);
         const xgXa = ((seed % 65) / 100).toFixed(2);
         const oppXga = (0.90 + ((seed % 80) / 100)).toFixed(2);
@@ -181,10 +185,10 @@ const SorareAPI = {
 
         return {
           id: card.slug || `c_${index}`,
-          playerSlug: card.player.slug,
-          name: card.player.displayName,
+          playerSlug: playerSlug,
+          name: playerName,
           club: clubName,
-          clubSlug: card.player.activeClub?.slug || 'club',
+          clubSlug: card.player?.activeClub?.slug || 'club',
           leagueSlug: leagueSlug,
           position: pos,
           scarcity: (card.rarityTyped || 'limited').toLowerCase(),
