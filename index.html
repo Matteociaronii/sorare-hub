@@ -126,13 +126,11 @@
 
   <script>
     function directOAuthLogin() {
-      const clientId = 'nb6KHL2pLACJu0KArFiJlejgfPzCQLm7hVT7_HghcGo';
-      const redirectUri = encodeURIComponent('https://matteociaronii.github.io/sorare-hub/');
-      const state = Math.random().toString(36).substring(2, 15);
-      localStorage.setItem('sorare_oauth_state', state);
-
-      const authUrl = `https://sorare.com/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=read&state=${state}`;
-      window.location.href = authUrl;
+      if (window.SorareAPI && SorareAPI.startOAuthFlow) {
+        SorareAPI.startOAuthFlow();
+      } else {
+        alert("Inizializzazione in corso, attendi un secondo.");
+      }
     }
   </script>
 
