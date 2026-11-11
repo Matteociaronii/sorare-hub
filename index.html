@@ -3,149 +3,126 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SorareHub - 2026/2027 Lineup Optimizer & Gallery</title>
-  <!-- Versioning anti-cache per caricare subito il tema Carbon scuro -->
-  <link rel="stylesheet" href="style.css?v=2" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <title>SorareHub</title>
+  <link rel="stylesheet" href="style.css?v=3" />
 </head>
 <body>
-  <div id="toast-container" class="toast-container"></div>
+  <div id="toast-container" style="position:fixed;top:15px;right:15px;z-index:9999;"></div>
 
   <header class="app-header">
     <div class="header-left">
-      <div class="logo-box">
-        <span class="logo-icon">⚽</span>
-        <div>
-          <h1 class="logo-title">SorareHub</h1>
-          <span class="logo-subtitle">Lineup Optimizer & Collection Engine</span>
-        </div>
-      </div>
+      <span style="font-size:20px;">⚽</span>
+      <h1 class="logo-title">SorareHub</h1>
     </div>
 
     <div class="header-right">
       <div id="user-badge" class="user-badge hidden">
-        <span class="status-dot"></span>
         <span id="user-nickname">@Manager</span>
       </div>
-      <button id="btn-login" class="btn btn-primary" onclick="SorareAPI.startOAuthFlow()">
+      <button id="btn-login" class="btn-carbon" onclick="SorareAPI.startOAuthFlow()">
         Connetti Sorare
       </button>
     </div>
   </header>
 
   <main class="app-container">
-    <!-- Barra Switcher Tab -->
     <div class="view-tabs-bar">
       <button id="tab-optimizer" class="tab-btn active" onclick="App.switchView('optimizer')">
         ⚡ Ottimizzatore Lineup
       </button>
       <button id="tab-gallery" class="tab-btn" onclick="App.switchView('gallery')">
-        🃏 La Mia Galleria (<span id="gallery-count-badge">0</span>)
+        🃏 Collezione (<span id="gallery-count-badge">0</span>)
       </button>
     </div>
 
-    <!-- VISTA 1: OTTIMIZZATORE -->
-    <section id="optimizer-view" class="view-section">
+    <!-- SEZIONE OTTIMIZZATORE -->
+    <section id="optimizer-view">
       <div class="stats-overview">
         <div class="stat-card">
-          <span class="stat-label">CARTE IN GALLERIA</span>
+          <span class="stat-label">Carte Limited</span>
+          <div class="stat-value" id="stat-limited-count" style="color:var(--accent-gold);">0</div>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Carte Common</span>
+          <div class="stat-value" id="stat-common-count" style="color:var(--accent-gray);">0</div>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Totale Collezione</span>
           <div class="stat-value" id="stat-cards-count">0</div>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">MODALITÀ ATTIVA</span>
-          <div class="stat-value text-accent">SO5 (Opta Rules)</div>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">STAGIONE</span>
-          <div class="stat-value">2026/2027</div>
         </div>
       </div>
 
       <div class="controls-card">
-        <div class="controls-header">
-          <h2>Parametri di Calcolo Formazioni</h2>
-          <p>Algoritmo a cascata senza sovrapposizione: ogni carta viene usata in un solo torneo.</p>
-        </div>
-
         <div class="controls-form">
           <div class="input-group">
-            <label for="tournament-select">Torneo Primario</label>
+            <label for="tournament-select">Torneo</label>
             <select id="tournament-select">
-              <option value="ALL_STAR">All-Star (Libero)</option>
-              <option value="UNDER_23">Under 23 (U23)</option>
-              <option value="CHAMPION_EUROPE">Champion Europe (Top 5 Leghe)</option>
+              <option value="ALL_STAR">All-Star</option>
+              <option value="UNDER_23">Under 23</option>
+              <option value="CHAMPION_EUROPE">Champion Europe</option>
               <option value="CHALLENGER_EUROPE">Challenger Europe</option>
             </select>
           </div>
 
           <div class="input-group">
-            <label for="target-lineups">Numero Formazioni da Generare</label>
+            <label for="target-lineups">Formazioni da generare</label>
             <select id="target-lineups">
-              <option value="1">1 Miglior Formazione</option>
+              <option value="1">1 Formazione</option>
               <option value="2">2 Formazioni a cascata</option>
               <option value="3" selected>3 Formazioni a cascata</option>
               <option value="4">4 Formazioni a cascata</option>
-              <option value="5">5 Formazioni a cascata</option>
             </select>
           </div>
 
-          <div class="input-actions">
-            <button id="btn-optimize" class="btn btn-accent" onclick="App.generateOptimizedLineups()">
-              🚀 Calcola Lineup Ottimali
+          <div>
+            <button class="btn-carbon" style="background:#2563eb;border-color:#3b82f6;padding:9px 18px;" onclick="App.generateOptimizedLineups()">
+              Calcola Formazioni (Solo Limited)
             </button>
           </div>
         </div>
       </div>
 
-      <div id="lineups-results-container" class="results-container">
-        <!-- Risultati formazioni a cascata -->
-      </div>
+      <div id="lineups-results-container"></div>
     </section>
 
-    <!-- VISTA 2: GALLERIA CARTE COMPLETA -->
-    <section id="gallery-view" class="view-section hidden">
+    <!-- SEZIONE GALLERIA -->
+    <section id="gallery-view" class="hidden">
       <div class="gallery-controls-bar">
         <div class="search-input-wrap">
-          <input type="text" id="gallery-search" placeholder="🔍 Cerca calciatore o club..." oninput="App.filterGallery()" />
+          <input type="text" id="gallery-search" placeholder="Cerca calciatore o club..." oninput="App.filterGallery()" />
         </div>
         
         <div class="select-filters-wrap">
-          <select id="gallery-filter-pos" onchange="App.filterGallery()">
-            <option value="ALL">Tutti i Ruoli</option>
-            <option value="GK">Portieri (POR)</option>
-            <option value="DEF">Difensori (DIF)</option>
-            <option value="MID">Centrocampisti (CEN)</option>
-            <option value="FWD">Attaccanti (ATT)</option>
+          <!-- Filtro Scelta Collezione: Limited di default, o Common a parte -->
+          <select id="gallery-filter-pool" onchange="App.filterGallery()">
+            <option value="limited_only" selected>Solo Limited (Pro)</option>
+            <option value="common_only">Solo Common (Tutorial)</option>
+            <option value="all">Tutte le Carte</option>
           </select>
 
-          <select id="gallery-filter-scarcity" onchange="App.filterGallery()">
-            <option value="ALL">Tutte le Rarità</option>
-            <option value="limited">Limited</option>
-            <option value="rare">Rare</option>
-            <option value="super_rare">Super Rare</option>
-            <option value="unique">Unique</option>
+          <select id="gallery-filter-pos" onchange="App.filterGallery()">
+            <option value="ALL">Tutti i Ruoli</option>
+            <option value="GK">POR</option>
+            <option value="DEF">DIF</option>
+            <option value="MID">CEN</option>
+            <option value="FWD">ATT</option>
           </select>
 
           <select id="gallery-sort" onchange="App.filterGallery()">
-            <option value="l15-desc">Punteggio L15 (Più alto)</option>
-            <option value="l5-desc">Forma L5 (Più alto)</option>
-            <option value="bonus-desc">Bonus XP (Più alto)</option>
+            <option value="l15-desc">L15 decrescente</option>
+            <option value="l5-desc">L5 decrescente</option>
+            <option value="bonus-desc">Bonus XP</option>
             <option value="name-asc">Nome (A-Z)</option>
           </select>
         </div>
       </div>
 
-      <div id="cards-grid" class="cards-grid-container">
-        <!-- Vetrina delle oltre 300 carte -->
-      </div>
+      <div id="cards-grid" class="cards-grid-container"></div>
     </section>
   </main>
 
   <script src="config.js"></script>
-  <!-- Versioning anti-cache per caricare forzatamente i nuovi script -->
-  <script src="sorare_api.js?v=2"></script>
-  <script src="app.js?v=2"></script>
+  <script src="sorare_api.js?v=3"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
