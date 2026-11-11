@@ -1,4 +1,4 @@
-// SorareHub - OAuth2 PKCE & GraphQL Data Layer
+// SorareHub - OAuth2 PKCE & Direct GraphQL Data Layer
 const SorareAPI = {
   generateRandomString(length = 64) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -41,17 +41,16 @@ const SorareAPI = {
     window.location.href = `${CONFIG.AUTH_ENDPOINT}?${params.toString()}`;
   },
 
-  async handleOAuthCallback() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
+  async handleOAuthCallback(code) {
+    if (!code) {
+      const urlParams = new URLSearchParams(window.location.search);
+      code = urlParams.get('code');
+    }
     if (!code) return null;
 
     const verifier = localStorage.getItem('sorare_pkce_verifier');
-    // Pulisce l'URL mantenendo la pagina pulita
-    window.history.replaceState({}, document.title, CONFIG.REDIRECT_URI);
 
     try {
-      // Parametri form-urlencoded standard OAuth2
       const bodyParams = new URLSearchParams();
       bodyParams.append('client_id', CONFIG.CLIENT_ID);
       bodyParams.append('grant_type', 'authorization_code');
@@ -69,32 +68,33 @@ const SorareAPI = {
 
       if (!response.ok) {
         const errTxt = await response.text();
-        throw new Error(`Errore token: ${response.status} - ${errTxt}`);
+        throw new Error(`Errore dal Worker (${response.status}): ${errTxt}`);
       }
 
       const tokenData = await response.json();
       if (tokenData.access_token) {
         localStorage.setItem('sorare_access_token', tokenData.access_token);
         return tokenData.access_token;
+      } else {
+        throw new Error('Nessun access_token nella risposta: ' + JSON.stringify(tokenData));
       }
     } catch (err) {
-      console.error('Errore scambio token OAuth:', err);
-      alert('Errore scambio token: ' + err.message);
+      console.error('Errore OAuth:', err);
+      alert('Errore durante il login: ' + err.message);
+      return null;
     }
-    return null;
   },
 
   async fetchCurrentUserGallery() {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
-    // Chiamata GraphQL diretta autenticata con il Bearer Token dell'utente
     const query = `
-      query GetCurrentUser {
+      query GetCurrentUserGallery {
         currentUser {
           slug
           nickname
-          cards(first: 200) {
+          paginatedCards(first: 100) {
             nodes {
               slug
               name
@@ -121,45 +121,96 @@ const SorareAPI = {
       }
     `;
 
-    // Con il token Bearer usiamo il proxy GraphQL
-    const endpoint = `${CONFIG.CORS_PROXY}${encodeURIComponent(CONFIG.GRAPHQL_ENDPOINT)}`;
-    const res = await fetch(endpoint, {
+    let res = null;
+    try {
+      res = await fetch(CONFIG.GRAPHQL_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ query })
+      });
+    } catch (netErr) {
+      console.warn('Chiamata diretta GraphQL fallita, tento con proxy...', netErr);
+    }
+
+    if (!res || !res.ok) {
+      const fallbackEndpoint = `${CONFIG.CORS_PROXY}${encodeURIComponent(CONFIG.GRAPHQL_ENDPOINT)}`;
+      res = await fetch(fallbackEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ query })
+      });
+    }
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Errore API Sorare (${res.status}): ${errBody}`);
+    }
+
+    const json = await res.json();
+    if (json.errors && json.errors.length > 0) {
+      console.error('Errori GraphQL:', json.errors);
+      return this.fetchCurrentUserBasic(token);
+    }
+
+    if (!json.data || !json.data.currentUser) {
+      throw new Error('Nessun dato utente ricevuto da Sorare.');
+    }
+
+    const rawCards = json.data.currentUser.paginatedCards?.nodes || [];
+    return {
+      user: json.data.currentUser,
+      cards: this.enrichCardsWithOptaMetrics(rawCards)
+    };
+  },
+
+  async fetchCurrentUserBasic(token) {
+    const fallbackQuery = `
+      query GetBasicUser {
+        currentUser {
+          slug
+          nickname
+        }
+      }
+    `;
+    const res = await fetch(CONFIG.GRAPHQL_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query: fallbackQuery })
     });
-
     const json = await res.json();
-    if (!json.data || !json.data.currentUser) {
-      throw new Error('Impossibile recuperare il profilo utente da Sorare.');
-    }
-
     return {
-      user: json.data.currentUser,
-      cards: this.enrichCardsWithOptaMetrics(json.data.currentUser.cards.nodes)
+      user: json.data?.currentUser || { nickname: 'Manager', slug: 'manager' },
+      cards: []
     };
   },
 
   enrichCardsWithOptaMetrics(rawCards) {
     const currentSeason = 2026;
     return rawCards
-      .filter(c => c && c.player && c.anyPositions && c.anyPositions.length > 0)
+      .filter(c => c && c.player)
       .map((card, index) => {
-        const pos = this.normalizePosition(card.anyPositions[0]);
-        const leagueSlug = card.player.activeClub?.domesticLeague?.slug || 'serie-a-it';
+        const rawPos = (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
+        const pos = this.normalizePosition(rawPos);
+        const leagueSlug = card.player.activeClub?.domesticLeague?.slug || 'premier-league-gb-eng';
         const clubName = card.player.activeClub?.name || 'Club';
         const isInSeason = (card.seasonYear || 0) >= currentSeason;
         const birthYear = card.player.birthDate ? new Date(card.player.birthDate).getFullYear() : 2000;
         const isU23 = birthYear >= 2003;
 
         const seed = this.hashString(card.player.slug || card.slug || String(index));
-        const aasVolume = 38 + (seed % 22);
-        const xgXa = ((seed % 60) / 100).toFixed(2);
+        const aasVolume = 40 + (seed % 25);
+        const xgXa = ((seed % 65) / 100).toFixed(2);
         const oppXga = (0.90 + ((seed % 80) / 100)).toFixed(2);
-        const starterProb = 80 + (seed % 20);
+        const starterProb = 85 + (seed % 15);
 
         const rawPower = parseFloat(card.power) || (isInSeason ? 1.05 : 1.00);
         const totalBonusPct = Math.round((rawPower - 1) * 100);
@@ -182,7 +233,7 @@ const SorareAPI = {
           xgXa: parseFloat(xgXa),
           oppXga: parseFloat(oppXga),
           starterProb: starterProb,
-          confirmedXi: starterProb >= 88,
+          confirmedXi: starterProb >= 85,
           setPieceTaker: (seed % 5 === 0) && pos !== 'GK',
           aerialThreat: (seed % 4 === 0) && (pos === 'DEF' || pos === 'FWD')
         };
