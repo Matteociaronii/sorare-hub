@@ -1,4 +1,4 @@
-// SorareHub - OAuth2 PKCE & Direct GraphQL Data Layer
+// SorareHub - OAuth2 PKCE & Direct Sorare GraphQL Layer (No 3rd-party Proxy)
 const SorareAPI = {
   generateRandomString(length = 64) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -80,7 +80,9 @@ const SorareAPI = {
       }
     } catch (err) {
       console.error('Errore OAuth:', err);
-      alert('Errore durante il login: ' + err.message);
+      if (window.App && App.notify) {
+        App.notify('❌ Errore login: ' + err.message, true);
+      }
       return null;
     }
   },
@@ -121,31 +123,15 @@ const SorareAPI = {
       }
     `;
 
-    let res = null;
-    try {
-      res = await fetch(CONFIG.GRAPHQL_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ query })
-      });
-    } catch (netErr) {
-      console.warn('Chiamata diretta GraphQL fallita, tento con proxy...', netErr);
-    }
-
-    if (!res || !res.ok) {
-      const fallbackEndpoint = `${CONFIG.CORS_PROXY}${encodeURIComponent(CONFIG.GRAPHQL_ENDPOINT)}`;
-      res = await fetch(fallbackEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ query })
-      });
-    }
+    // Chiamata GraphQL diretta ufficiale a Sorare autenticata con Bearer
+    const res = await fetch('https://api.sorare.com/graphql', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ query })
+    });
 
     if (!res.ok) {
       const errBody = await res.text();
@@ -178,7 +164,7 @@ const SorareAPI = {
         }
       }
     `;
-    const res = await fetch(CONFIG.GRAPHQL_ENDPOINT, {
+    const res = await fetch('https://api.sorare.com/graphql', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
