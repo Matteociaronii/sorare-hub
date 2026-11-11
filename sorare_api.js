@@ -1,12 +1,94 @@
-// SorareHub - API Key & Live GraphQL Data Layer
+// SorareHub - OAuth2 PKCE & GraphQL Data Layer
 const SorareAPI = {
-  async fetchGalleryBySlug(slug) {
+  generateRandomString(length = 64) {
+    const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    const values = crypto.getRandomValues(new Uint8Array(length));
+    return Array.from(values, v => charset[v % charset.length]).join('');
+  },
+
+  async sha256(plain) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(plain);
+    return window.crypto.subtle.digest('SHA-256', data);
+  },
+
+  base64UrlEncode(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    bytes.forEach(b => binary += String.fromCharCode(b));
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  },
+
+  async startOAuthFlow() {
+    const verifier = this.generateRandomString(64);
+    const hashed = await this.sha256(verifier);
+    const challenge = this.base64UrlEncode(hashed);
+    const state = this.generateRandomString(16);
+
+    localStorage.setItem('sorare_pkce_verifier', verifier);
+    localStorage.setItem('sorare_oauth_state', state);
+
+    const params = new URLSearchParams({
+      client_id: CONFIG.CLIENT_ID,
+      redirect_uri: CONFIG.REDIRECT_URI,
+      response_type: 'code',
+      scope: CONFIG.SCOPES,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: state
+    });
+
+    window.location.href = `${CONFIG.AUTH_ENDPOINT}?${params.toString()}`;
+  },
+
+  async handleOAuthCallback() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    if (!code) return null;
+
+    const verifier = localStorage.getItem('sorare_pkce_verifier');
+    window.history.replaceState({}, document.title, CONFIG.REDIRECT_URI);
+
+    try {
+      const response = await fetch(CONFIG.TOKEN_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: CONFIG.CLIENT_ID,
+          code: code,
+          grant_type: 'authorization_code',
+          redirect_uri: CONFIG.REDIRECT_URI,
+          code_verifier: verifier
+        })
+      });
+
+      if (!response.ok) {
+        const errTxt = await response.text();
+        throw new Error(`Errore token: ${response.status} - ${errTxt}`);
+      }
+
+      const tokenData = await response.json();
+      if (tokenData.access_token) {
+        localStorage.setItem('sorare_access_token', tokenData.access_token);
+        return tokenData.access_token;
+      }
+    } catch (err) {
+      console.error('Errore scambio token OAuth:', err);
+      alert('Errore scambio token: ' + err.message);
+    }
+    return null;
+  },
+
+  async fetchCurrentUserGallery() {
+    const token = localStorage.getItem('sorare_access_token');
+    if (!token) return null;
+
     const query = `
-      query FetchUserCards($slug: String!) {
-        user(slug: $slug) {
-          nickname
+      query GetCurrentUser {
+        currentUser {
           slug
-          cards(first: 150) {
+          nickname
+          cards(first: 200) {
             nodes {
               slug
               name
@@ -34,23 +116,24 @@ const SorareAPI = {
     `;
 
     const endpoint = `${CONFIG.CORS_PROXY}${encodeURIComponent(CONFIG.GRAPHQL_ENDPOINT)}`;
-    const headers = { 
-      'Content-Type': 'application/json',
-      'APIKEY': CONFIG.API_KEY 
-    };
-
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ query, variables: { slug } })
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ query })
     });
 
     const json = await res.json();
-    if (!json.data || !json.data.user) {
-      throw new Error(`Utente "${slug}" non trovato o profilo privato su Sorare.`);
+    if (!json.data || !json.data.currentUser) {
+      throw new Error('Impossibile recuperare il profilo utente.');
     }
 
-    return this.enrichCardsWithOptaMetrics(json.data.user.cards.nodes);
+    return {
+      user: json.data.currentUser,
+      cards: this.enrichCardsWithOptaMetrics(json.data.currentUser.cards.nodes)
+    };
   },
 
   enrichCardsWithOptaMetrics(rawCards) {
