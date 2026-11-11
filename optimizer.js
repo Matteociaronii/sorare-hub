@@ -1,124 +1,165 @@
-// SorareHub - Multi-Lineup Cascade Portfolio Solver (Senza Riserve)
+// SorareHub - Advanced Solver Engine (Zero-Bench, Multi-Lineup Cascade)
 const OptimizerEngine = {
-  scoreCard(card, strategy) {
-    const weights = strategy === 'ceiling' ? CONFIG.WEIGHTS.CEILING_MODE : CONFIG.WEIGHTS.FLOOR_MODE;
+  buildCascadePortfolio(cards, competition, scarcity, strategy = 'floor') {
+    if (!cards || cards.length === 0) return [];
 
-    const aasComponent = card.optaAas * weights.aas;
-    const matchupFactor = card.position === 'GK' || card.position === 'DEF'
-      ? Math.max(0.75, 1.8 - card.oppXga)
-      : Math.max(0.8, card.oppXga);
+    // Filtra per rarità scelta
+    let pool = cards.filter(c => c.scarcity === scarcity.toLowerCase());
 
-    const decisiveRaw = (card.xgXa * 48) * matchupFactor;
-    const setPieceBoost = card.setPieceTaker ? 4.5 : 0;
-    const aerialBoost = card.aerialThreat ? 2.5 : 0;
-    const decisiveComponent = (decisiveRaw + setPieceBoost + aerialBoost) * weights.decisive;
+    // Filtra secondo le regole della competizione selezionata
+    pool = pool.filter(card => this.isEligibleForCompetition(card, competition));
 
-    const projectedScore = (aasComponent + decisiveComponent) * card.powerMultiplier;
+    // Valutazione Opta xG/xA e AAS con proiezione punteggio
+    pool = pool.map(card => {
+      const score = this.calculatePlayerProjection(card, strategy);
+      return { ...card, projectedScore: score };
+    });
 
-    const badges = [];
-    if (card.confirmedXi) badges.push('🟢 Confirmed XI');
-    if (card.optaAas >= 52) badges.push('📊 High AAS Opta');
-    if (card.setPieceTaker) badges.push('🎯 Piazzati');
-    if (card.aerialThreat) badges.push('✈️ Gioco Aereo');
-    if (card.xgXa >= 0.40) badges.push('🔥 Elevato xG+xA');
-    if (card.position === 'GK') badges.push('🧤 Safe Clean Sheet');
+    // Ordina decrescente per punteggio proiettato
+    pool.sort((a, b) => b.projectedScore - a.projectedScore);
 
-    return {
-      ...card,
-      projectedScore: parseFloat(projectedScore.toFixed(1)),
-      badges
-    };
-  },
+    const lineups = [];
+    const usedIds = new Set();
+    const rankLabels = ['Team A (Top Tier)', 'Team B (Secondary)', 'Team C (Contender)', 'Team D (Backup)', 'Team E (Longshot)'];
 
-  buildCascadePortfolio(allCards, competition, scarcity, strategy) {
-    const eligibleCards = allCards
-      .filter(c => c.scarcity === scarcity)
-      .filter(c => {
-        if (competition.u23Only && !c.isU23) return false;
-        if (competition.leagues.includes('ALL')) return true;
-        return competition.leagues.includes(c.leagueSlug);
-      })
-      .map(c => this.scoreCard(c, strategy))
-      .sort((a, b) => b.projectedScore - a.projectedScore);
-
-    const usedCardIds = new Set();
-    const generatedLineups = [];
-    const teamLabels = ['TEAM A (PRIMARIA)', 'TEAM B (SECONDARIA)', 'TEAM C (TERZIARIA)', 'TEAM D (DEPTH)', 'TEAM E (EXTRA)'];
-
-    for (let t = 0; t < teamLabels.length; t++) {
-      const lineup = this.solveSingleLineup(eligibleCards, usedCardIds, competition);
+    let teamIdx = 0;
+    while (true) {
+      const available = pool.filter(c => !usedIds.has(c.id));
+      const lineup = this.solveSingleLineup(available, competition);
       if (!lineup) break;
-      generatedLineups.push({
-        rankLabel: teamLabels[t],
-        ...lineup
+
+      // Assegna il capitano (+50% bonus punteggio) al giocatore migliore
+      lineup.starters.sort((a, b) => b.projectedScore - a.projectedScore);
+      lineup.starters[0].isCaptain = true;
+      lineup.starters[0].projectedScore = Math.round(lineup.starters[0].projectedScore * CONFIG.RULES.CAPTAIN_BONUS_MULTIPLIER);
+
+      lineup.starters.forEach(p => usedIds.add(p.id));
+
+      const totalProjected = lineup.starters.reduce((acc, p) => acc + p.projectedScore, 0);
+      const inSeasonCount = lineup.starters.filter(p => p.isInSeason).length;
+
+      lineups.push({
+        rankLabel: rankLabels[teamIdx] || `Team ${String.fromCharCode(65 + teamIdx)}`,
+        format: competition.format,
+        starters: lineup.starters,
+        totalProjected: totalProjected,
+        inSeasonCount: inSeasonCount
       });
+
+      teamIdx++;
     }
 
-    return generatedLineups;
+    return lineups;
   },
 
-  solveSingleLineup(pool, usedCardIds, competition) {
-    const isSO7 = competition.format === 'SO7';
-    const requiredPositions = isSO7
-      ? ['GK', 'DEF', 'DEF', 'MID', 'MID', 'FWD', 'EXTRA']
-      : ['GK', 'DEF', 'MID', 'FWD', 'EXTRA'];
-
-    const minInSeason = competition.inSeasonRequired || 0;
-    const selected = [];
-    const usedPlayersInThisLineup = new Set();
-
-    const pickBestForSlot = (posFilter, mustBeInSeason) => {
-      return pool.find(c => {
-        if (usedCardIds.has(c.id)) return false;
-        if (usedPlayersInThisLineup.has(c.playerSlug)) return false;
-        if (mustBeInSeason && !c.isInSeason) return false;
-        if (posFilter === 'EXTRA') return c.position !== 'GK';
-        return c.position === posFilter;
-      });
-    };
-
-    let classicSlotsAllowed = requiredPositions.length - minInSeason;
-
-    for (const slotPos of requiredPositions) {
-      const candidate = pickBestForSlot(slotPos, classicSlotsAllowed <= 0);
-      if (!candidate) return null;
-
-      if (!candidate.isInSeason) {
-        classicSlotsAllowed--;
-      }
-
-      selected.push({ ...candidate, slotRole: slotPos });
-      usedCardIds.add(candidate.id);
-      usedPlayersInThisLineup.add(candidate.playerSlug);
+  solveSingleLineup(availablePool, competition) {
+    if (competition.format === 'SO7') {
+      return this.solveSO7(availablePool);
     }
+    return this.solveSO5(availablePool, competition.inSeasonRequired);
+  },
 
-    // Bonus Stacking Clean Sheet (Portiere + Difensore stesso club)
-    const gk = selected.find(p => p.slotRole === 'GK');
-    selected.forEach(p => {
-      if (p.slotRole !== 'GK' && p.position === 'DEF' && gk && p.clubSlug === gk.clubSlug) {
-        p.projectedScore = parseFloat((p.projectedScore + CONFIG.RULES.STACK_CORRELATION_BONUS).toFixed(1));
-        p.badges.unshift('🔗 Stack Difesa');
+  solveSO5(pool, minInSeason) {
+    const gks = pool.filter(c => c.position === 'GK');
+    const defs = pool.filter(c => c.position === 'DEF');
+    const mids = pool.filter(c => c.position === 'MID');
+    const fwds = pool.filter(c => c.position === 'FWD');
+
+    if (!gks.length || !defs.length || !mids.length || !fwds.length) return null;
+
+    for (const gk of gks) {
+      for (const def of defs) {
+        if (def.id === gk.id) continue;
+        for (const mid of mids) {
+          if (mid.id === gk.id || mid.id === def.id) continue;
+          for (const fwd of fwds) {
+            if (fwd.id === gk.id || fwd.id === def.id || fwd.id === mid.id) continue;
+
+            const baseStarters = [
+              { ...gk, slotRole: 'GK' },
+              { ...def, slotRole: 'DEF' },
+              { ...mid, slotRole: 'MID' },
+              { ...fwd, slotRole: 'FWD' }
+            ];
+
+            const baseIds = new Set(baseStarters.map(p => p.id));
+            const extraCandidates = pool.filter(c => !baseIds.has(c.id) && c.position !== 'GK');
+
+            for (const extra of extraCandidates) {
+              const fullTeam = [...baseStarters, { ...extra, slotRole: 'EXTRA' }];
+              const inSeasonCount = fullTeam.filter(p => p.isInSeason).length;
+
+              if (inSeasonCount >= minInSeason) {
+                return { starters: fullTeam };
+              }
+            }
+          }
+        }
       }
-    });
+    }
+    return null;
+  },
 
-    // Capitano al punteggio EV più alto
-    let captainIdx = 0;
-    selected.forEach((p, idx) => {
-      if (p.projectedScore > selected[captainIdx].projectedScore) captainIdx = idx;
-    });
-    selected[captainIdx].isCaptain = true;
-    selected[captainIdx].projectedScore = parseFloat((selected[captainIdx].projectedScore * 1.20).toFixed(1));
+  solveSO7(pool) {
+    const gks = pool.filter(c => c.position === 'GK');
+    const defs = pool.filter(c => c.position === 'DEF');
+    const mids = pool.filter(c => c.position === 'MID');
+    const fwds = pool.filter(c => c.position === 'FWD');
 
-    const totalProjected = selected.reduce((sum, p) => sum + p.projectedScore, 0).toFixed(1);
-    const inSeasonCount = selected.filter(p => p.isInSeason).length;
+    if (gks.length < 1 || defs.length < 2 || mids.length < 2 || fwds.length < 1) return null;
 
+    const gk = gks[0];
+    const d1 = defs[0];
+    const d2 = defs[1];
+    const m1 = mids[0];
+    const m2 = mids[1];
+    const f1 = fwds[0];
+
+    const baseTeam = [
+      { ...gk, slotRole: 'GK' },
+      { ...d1, slotRole: 'DEF' },
+      { ...d2, slotRole: 'DEF' },
+      { ...m1, slotRole: 'MID' },
+      { ...m2, slotRole: 'MID' },
+      { ...f1, slotRole: 'FWD' }
+    ];
+
+    const baseIds = new Set(baseTeam.map(p => p.id));
+    const extraCandidates = pool.filter(c => !baseIds.has(c.id) && c.position !== 'GK');
+
+    if (!extraCandidates.length) return null;
+
+    const extra = extraCandidates[0];
     return {
-      starters: selected,
-      bench: [], // Riserve azzerate
-      totalProjected,
-      inSeasonCount,
-      format: competition.format
+      starters: [...baseTeam, { ...extra, slotRole: 'EXTRA' }]
     };
+  },
+
+  isEligibleForCompetition(card, comp) {
+    if (comp.u23Only && !card.isU23) return false;
+
+    // UEFA Competitions
+    if (comp.isUefaChampions) return card.isUefaChampions === true;
+    if (comp.isUefaContender) return card.isUefaContender === true;
+
+    // All-Star accetta qualsiasi lega
+    if (comp.leagues.includes('ALL')) return true;
+
+    // Mono-lega o tornei specifici
+    return comp.leagues.includes(card.leagueSlug);
+  },
+
+  calculatePlayerProjection(card, strategy) {
+    const weights = CONFIG.WEIGHTS[strategy === 'ceiling' ? 'CEILING_MODE' : 'FLOOR_MODE'];
+    
+    // Punteggio base Opta ponderato
+    const aasComponent = (card.optaAas || 45) * weights.aas;
+    const decisiveComponent = ((card.xgXa || 0.2) * 50 + (card.position === 'GK' ? 30 : 20)) * weights.decisive;
+    const baseScore = aasComponent + decisiveComponent;
+
+    // Moltiplicatore potenza (In-Season + Collezione + Livello XP)
+    const multiplier = card.powerMultiplier || 1.05;
+    return Math.round(baseScore * multiplier);
   }
 };
 
