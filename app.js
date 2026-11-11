@@ -1,4 +1,4 @@
-// SorareHub - Main Application Controller
+// SorareHub - Main Application Controller (v2.3)
 const App = {
   state: {
     cards: [],
@@ -12,7 +12,19 @@ const App = {
   init() {
     this.populateCompetitionsMenu();
     this.bindEvents();
-    this.checkOAuthCallback();
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    const existingToken = localStorage.getItem('sorare_access_token');
+
+    if (code) {
+      this.checkOAuthCallback();
+    } else if (existingToken) {
+      this.notify('🔑 Sessione attiva trovata! Carico la tua galleria...');
+      this.loadUserGallery();
+    } else {
+      this.notify('⚡ SorareHub v2.3 Pronto — Tocca "Connetti Sorare"');
+    }
   },
 
   notify(msg, isError = false) {
@@ -21,25 +33,28 @@ const App = {
       box = document.createElement('div');
       box.id = 'debug-status-banner';
       box.style.position = 'fixed';
-      box.style.bottom = '20px';
+      box.style.bottom = '24px';
       box.style.left = '50%';
       box.style.transform = 'translateX(-50%)';
-      box.style.padding = '12px 24px';
-      box.style.borderRadius = '8px';
+      box.style.padding = '14px 28px';
+      box.style.borderRadius = '10px';
       box.style.fontSize = '14px';
-      box.style.fontWeight = 'bold';
-      box.style.zIndex = '99999';
-      box.style.boxShadow = '0 10px 30px rgba(0,0,0,0.8)';
+      box.style.fontWeight = '700';
+      box.style.zIndex = '999999';
+      box.style.maxWidth = '92%';
+      box.style.wordBreak = 'break-word';
+      box.style.textAlign = 'center';
+      box.style.boxShadow = '0 12px 32px rgba(0,0,0,0.85)';
       document.body.appendChild(box);
     }
     box.style.display = 'block';
-    box.style.background = isError ? '#8b0000' : '#1e3a29';
-    box.style.color = isError ? '#ffbaba' : '#69f0ae';
-    box.style.border = isError ? '1px solid #ff4d4d' : '1px solid #00e676';
+    box.style.background = isError ? '#8b0000' : '#0e3a24';
+    box.style.color = isError ? '#ffcdd2' : '#a7f3d0';
+    box.style.border = isError ? '2px solid #ef4444' : '2px solid #10b981';
     box.textContent = msg;
 
-    if (!isError) {
-      setTimeout(() => { if (box) box.style.display = 'none'; }, 5000);
+    if (!isError && !msg.includes('Avvio') && !msg.includes('corso') && !msg.includes('Sincronizzazione')) {
+      setTimeout(() => { if (box) box.style.display = 'none'; }, 6000);
     }
   },
 
@@ -124,24 +139,21 @@ const App = {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
 
-    if (code) {
-      this.notify('🔄 Autenticazione in corso: scambio token...');
-      if (window.SorareAPI && SorareAPI.handleOAuthCallback) {
+    if (!code) return;
+
+    this.notify('🔄 Scambio codice OAuth con Sorare...');
+
+    if (window.SorareAPI && SorareAPI.handleOAuthCallback) {
+      try {
         const token = await SorareAPI.handleOAuthCallback(code);
         if (token) {
           window.history.replaceState({}, document.title, window.location.pathname);
           this.notify('✅ Token ricevuto! Caricamento carte...');
           await this.loadUserGallery();
-        } else {
-          this.notify('❌ Errore durante lo scambio token. Controlla il Worker.', true);
         }
+      } catch (err) {
+        this.notify('❌ Scambio token fallito: ' + err.message, true);
       }
-      return;
-    }
-
-    const existingToken = localStorage.getItem('sorare_access_token');
-    if (existingToken && window.SorareAPI && SorareAPI.fetchCurrentUserGallery) {
-      await this.loadUserGallery();
     }
   },
 
