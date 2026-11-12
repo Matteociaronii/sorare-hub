@@ -2,6 +2,30 @@
 const OptimizerEngine = {
   CAPTAIN_MULTIPLIER: 1.50, // Capitano sempre +50%
 
+  // Mappa alias slug leghe Sorare per allineare al 100% config.js con l'API GraphQL
+  LEAGUE_ALIASES: {
+    'premier-league-gb-eng': ['premier-league-gb-eng', 'premier-league'],
+    'laliga-es': ['laliga-es', 'primera-division-es', 'la-liga-es'],
+    'bundesliga-de': ['bundesliga-de', '1-bundesliga-de'],
+    'ligue-1-fr': ['ligue-1-fr', 'ligue-1'],
+    'championship-gb-eng': ['championship-gb-eng', 'efl-championship-gb-eng'],
+    'primeira-liga-pt': ['primeira-liga-pt', 'liga-portugal-pt', 'liga-nos-pt'],
+    'jupiler-pro-league-be': ['jupiler-pro-league-be', 'first-division-a-be'],
+    'eredivisie-nl': ['eredivisie-nl', 'eredivisie'],
+    'premiership-gb-sct': ['premiership-gb-sct', 'scottish-premiership-gb-sct'],
+    'mls-us': ['mls-us', 'major-league-soccer-us', 'major-league-soccer'],
+    'j1-league-jp': ['j1-league-jp', 'j1-league'],
+    'k-league-1-kr': ['k-league-1-kr', 'k-league-classic-kr'],
+    '2-bundesliga-de': ['2-bundesliga-de'],
+    'segunda-division-es': ['segunda-division-es', 'laliga2-es'],
+    'serie-b-it': ['serie-b-it', 'serie-b'],
+    'superliga-dk': ['superliga-dk', 'superligaen-dk'],
+    'eliteserien-no': ['eliteserien-no'],
+    'bundesliga-at': ['bundesliga-at', 'tipico-bundesliga-at'],
+    'super-league-ch': ['super-league-ch', 'raiffeisen-super-league-ch'],
+    'ekstraklasa-pl': ['ekstraklasa-pl']
+  },
+
   buildCascadePortfolio(cards, competition, scarcity, strategy = 'floor') {
     if (!cards || cards.length === 0) return [];
 
@@ -33,7 +57,10 @@ const OptimizerEngine = {
     });
 
     const lineups = [];
-    const usedIds = new Set();
+    // Traccia solo gli ID delle singole carte già usate:
+    // lo stesso giocatore (playerSlug) NON può mai stare due volte nella stessa squadra,
+    // ma se hai una seconda carta (es. Classic + In-Season) può essere usata in un altro Team successivo.
+    const usedCardIds = new Set();
     const rankLabels = [
       'Team A (Top Tier)',
       'Team B (Secondary)',
@@ -44,18 +71,17 @@ const OptimizerEngine = {
 
     let teamIdx = 0;
     while (true) {
-      const available = pool.filter(c => !usedIds.has(c.id));
+      const available = pool.filter(c => !usedCardIds.has(c.id));
       const lineup = this.solveOptimalLineup(available, competition, strategy);
       if (!lineup) break;
 
-      // Clona i giocatori selezionati e assegna il Capitano (+50%) al miglior candidato
       const starters = lineup.starters.map(p => ({ ...p, isCaptain: false }));
       starters.sort((a, b) => b.projectedScore - a.projectedScore);
 
       starters[0].isCaptain = true;
       starters[0].projectedScore = Math.round(starters[0].projectedScore * this.CAPTAIN_MULTIPLIER);
 
-      starters.forEach(p => usedIds.add(p.id));
+      starters.forEach(p => usedCardIds.add(p.id));
 
       const totalProjected = starters.reduce((acc, p) => acc + p.projectedScore, 0);
       const inSeasonCount = starters.filter(p => p.isInSeason).length;
@@ -76,8 +102,22 @@ const OptimizerEngine = {
     return lineups;
   },
 
+  // Verifica che tutti i giocatori di una formazione siano persone diverse (no Classic + In-Season dello stesso player)
+  hasDistinctPlayers(team) {
+    const seenCardIds = new Set();
+    const seenPlayerSlugs = new Set();
+
+    for (const p of team) {
+      if (seenCardIds.has(p.id)) return false;
+      const pKey = (p.playerSlug || p.name || p.id).toLowerCase().trim();
+      if (seenPlayerSlugs.has(pKey)) return false;
+      seenCardIds.add(p.id);
+      seenPlayerSlugs.add(pKey);
+    }
+    return true;
+  },
+
   evaluatePlayer(card, strategy) {
-    // Caso Ultima Spiaggia: infortunato, squalificato, senza partita o L5 = 0
     if (card.isLastResort) {
       const fallbackBase = card.l15 > 0 ? Math.max(2, Math.round(card.l15 * 0.06)) : 2;
       return {
@@ -93,19 +133,15 @@ const OptimizerEngine = {
     const dec = card.avgDecisive > 0 ? card.avgDecisive : Math.max(0, l5 - aas);
     const peak = card.maxRecentScore > 0 ? card.maxRecentScore : l5;
 
-    // 1. Base statistica differenziata per strategia
     let rawEv = 0;
     if (strategy === 'ceiling') {
-      // Max Ceiling: premia forma recente L5, picco massimo ed esplosività Decisive
       rawEv = (l5 * 0.42) + (peak * 0.28) + ((aas + dec * 1.15) * 0.30);
-      if (card.stdDev >= 14) rawEv += 2.5; // Premia profili ad alta varianza/upside
+      if (card.stdDev >= 14) rawEv += 2.5;
     } else {
-      // Max Floor: premia solidità L15, volume puro Opta AAS e costanza
       rawEv = (l15 * 0.50) + (l5 * 0.25) + ((aas * 1.35) * 0.25);
-      if (card.stdDev > 0 && card.stdDev <= 10) rawEv += 2.0; // Premia regolarità
+      if (card.stdDev > 0 && card.stdDev <= 10) rawEv += 2.0;
     }
 
-    // 2. Fattore minutaggio e probabilità titolarità reale
     let minutesFactor = 1.0;
     if (card.availabilityTier === 'starter') {
       minutesFactor = card.avgMins >= 80 ? 1.03 : 0.98;
@@ -114,17 +150,14 @@ const OptimizerEngine = {
       minutesFactor = ratio;
     }
 
-    // 3. Modificatori Tattici & Matchup della partita
     let matchupMod = 1.0;
 
-    // Fattore Casa / Trasferta
     if (card.isHome === true) {
       matchupMod += (card.position === 'GK' || card.position === 'DEF') ? 0.06 : 0.04;
     } else if (card.isHome === false) {
       matchupMod -= 0.02;
     }
 
-    // Specialità Opta reali
     const traits = card.tacticalTraits || {};
     if (traits.setPiece) {
       matchupMod += strategy === 'floor' ? 0.05 : 0.04;
@@ -142,7 +175,6 @@ const OptimizerEngine = {
       matchupMod += 0.04;
     }
 
-    // 4. Moltiplicatore carta reale (XP + In-Season + Collection)
     const cardMultiplier = card.powerMultiplier || 1.0;
     const finalProjected = Math.max(5, Math.round(rawEv * minutesFactor * matchupMod * cardMultiplier));
     const matchupDeltaPct = Math.round((matchupMod - 1) * 100);
@@ -192,7 +224,6 @@ const OptimizerEngine = {
       if (traits.clinical) tacticalNotes.push(`incisivo in zona gol (${traits.goals}G/${traits.assists}A recenti)`);
       if (card.avgAas > 0) tacticalNotes.push(`AAS medio: ${card.avgAas} pt`);
     } else {
-      // FWD
       if (traits.clinical) tacticalNotes.push(`finalizzatore caldo (${traits.goals}G/${traits.assists}A nelle ultime 5)`);
       if (traits.aerial) tacticalNotes.push('pericoloso nel gioco aereo in area avversaria');
       if (traits.setPiece) tacticalNotes.push('coinvolto nei piazzati e rifiniture');
@@ -209,7 +240,6 @@ const OptimizerEngine = {
     return `${venueTag} • ${minutesTag}. ${trendStr.charAt(0).toUpperCase() + trendStr.slice(1)}. Punti di forza: ${tacticalNotes.join(', ')} (indice matchup ${deltaSign}, bonus carta +${card.bonusPct}%).`;
   },
 
-  // Solver combinatorio globale: valuta le migliori combinazioni complessive (non greedy)
   solveOptimalLineup(pool, competition, strategy) {
     if (competition.format === 'SO7') {
       return this.solveOptimalSO7(pool, strategy);
@@ -218,12 +248,11 @@ const OptimizerEngine = {
   },
 
   solveOptimalSO5(pool, minInSeason, strategy) {
-    // Prende i top candidati per ruolo per esplorare combinazioni ottimali in tempi istantanei
-    const gks = pool.filter(c => c.position === 'GK').slice(0, 6);
-    const defs = pool.filter(c => c.position === 'DEF').slice(0, 10);
-    const mids = pool.filter(c => c.position === 'MID').slice(0, 10);
-    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 10);
-    const extras = pool.filter(c => c.position !== 'GK').slice(0, 14);
+    const gks = pool.filter(c => c.position === 'GK').slice(0, 8);
+    const defs = pool.filter(c => c.position === 'DEF').slice(0, 12);
+    const mids = pool.filter(c => c.position === 'MID').slice(0, 12);
+    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 12);
+    const extras = pool.filter(c => c.position !== 'GK').slice(0, 16);
 
     if (!gks.length || !defs.length || !mids.length || !fwds.length || extras.length < 4) {
       return null;
@@ -234,20 +263,13 @@ const OptimizerEngine = {
 
     for (const gk of gks) {
       for (const def of defs) {
-        if (def.id === gk.id) continue;
+        if (def.playerSlug === gk.playerSlug) continue;
         for (const mid of mids) {
-          if (mid.id === gk.id || mid.id === def.id) continue;
+          if (mid.playerSlug === gk.playerSlug || mid.playerSlug === def.playerSlug) continue;
           for (const fwd of fwds) {
-            if (fwd.id === gk.id || fwd.id === def.id || fwd.id === mid.id) continue;
+            if (fwd.playerSlug === gk.playerSlug || fwd.playerSlug === def.playerSlug || fwd.playerSlug === mid.playerSlug) continue;
 
             for (const extra of extras) {
-              if (
-                extra.id === gk.id ||
-                extra.id === def.id ||
-                extra.id === mid.id ||
-                extra.id === fwd.id
-              ) continue;
-
               const team = [
                 { ...gk, slotRole: 'GK' },
                 { ...def, slotRole: 'DEF' },
@@ -255,6 +277,8 @@ const OptimizerEngine = {
                 { ...fwd, slotRole: 'FWD' },
                 { ...extra, slotRole: 'EXTRA' }
               ];
+
+              if (!this.hasDistinctPlayers(team)) continue;
 
               const inSeasonCount = team.filter(p => p.isInSeason).length;
               if (inSeasonCount < minInSeason) continue;
@@ -274,11 +298,11 @@ const OptimizerEngine = {
   },
 
   solveOptimalSO7(pool, strategy) {
-    const gks = pool.filter(c => c.position === 'GK').slice(0, 5);
-    const defs = pool.filter(c => c.position === 'DEF').slice(0, 8);
-    const mids = pool.filter(c => c.position === 'MID').slice(0, 8);
-    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 6);
-    const extras = pool.filter(c => c.position !== 'GK').slice(0, 10);
+    const gks = pool.filter(c => c.position === 'GK').slice(0, 6);
+    const defs = pool.filter(c => c.position === 'DEF').slice(0, 10);
+    const mids = pool.filter(c => c.position === 'MID').slice(0, 10);
+    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 8);
+    const extras = pool.filter(c => c.position !== 'GK').slice(0, 14);
 
     if (gks.length < 1 || defs.length < 2 || mids.length < 2 || fwds.length < 1) return null;
 
@@ -290,29 +314,33 @@ const OptimizerEngine = {
         for (let j = i + 1; j < defs.length; j++) {
           const d1 = defs[i];
           const d2 = defs[j];
+          if (d1.playerSlug === d2.playerSlug) continue;
+
           for (let m = 0; m < mids.length; m++) {
             for (let n = m + 1; n < mids.length; n++) {
               const m1 = mids[m];
               const m2 = mids[n];
+              if (m1.playerSlug === m2.playerSlug) continue;
+
               for (const fwd of fwds) {
-                const used = new Set([gk.id, d1.id, d2.id, m1.id, m2.id, fwd.id]);
-                const extra = extras.find(e => !used.has(e.id));
-                if (!extra) continue;
+                for (const extra of extras) {
+                  const team = [
+                    { ...gk, slotRole: 'GK' },
+                    { ...d1, slotRole: 'DEF' },
+                    { ...d2, slotRole: 'DEF' },
+                    { ...m1, slotRole: 'MID' },
+                    { ...m2, slotRole: 'MID' },
+                    { ...fwd, slotRole: 'FWD' },
+                    { ...extra, slotRole: 'EXTRA' }
+                  ];
 
-                const team = [
-                  { ...gk, slotRole: 'GK' },
-                  { ...d1, slotRole: 'DEF' },
-                  { ...d2, slotRole: 'DEF' },
-                  { ...m1, slotRole: 'MID' },
-                  { ...m2, slotRole: 'MID' },
-                  { ...fwd, slotRole: 'FWD' },
-                  { ...extra, slotRole: 'EXTRA' }
-                ];
+                  if (!this.hasDistinctPlayers(team)) continue;
 
-                const teamValue = this.scoreTeamCombination(team, strategy);
-                if (teamValue > bestScore) {
-                  bestScore = teamValue;
-                  bestTeam = team;
+                  const teamValue = this.scoreTeamCombination(team, strategy);
+                  if (teamValue > bestScore) {
+                    bestScore = teamValue;
+                    bestTeam = team;
+                  }
                 }
               }
             }
@@ -324,7 +352,6 @@ const OptimizerEngine = {
     return bestTeam ? { starters: bestTeam } : null;
   },
 
-  // Valuta la combinazione tenendo conto del Capitano +50%, stacking e anti-conflitto
   scoreTeamCombination(team, strategy) {
     let sum = 0;
     let maxIndividual = 0;
@@ -333,26 +360,21 @@ const OptimizerEngine = {
     for (const p of team) {
       sum += p.projectedScore;
       if (p.projectedScore > maxIndividual) maxIndividual = p.projectedScore;
-      // Forte penalità ai giocatori "ultima spiaggia" così vengono scelti SOLO se non c'è alternativa
       if (p.isLastResort) lastResortPenalty += 500;
     }
 
-    // Bonus Capitano +50% sul migliore della formazione
     let total = sum + (maxIndividual * (this.CAPTAIN_MULTIPLIER - 1));
 
-    // Bonus Stacking & Anti-conflitto nella stessa Gameweek
     const gk = team.find(p => p.slotRole === 'GK');
     const defenders = team.filter(p => p.position === 'DEF');
     const attackers = team.filter(p => p.position === 'FWD' || p.position === 'MID');
 
-    // Stack positivo GK + DEF stesso club (Clean Sheet correlato)
     if (gk && gk.clubSlug !== 'no-club') {
       const sameClubDef = defenders.some(d => d.clubSlug === gk.clubSlug);
       if (sameClubDef && gk.isHome) {
         total += strategy === 'ceiling' ? 4.5 : 2.5;
       }
 
-      // Anti-conflitto: evita di schierare un attaccante contro il tuo stesso portiere
       const facingOwnGk = attackers.some(a => a.opponentSlug && a.opponentSlug === gk.clubSlug);
       if (facingOwnGk) {
         total -= 4.0;
@@ -367,7 +389,14 @@ const OptimizerEngine = {
     if (comp.isUefaChampions) return card.isUefaChampions === true;
     if (comp.isUefaContender) return card.isUefaContender === true;
     if (comp.leagues.includes('ALL')) return true;
-    return comp.leagues.includes(card.leagueSlug);
+
+    const cardLeague = String(card.leagueSlug || '').toLowerCase();
+    return comp.leagues.some(targetSlug => {
+      const normalizedTarget = String(targetSlug || '').toLowerCase();
+      if (normalizedTarget === cardLeague) return true;
+      const aliases = this.LEAGUE_ALIASES[normalizedTarget] || [];
+      return aliases.includes(cardLeague);
+    });
   }
 };
 
