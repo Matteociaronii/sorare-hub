@@ -1,4 +1,4 @@
-// SorareHub - Real GraphQL Opta/SO5, UEFA & Fixture Layer
+// SorareHub - Real GraphQL SO5 Gameweeks, National Teams, Opta & Competition-Filtered Fixtures
 const SorareAPI = {
   generateRandomString(length = 32) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -77,12 +77,98 @@ const SorareAPI = {
     }
   },
 
+  async fetchActiveGameweeks(workerGraphqlEndpoint, token) {
+    const gwQuery = `
+      query GetUpcomingGameweeks {
+        football {
+          so5 {
+            so5Fixtures(first: 4, eventType: CLASSIC, future: true) {
+              nodes {
+                slug
+                gameWeek
+                startDate
+                endDate
+                shortDisplayName
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const res = await fetch(workerGraphqlEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ query: gwQuery })
+      });
+
+      if (!res.ok) return this.buildFallbackGameweeks();
+      const json = await res.json();
+      const nodes = json.data?.football?.so5?.so5Fixtures?.nodes || [];
+
+      if (nodes.length > 0) {
+        return nodes
+          .filter(n => n && n.startDate && n.endDate)
+          .sort((a, b) => new Date(a.startDate) - new Date(b.startDate))
+          .slice(0, 3)
+          .map((n, i) => ({
+            index: i,
+            slug: n.slug,
+            gameWeek: n.gameWeek,
+            label: `GW #${n.gameWeek}`,
+            startDate: n.startDate,
+            endDate: n.endDate,
+            dateRangeText: this.formatDateRange(n.startDate, n.endDate)
+          }));
+      }
+    } catch (e) {
+      console.warn('Fallback finestre GW:', e);
+    }
+
+    return this.buildFallbackGameweeks();
+  },
+
+  buildFallbackGameweeks() {
+    const now = new Date();
+    const gw1Start = new Date(now.getTime() - 12 * 3600 * 1000);
+    const gw1End = new Date(now.getTime() + 4 * 24 * 3600 * 1000);
+    const gw2Start = new Date(now.getTime() + 4 * 24 * 3600 * 1000 + 1000);
+    const gw2End = new Date(now.getTime() + 8 * 24 * 3600 * 1000);
+    const gw3Start = new Date(now.getTime() + 8 * 24 * 3600 * 1000 + 1000);
+    const gw3End = new Date(now.getTime() + 12 * 24 * 3600 * 1000);
+
+    return [
+      { index: 0, gameWeek: 'Attuale', label: 'GW Attuale', startDate: gw1Start.toISOString(), endDate: gw1End.toISOString(), dateRangeText: this.formatDateRange(gw1Start, gw1End) },
+      { index: 1, gameWeek: 'Prossima', label: 'GW Prossima', startDate: gw2Start.toISOString(), endDate: gw2End.toISOString(), dateRangeText: this.formatDateRange(gw2Start, gw2End) },
+      { index: 2, gameWeek: 'Successiva', label: 'GW +2', startDate: gw3Start.toISOString(), endDate: gw3End.toISOString(), dateRangeText: this.formatDateRange(gw3Start, gw3End) }
+    ];
+  },
+
+  formatDateRange(startStr, endStr) {
+    try {
+      const s = new Date(startStr);
+      const e = new Date(endStr);
+      const opts = { day: '2-digit', month: 'short' };
+      return `${s.toLocaleDateString('it-IT', opts)} - ${e.toLocaleDateString('it-IT', opts)}`;
+    } catch (_) {
+      return '';
+    }
+  },
+
   async fetchCurrentUserGallery() {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
 
+    // 1. Recupera le Gameweek ufficiali reali di Sorare
+    const gameweeks = await this.fetchActiveGameweeks(workerGraphqlEndpoint, token);
+
+    // 2. Query carte + partite sia del Club sia della Nazionale
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -137,7 +223,7 @@ const SorareAPI = {
                       slug
                       displayName
                     }
-                    upcomingGames(first: 3) {
+                    upcomingGames(first: 4) {
                       date
                       competition {
                         slug
@@ -151,6 +237,29 @@ const SorareAPI = {
                       }
                       awayTeam {
                         ... on Club {
+                          slug
+                          name
+                        }
+                      }
+                    }
+                  }
+                  activeNationalTeam {
+                    name
+                    slug
+                    upcomingGames(first: 3) {
+                      date
+                      competition {
+                        slug
+                        displayName
+                      }
+                      homeTeam {
+                        ... on NationalTeam {
+                          slug
+                          name
+                        }
+                      }
+                      awayTeam {
+                        ... on NationalTeam {
                           slug
                           name
                         }
@@ -232,16 +341,12 @@ const SorareAPI = {
 
     return {
       user: userProfile,
+      gameweeks: gameweeks,
       cards: this.enrichCardsWithRealOptaData(allCards)
     };
   },
 
   enrichCardsWithRealOptaData(rawCards) {
-    const now = Date.now();
-    // Finestra 24 giorni per includere anche i campionati fermi per la sosta nazionali FIFA
-    const scheduleWindowMs = 24 * 24 * 60 * 60 * 1000;
-    const uefaWindowMs = 21 * 24 * 60 * 60 * 1000;
-
     return (rawCards || [])
       .filter(c => c && (c.name || c.player?.displayName))
       .map((card, index) => {
@@ -256,30 +361,48 @@ const SorareAPI = {
         const clubSlug = club.slug || 'no-club';
         const leagueSlug = (club.domesticLeague?.slug || 'other').toLowerCase();
 
-        const upcomingList = Array.isArray(club.upcomingGames) ? club.upcomingGames : [];
-        const upcomingNode = upcomingList[0] || null;
+        const natTeam = player.activeNationalTeam || {};
+        const natSlug = natTeam.slug || '';
+        const natName = natTeam.name || '';
 
-        // Controllo UEFA rigoroso: solo partite effettivamente in calendario nella fase principale UEFA
-        const validUefaGames = upcomingList.filter(g => {
-          if (!g || !g.date) return false;
-          const t = new Date(g.date).getTime();
-          return !Number.isNaN(t) && (t - now) <= uefaWindowMs;
+        // Raccoglie TUTTE le partite future (sia Club sia Nazionale) con la relativa competizione esatta
+        const scheduleGames = [];
+
+        const clubGames = Array.isArray(club.upcomingGames) ? club.upcomingGames : [];
+        clubGames.forEach(g => {
+          if (!g || !g.date) return;
+          const isHome = g.homeTeam?.slug === clubSlug;
+          scheduleGames.push({
+            date: g.date,
+            timestamp: new Date(g.date).getTime(),
+            competitionSlug: String(g.competition?.slug || '').toLowerCase(),
+            competitionName: g.competition?.displayName || g.competition?.slug || 'Club',
+            isHome: isHome,
+            opponentName: isHome ? (g.awayTeam?.name || 'Avversario') : (g.homeTeam?.name || 'Avversario'),
+            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
+            isNationalTeam: false,
+            teamName: clubName
+          });
         });
 
-        const isUefaChampions = validUefaGames.some(g => {
-          const cSlug = String(g.competition?.slug || '').toLowerCase();
-          return (cSlug === 'uefa-champions-league' || (cSlug.includes('champions-league') && !cSlug.includes('qualif')));
+        const natGames = Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : [];
+        natGames.forEach(g => {
+          if (!g || !g.date) return;
+          const isHome = g.homeTeam?.slug === natSlug;
+          scheduleGames.push({
+            date: g.date,
+            timestamp: new Date(g.date).getTime(),
+            competitionSlug: String(g.competition?.slug || 'international').toLowerCase(),
+            competitionName: g.competition?.displayName || 'Nazionale',
+            isHome: isHome,
+            opponentName: isHome ? (g.awayTeam?.name || 'Nazionale') : (g.homeTeam?.name || 'Nazionale'),
+            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
+            isNationalTeam: true,
+            teamName: natName
+          });
         });
 
-        const isUefaContender = validUefaGames.some(g => {
-          const cSlug = String(g.competition?.slug || '').toLowerCase();
-          return (
-            cSlug === 'uefa-europa-league' ||
-            cSlug === 'uefa-conference-league' ||
-            cSlug === 'uefa-europa-conference-league' ||
-            ((cSlug.includes('europa-league') || cSlug.includes('conference-league')) && !cSlug.includes('qualif'))
-          );
-        });
+        scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
 
         const sYear = Number(card.seasonYear || 0);
         const isInSeason = sYear >= 2026;
@@ -288,7 +411,7 @@ const SorareAPI = {
         const u23Cutoff = new Date('2003-07-01').getTime();
         const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
 
-        // Analisi reale delle partite SO5 (esclude i DNP come fa il sito ufficiale Sorare)
+        // Analisi reale partite SO5 (esclude i DNP come sul sito ufficiale Sorare)
         const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
         const last5Window = allRecentScores.slice(0, 5);
         const playedMatchesAll = allRecentScores.filter(s => {
@@ -299,15 +422,12 @@ const SorareAPI = {
         });
 
         const last5Played = playedMatchesAll.slice(0, 5);
-
-        // Calcolo L5 ufficiale Sorare (media delle ultime 5 partite GIOCATE, escludendo DNP)
         const apiL5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
         const computedL5 = last5Played.length > 0
           ? Number((last5Played.reduce((acc, m) => acc + (m.score || 0), 0) / last5Played.length).toFixed(1))
           : 0;
         const l5 = computedL5 > 0 ? computedL5 : apiL5;
 
-        // Calcolo L15 ufficiale Sorare (esclude DNP se il valore GraphQL include zeri)
         const apiL15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0;
         const computedL10 = playedMatchesAll.length > 0
           ? Number((playedMatchesAll.reduce((acc, m) => acc + (m.score || 0), 0) / playedMatchesAll.length).toFixed(1))
@@ -368,47 +488,24 @@ const SorareAPI = {
         const isInjured = injuries.length > 0;
         const isSuspended = suspensions.length > 0;
 
-        let hasUpcomingGame = false;
-        let isHome = null;
-        let opponentName = 'Sosta Nazionali / Prossimo turno';
-        let opponentSlug = '';
-        let gameDate = null;
-
-        if (upcomingNode && upcomingNode.date) {
-          const gTime = new Date(upcomingNode.date).getTime();
-          if (!Number.isNaN(gTime) && (gTime - now) <= scheduleWindowMs) {
-            hasUpcomingGame = true;
-            gameDate = upcomingNode.date;
-            if (upcomingNode.homeTeam?.slug === clubSlug) {
-              isHome = true;
-              opponentName = upcomingNode.awayTeam?.name || 'Avversario';
-              opponentSlug = upcomingNode.awayTeam?.slug || '';
-            } else {
-              isHome = false;
-              opponentName = upcomingNode.homeTeam?.name || 'Avversario';
-              opponentSlug = upcomingNode.homeTeam?.slug || '';
-            }
-          }
-        }
-
-        // Classificazione titolarità basata sulle presenze reali recenti
-        let availabilityTier = 'last_resort';
-        let unavailableReason = '';
+        // Titolarità di base sulle prestazioni recenti (poi combinata con la partita valida nella GW)
+        let baseFitnessTier = 'last_resort';
+        let baseUnavailableReason = '';
 
         if (isInjured) {
-          unavailableReason = 'Infortunato (segnalato su Sorare)';
+          baseUnavailableReason = 'Infortunato (segnalato su Sorare)';
         } else if (isSuspended) {
-          unavailableReason = 'Squalificato';
-        } else if (!club.slug) {
-          unavailableReason = 'Senza club attivo';
+          baseUnavailableReason = 'Squalificato';
+        } else if (!club.slug && !natSlug) {
+          baseUnavailableReason = 'Senza club/nazionale attiva';
         } else if (l5 <= 0 && playedInLast5Games === 0) {
-          unavailableReason = 'Nessuna presenza nelle ultime 5 partite';
+          baseUnavailableReason = 'Nessuna presenza nelle ultime 5 partite';
         } else if (starterCount >= 3 || (playedInLast5Games >= 3 && avgMins >= 60)) {
-          availabilityTier = 'starter';
+          baseFitnessTier = 'starter';
         } else if (playedInLast5Games >= 1 && l5 > 0) {
-          availabilityTier = 'rotation';
+          baseFitnessTier = 'rotation';
         } else {
-          unavailableReason = 'Inattivo / fuori dalle rotazioni recenti';
+          baseUnavailableReason = 'Inattivo / fuori dalle rotazioni recenti';
         }
 
         const isSetPieceTaker = pos !== 'GK' && playedInLast5Games > 0 && (avgAas >= 26 || totalAssists >= 2);
@@ -426,9 +523,9 @@ const SorareAPI = {
           pictureUrl: card.pictureUrl || player.pictureUrl || null,
           club: clubName,
           clubSlug: clubSlug,
+          nationalTeamName: natName,
           leagueSlug: leagueSlug,
-          isUefaChampions: isUefaChampions,
-          isUefaContender: isUefaContender,
+          scheduleGames: scheduleGames,
           position: pos,
           scarcity: (card.rarityTyped || 'limited').toLowerCase(),
           seasonYear: sYear,
@@ -443,15 +540,8 @@ const SorareAPI = {
           playedCount: playedInLast5Games,
           starterCount: starterCount,
           avgMins: avgMins,
-          availabilityTier: availabilityTier,
-          confirmedXi: availabilityTier === 'starter',
-          isLastResort: availabilityTier === 'last_resort',
-          unavailableReason: unavailableReason,
-          hasUpcomingGame: hasUpcomingGame,
-          isHome: isHome,
-          opponentName: opponentName,
-          opponentSlug: opponentSlug,
-          gameDate: gameDate,
+          baseFitnessTier: baseFitnessTier,
+          baseUnavailableReason: baseUnavailableReason,
           tacticalTraits: {
             setPiece: isSetPieceTaker,
             aerial: isAerialThreat,
