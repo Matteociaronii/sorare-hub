@@ -13,6 +13,7 @@ const App = {
     this.populateCompetitionsMenu();
     this.bindEvents();
     this.checkOAuthCallback();
+    this.notify('✅ SorareHub Pronto');
   },
 
   populateCompetitionsMenu() {
@@ -106,6 +107,7 @@ const App = {
     const code = urlParams.get('code');
 
     if (code) {
+      this.notify('🔄 Verifica autorizzazione Sorare...');
       window.history.replaceState({}, document.title, window.location.pathname);
       const token = await SorareAPI.handleOAuthCallback(code);
       if (token) {
@@ -123,6 +125,7 @@ const App = {
   async loadUserGallery() {
     const loginBtnText = document.getElementById('login-btn-text');
     if (loginBtnText) loginBtnText.textContent = 'Caricamento Gallery...';
+    this.notify('📥 Sincronizzazione galleria in corso...');
 
     try {
       const data = await SorareAPI.fetchCurrentUserGallery();
@@ -135,9 +138,11 @@ const App = {
       this.updateNavbarUser(data.user.nickname || data.user.slug);
       this.updateTelemetry();
       this.runOptimizer();
+      this.notify(`✅ Galleria sincronizzata (${data.cards.length} carte)`);
     } catch (err) {
       console.error('Errore caricamento galleria utente:', err);
       if (loginBtnText) loginBtnText.textContent = 'Connetti Sorare';
+      this.notify('❌ Errore caricamento galleria: ' + err.message, true);
     }
   },
 
@@ -151,6 +156,7 @@ const App = {
     this.updateNavbarUser('DemoManager (Simulazione)');
     this.updateTelemetry();
     this.runOptimizer();
+    this.notify('🧪 Modalità Demo attiva');
   },
 
   updateNavbarUser(name) {
@@ -252,6 +258,38 @@ const App = {
       { id: 'p4', name: 'David Raya', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'GK', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 50, xgXa: 0.05, confirmedXi: true },
       { id: 'p5', name: 'Declan Rice', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 56, xgXa: 0.35, confirmedXi: true }
     ];
+  },
+
+  notify(msg, isError = false) {
+    let banner = document.getElementById('sh-toast-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'sh-toast-banner';
+      Object.assign(banner.style, {
+        position: 'fixed',
+        bottom: '20px',
+        right: '20px',
+        zIndex: '9999',
+        padding: '12px 18px',
+        borderRadius: '8px',
+        fontSize: '12px',
+        fontWeight: '700',
+        fontFamily: 'Inter, sans-serif',
+        boxShadow: '0 6px 20px rgba(0,0,0,0.45)',
+        transition: 'opacity 0.25s ease'
+      });
+      document.body.appendChild(banner);
+    }
+
+    banner.style.background = isError ? 'rgba(239, 68, 68, 0.95)' : 'rgba(16, 185, 129, 0.95)';
+    banner.style.color = '#090a0d';
+    banner.textContent = msg;
+    banner.style.opacity = '1';
+
+    clearTimeout(this._notifyTimer);
+    this._notifyTimer = setTimeout(() => {
+      banner.style.opacity = '0';
+    }, 3500);
   }
 };
 
