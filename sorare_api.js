@@ -1,6 +1,6 @@
-// SorareHub - TeamInterface Club + NationalTeam Schedule & 2026/27 In-Season GraphQL Layer
+// SorareHub - Official Sorare Tue-Fri / Fri-Tue Gameweeks + GW Number + Club vs National Team Separation
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v15',
+  CACHE_KEY: 'sorarehub_gallery_cache_v16',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -97,62 +97,59 @@ const SorareAPI = {
     }
   },
 
-  buildGameweekWindowsFromCards(cards) {
-    const nowMs = Date.now() - 8 * 3600 * 1000;
-    const allTimestamps = [];
+  // Calcola esattamente il calendario bisettimanale ufficiale di Sorare:
+  // Midweek: Martedì 16:00 -> Venerdì 15:59 (es. 10 Nov - 13 Nov)
+  // Weekend: Venerdì 16:00 -> Martedì 15:59 (es. 13 Nov - 17 Nov)
+  buildOfficialSorareGameweeks(officialGwNumber = null) {
+    const now = new Date();
 
-    (cards || []).forEach(c => {
-      (c.scheduleGames || []).forEach(g => {
-        if (g.timestamp && g.timestamp >= nowMs) {
-          allTimestamps.push(g.timestamp);
-        }
+    // Ancoraggio ufficiale Sorare: GW #524 = Martedì 10 Novembre 2026 ore 16:00 CET (15:00 UTC)
+    const anchorStartMs = Date.UTC(2026, 10, 10, 15, 0, 0);
+    const anchorGwNum = officialGwNumber || 524;
+
+    // Genera una sequenza di confini Mar 15:00 UTC <-> Ven 15:00 UTC attorno alla data odierna
+    const boundaries = [];
+    let cursorMs = anchorStartMs - (14 * 24 * 3600 * 1000); // 2 settimane prima dell'ancora
+    let gwCounter = anchorGwNum - 4;
+
+    for (let i = 0; i < 20; i++) {
+      const d = new Date(cursorMs);
+      const dayOfWeek = d.getUTCDay(); // 2 = Martedì, 5 = Venerdì
+      // Da Martedì a Venerdì = 3 giorni (72h); da Venerdì a Martedì = 4 giorni (96h)
+      const durationHours = (dayOfWeek === 2) ? 72 : 96;
+      const nextMs = cursorMs + durationHours * 3600 * 1000;
+
+      boundaries.push({
+        gameWeek: gwCounter,
+        startMs: cursorMs,
+        endMs: nextMs - 1000
       });
-    });
 
-    allTimestamps.sort((a, b) => a - b);
-
-    if (allTimestamps.length > 0) {
-      const clusters = [];
-      let clusterStart = allTimestamps[0];
-      let clusterEnd = allTimestamps[0];
-
-      for (let i = 1; i < allTimestamps.length; i++) {
-        const ts = allTimestamps[i];
-        if ((ts - clusterStart) > 4.2 * 24 * 3600 * 1000) {
-          clusters.push({ start: clusterStart, end: clusterEnd });
-          clusterStart = ts;
-          clusterEnd = ts;
-        } else {
-          clusterEnd = ts;
-        }
-      }
-      clusters.push({ start: clusterStart, end: clusterEnd });
-
-      return clusters.slice(0, 3).map((cl, idx) => {
-        const startIso = new Date(cl.start - 6 * 3600 * 1000).toISOString();
-        const endIso = new Date(cl.end + 12 * 3600 * 1000).toISOString();
-        const label = idx === 0 ? 'GW Attiva (Prossima)' : (idx === 1 ? 'GW +1' : 'GW +2');
-        return {
-          index: idx,
-          gameWeek: idx + 1,
-          label: label,
-          startDate: startIso,
-          endDate: endIso,
-          dateRangeText: this.formatDateRange(startIso, endIso)
-        };
-      });
+      cursorMs = nextMs;
+      gwCounter++;
     }
 
-    const start = new Date();
-    const end = new Date(start.getTime() + 4.5 * 24 * 3600 * 1000);
-    return [{
-      index: 0,
-      gameWeek: 1,
-      label: 'GW Attuale',
-      startDate: start.toISOString(),
-      endDate: end.toISOString(),
-      dateRangeText: this.formatDateRange(start, end)
-    }];
+    const nowMs = now.getTime();
+    let activeIdx = boundaries.findIndex(b => nowMs >= b.startMs && nowMs <= b.endMs);
+    if (activeIdx === -1) {
+      activeIdx = boundaries.findIndex(b => b.startMs >= nowMs);
+      if (activeIdx === -1) activeIdx = 4;
+    }
+
+    return [0, 1, 2].map(offset => {
+      const b = boundaries[activeIdx + offset];
+      const startIso = new Date(b.startMs).toISOString();
+      const endIso = new Date(b.endMs).toISOString();
+      const statusTag = offset === 0 ? 'Live' : (offset === 1 ? 'Prossima' : 'Futuro');
+      return {
+        index: offset,
+        gameWeek: b.gameWeek,
+        label: `GW #${b.gameWeek} (${statusTag})`,
+        startDate: startIso,
+        endDate: endIso,
+        dateRangeText: this.formatDateRange(startIso, endIso)
+      };
+    });
   },
 
   formatDateRange(startStr, endStr) {
@@ -178,7 +175,7 @@ const SorareAPI = {
           if (cached && cached.timestamp && (Date.now() - cached.timestamp) < this.CACHE_TTL_MS && Array.isArray(cached.cards) && cached.cards.length > 0) {
             return {
               user: cached.user,
-              gameweeks: cached.gameweeks,
+              gameweeks: this.buildOfficialSorareGameweeks(),
               cards: cached.cards
             };
           }
@@ -188,7 +185,6 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
 
-    // upcomingGames è un campo di TeamInterface (activeClub e activeNationalTeam), non di Player
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -240,8 +236,9 @@ const SorareAPI = {
                     slug
                     domesticLeague {
                       slug
+                      displayName
                     }
-                    upcomingGames(first: 3) {
+                    upcomingGames(first: 4) {
                       date
                       competition {
                         slug
@@ -264,7 +261,7 @@ const SorareAPI = {
                   activeNationalTeam {
                     name
                     slug
-                    upcomingGames(first: 3) {
+                    upcomingGames(first: 4) {
                       date
                       competition {
                         slug
@@ -361,7 +358,7 @@ const SorareAPI = {
     const enriched = this.enrichCardsWithRealOptaData(allCards)
       .filter(c => c.scarcity !== 'common');
 
-    const gameweeks = this.buildGameweekWindowsFromCards(enriched);
+    const gameweeks = this.buildOfficialSorareGameweeks();
 
     try {
       localStorage.setItem(this.CACHE_KEY, JSON.stringify({
@@ -387,7 +384,7 @@ const SorareAPI = {
       .map((card, index) => {
         const player = card.player || {};
         const playerName = player.displayName || card.name || 'Calciatore';
-        const playerSlug = player.slug || card.slug || `slug_${index}`;
+        const canonicalPlayerSlug = (player.slug || playerName.toLowerCase().replace(/[^a-z0-9]/g, '_')).trim();
         const rawPos = (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
         const pos = this.normalizePosition(rawPos);
 
@@ -395,6 +392,7 @@ const SorareAPI = {
         const clubName = club.name || 'Svincolato / N.D.';
         const clubSlug = club.slug || 'no-club';
         const leagueSlug = (club.domesticLeague?.slug || 'other').toLowerCase();
+        const leagueName = club.domesticLeague?.displayName || leagueSlug;
 
         const natTeam = player.activeNationalTeam || {};
         const natSlug = natTeam.slug || '';
@@ -403,7 +401,7 @@ const SorareAPI = {
         const scheduleGames = [];
         const seenGameKeys = new Set();
 
-        const pushUniqueGame = (g, sourceType) => {
+        const pushUniqueGame = (g, isNatSource) => {
           if (!g || !g.date) return;
           const ts = new Date(g.date).getTime();
           if (!ts || Number.isNaN(ts)) return;
@@ -417,9 +415,7 @@ const SorareAPI = {
           if (seenGameKeys.has(dedupKey)) return;
           seenGameKeys.add(dedupKey);
 
-          const isNatMatch = sourceType === 'nat';
-
-          if (isNatMatch) {
+          if (isNatSource) {
             const isHome = natSlug ? (homeSlug === natSlug) : true;
             const myNatName = natName || (isHome ? homeName : awayName);
             const oppName = isHome ? awayName : homeName;
@@ -450,8 +446,8 @@ const SorareAPI = {
           }
         };
 
-        (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, 'club'));
-        (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, 'nat'));
+        (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, false));
+        (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, true));
 
         scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -571,12 +567,13 @@ const SorareAPI = {
 
         return {
           id: card.slug || `c_${index}`,
-          playerSlug: playerSlug,
+          playerSlug: canonicalPlayerSlug,
           name: playerName,
           pictureUrl: card.pictureUrl || player.pictureUrl || null,
           club: clubName,
           clubSlug: clubSlug,
           leagueSlug: leagueSlug,
+          leagueName: leagueName,
           scheduleGames: scheduleGames,
           position: pos,
           scarcity: (card.rarityTyped || 'limited').toLowerCase(),
