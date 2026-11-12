@@ -1,6 +1,6 @@
-// SorareHub - Complexity-Safe (<23k / max 30k) & Rate-Limit Safe GraphQL Layer (Club + NationalTeam + Gameweeks)
+// SorareHub - Pro-Only (No Commons), Complexity-Safe (<23k) & Rate-Limit Safe GraphQL Layer
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v6',
+  CACHE_KEY: 'sorarehub_gallery_cache_v7',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -204,13 +204,13 @@ const SorareAPI = {
 
     await new Promise(resolve => setTimeout(resolve, 350));
 
-    // cards(first: 45) + so5Scores(last: 5) -> complessità ~21.000 (sotto il tetto max 30.000)
+    // Esclude le carte Common direttamente nella query Sorare: scarica solo Limited, Rare, Super Rare e Unique
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
           slug
           nickname
-          cards(first: 45, after: $after) {
+          cards(first: 45, after: $after, rarities: [LIMITED, RARE, SUPER_RARE, UNIQUE]) {
             pageInfo {
               hasNextPage
               endCursor
@@ -313,7 +313,7 @@ const SorareAPI = {
     let userProfile = null;
     let batchIndex = 0;
 
-    while (hasNext && batchIndex < 25) {
+    while (hasNext && batchIndex < 20) {
       batchIndex++;
 
       const res = await this.fetchWithRetry(workerGraphqlEndpoint, {
@@ -357,10 +357,10 @@ const SorareAPI = {
 
       const loginBtnText = document.getElementById('login-btn-text');
       if (loginBtnText) {
-        loginBtnText.textContent = `📥 Caricate ${allCards.length} carte...`;
+        loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
       }
       if (window.App && App.notify) {
-        App.notify(`📥 Analisi Opta: ${allCards.length} carte...`);
+        App.notify(`📥 Analisi Opta: ${allCards.length} carte Pro...`);
       }
 
       const pageInfo = connection?.pageInfo;
@@ -372,7 +372,8 @@ const SorareAPI = {
       await new Promise(resolve => setTimeout(resolve, 450));
     }
 
-    const enriched = this.enrichCardsWithRealOptaData(allCards);
+    const enriched = this.enrichCardsWithRealOptaData(allCards)
+      .filter(c => c.scarcity !== 'common');
 
     try {
       localStorage.setItem(this.CACHE_KEY, JSON.stringify({
@@ -411,7 +412,6 @@ const SorareAPI = {
 
         const scheduleGames = [];
 
-        // 1. Partite del Club
         const clubGames = Array.isArray(club.upcomingGames) ? club.upcomingGames : [];
         clubGames.forEach(g => {
           if (!g || !g.date) return;
@@ -429,7 +429,6 @@ const SorareAPI = {
           });
         });
 
-        // 2. Partite della Nazionale
         const natGames = Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : [];
         natGames.forEach(g => {
           if (!g || !g.date) return;
