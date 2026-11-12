@@ -1,6 +1,6 @@
-// SorareHub - TeamInterface National Team + Club Schedule & 2026/27 In-Season Detection
+// SorareHub - Unified Player+Club+NationalTeam Schedule & 2026/27 In-Season GraphQL Layer
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v13',
+  CACHE_KEY: 'sorarehub_gallery_cache_v14',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -97,8 +97,9 @@ const SorareAPI = {
     }
   },
 
+  // Raggruppa le partite future nelle 3 finestre Gameweek reali di Sorare (es. Gio-Dom / Lun-Mer / Ven-Lun)
   buildGameweekWindowsFromCards(cards) {
-    const nowMs = Date.now() - 6 * 3600 * 1000;
+    const nowMs = Date.now() - 8 * 3600 * 1000;
     const allTimestamps = [];
 
     (cards || []).forEach(c => {
@@ -113,25 +114,26 @@ const SorareAPI = {
 
     if (allTimestamps.length > 0) {
       const clusters = [];
-      let currentClusterStart = allTimestamps[0];
-      let currentClusterEnd = allTimestamps[0];
+      let clusterStart = allTimestamps[0];
+      let clusterEnd = allTimestamps[0];
 
       for (let i = 1; i < allTimestamps.length; i++) {
         const ts = allTimestamps[i];
-        if (ts - currentClusterEnd > 48 * 3600 * 1000 && ts - currentClusterStart > 3.5 * 24 * 3600 * 1000) {
-          clusters.push({ start: currentClusterStart, end: currentClusterEnd });
-          currentClusterStart = ts;
-          currentClusterEnd = ts;
+        // Separa due turni quando la finestra supera i 4 giorni (standard Sorare: Ven-Lun / Mar-Gio)
+        if ((ts - clusterStart) > 4.2 * 24 * 3600 * 1000) {
+          clusters.push({ start: clusterStart, end: clusterEnd });
+          clusterStart = ts;
+          clusterEnd = ts;
         } else {
-          currentClusterEnd = ts;
+          clusterEnd = ts;
         }
       }
-      clusters.push({ start: currentClusterStart, end: currentClusterEnd });
+      clusters.push({ start: clusterStart, end: clusterEnd });
 
       return clusters.slice(0, 3).map((cl, idx) => {
         const startIso = new Date(cl.start - 6 * 3600 * 1000).toISOString();
         const endIso = new Date(cl.end + 12 * 3600 * 1000).toISOString();
-        const label = idx === 0 ? 'Prossima GW (Attiva)' : (idx === 1 ? 'GW +1' : 'GW +2');
+        const label = idx === 0 ? 'GW Attiva (Prossima)' : (idx === 1 ? 'GW +1' : 'GW +2');
         return {
           index: idx,
           gameWeek: idx + 1,
@@ -144,7 +146,7 @@ const SorareAPI = {
     }
 
     const start = new Date();
-    const end = new Date(start.getTime() + 5 * 24 * 3600 * 1000);
+    const end = new Date(start.getTime() + 4.5 * 24 * 3600 * 1000);
     return [{
       index: 0,
       gameWeek: 1,
@@ -188,7 +190,7 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
 
-    // Usa ... on TeamInterface per catturare sia Club che NationalTeam senza nodi vuoti
+    // Interroga sia player.upcomingGames che activeClub / activeNationalTeam per catturare il 100% dei match
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -233,6 +235,25 @@ const SorareAPI = {
                       goalAssist
                       cleanSheet
                       saves
+                    }
+                  }
+                  upcomingGames(first: 4) {
+                    date
+                    competition {
+                      slug
+                      displayName
+                    }
+                    homeTeam {
+                      ... on TeamInterface {
+                        slug
+                        name
+                      }
+                    }
+                    awayTeam {
+                      ... on TeamInterface {
+                        slug
+                        name
+                      }
                     }
                   }
                   activeClub {
@@ -401,41 +422,59 @@ const SorareAPI = {
         const natName = natTeam.name || '';
 
         const scheduleGames = [];
+        const seenGameKeys = new Set();
 
-        const clubGames = Array.isArray(club.upcomingGames) ? club.upcomingGames : [];
-        clubGames.forEach(g => {
+        const pushUniqueGame = (g, sourceType) => {
           if (!g || !g.date) return;
-          const isHome = g.homeTeam?.slug === clubSlug;
-          scheduleGames.push({
-            date: g.date,
-            timestamp: new Date(g.date).getTime(),
-            competitionSlug: String(g.competition?.slug || '').toLowerCase(),
-            competitionName: g.competition?.displayName || g.competition?.slug || 'Club',
-            isHome: isHome,
-            opponentName: isHome ? (g.awayTeam?.name || 'Avversario') : (g.homeTeam?.name || 'Avversario'),
-            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
-            isNationalTeam: false,
-            teamName: clubName
-          });
-        });
+          const ts = new Date(g.date).getTime();
+          if (!ts || Number.isNaN(ts)) return;
 
-        const natGames = Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : [];
-        natGames.forEach(g => {
-          if (!g || !g.date) return;
-          const isHome = g.homeTeam?.slug === natSlug;
-          const oppName = isHome ? (g.awayTeam?.name || 'Avversario Nazionale') : (g.homeTeam?.name || 'Avversario Nazionale');
-          scheduleGames.push({
-            date: g.date,
-            timestamp: new Date(g.date).getTime(),
-            competitionSlug: String(g.competition?.slug || 'international').toLowerCase(),
-            competitionName: g.competition?.displayName || 'Nazionale',
-            isHome: isHome,
-            opponentName: oppName,
-            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
-            isNationalTeam: true,
-            teamName: `${natName || 'Nazionale'} vs ${oppName}`
-          });
-        });
+          const homeSlug = g.homeTeam?.slug || '';
+          const awaySlug = g.awayTeam?.slug || '';
+          const homeName = g.homeTeam?.name || 'Casa';
+          const awayName = g.awayTeam?.name || 'Trasferta';
+          const dayKey = new Date(ts).toISOString().slice(0, 10);
+          const dedupKey = `${dayKey}_${homeSlug || homeName}_${awaySlug || awayName}`;
+          if (seenGameKeys.has(dedupKey)) return;
+          seenGameKeys.add(dedupKey);
+
+          const isClubMatch = homeSlug === clubSlug || awaySlug === clubSlug;
+          const isNatMatch = sourceType === 'nat' || (!isClubMatch && (homeSlug === natSlug || awaySlug === natSlug || sourceType === 'player'));
+
+          if (isNatMatch && !isClubMatch) {
+            const isHome = natSlug ? (homeSlug === natSlug) : true;
+            const myNatName = natName || (isHome ? homeName : awayName);
+            const oppName = isHome ? awayName : homeName;
+            scheduleGames.push({
+              date: g.date,
+              timestamp: ts,
+              competitionSlug: String(g.competition?.slug || 'international').toLowerCase(),
+              competitionName: g.competition?.displayName || 'Nazionale',
+              isHome: isHome,
+              opponentName: oppName,
+              opponentSlug: isHome ? awaySlug : homeSlug,
+              isNationalTeam: true,
+              teamName: `${myNatName} vs ${oppName}`
+            });
+          } else {
+            const isHome = homeSlug === clubSlug;
+            scheduleGames.push({
+              date: g.date,
+              timestamp: ts,
+              competitionSlug: String(g.competition?.slug || '').toLowerCase(),
+              competitionName: g.competition?.displayName || g.competition?.slug || 'Club',
+              isHome: isHome,
+              opponentName: isHome ? awayName : homeName,
+              opponentSlug: isHome ? awaySlug : homeSlug,
+              isNationalTeam: false,
+              teamName: clubName
+            });
+          }
+        };
+
+        (Array.isArray(player.upcomingGames) ? player.upcomingGames : []).forEach(g => pushUniqueGame(g, 'player'));
+        (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, 'club'));
+        (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, 'nat'));
 
         scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -533,13 +572,13 @@ const SorareAPI = {
           baseUnavailableReason = 'Infortunato (segnalato su Sorare)';
         } else if (isSuspended) {
           baseUnavailableReason = 'Squalificato';
-        } else if (!club.slug && !natSlug) {
+        } else if (!club.slug && !natSlug && scheduleGames.length === 0) {
           baseUnavailableReason = 'Senza club/nazionale attiva';
-        } else if (l5 <= 0 && playedInLast5Games === 0) {
+        } else if (l5 <= 0 && playedInLast5Games === 0 && scheduleGames.length === 0) {
           baseUnavailableReason = 'Nessuna presenza nelle ultime 5 partite';
         } else if (starterCount >= 3 || (playedInLast5Games >= 3 && avgMins >= 60)) {
           baseFitnessTier = 'starter';
-        } else if (playedInLast5Games >= 1 && l5 > 0) {
+        } else if (playedInLast5Games >= 1 || l5 > 0 || scheduleGames.length > 0) {
           baseFitnessTier = 'rotation';
         } else {
           baseUnavailableReason = 'Inattivo / fuori dalle rotazioni recenti';
