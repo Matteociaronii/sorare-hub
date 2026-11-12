@@ -1,8 +1,9 @@
-// SorareHub - Application Controller (Exact 4-Box KPI Updater + Official GW Selector + Horizontal Ordered Lineups)
+// SorareHub - Application Controller (Full Multi-line Opta Tooltips + XI/Bench Instant Toggle + Strict In-Season)
 const App = {
   cards: [],
   gameweeks: [],
   selectedGwIndex: 0,
+  manualOverrides: {}, // { [playerSlug]: 'xi' | 'bench' }
   user: null,
   currentScarcity: 'limited',
   currentStrategy: 'floor',
@@ -59,17 +60,17 @@ const App = {
     }
   },
 
-  // Aggiorna con precisione tutti e 4 i riquadri KPI visibili nello screenshot ("CARTE IN GALLERIA", "CARTE IN-SEASON", "CONFIRMED XI / TITOLARI", "SQUADRE GENERATE")
   updateGalleryCounters(lineupsCount = 0) {
     const total = this.cards.length;
     const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
 
-    // Calcola quanti titolari hanno una partita reale nella GW selezionata
     let confirmedXiCount = 0;
     const seenSlugs = new Set();
     this.cards.forEach(c => {
       if (seenSlugs.has(c.playerSlug)) return;
+      if (this.manualOverrides[c.playerSlug] === 'bench') return;
+
       const games = Array.isArray(c.scheduleGames) ? c.scheduleGames : [];
       let hasGwGame = false;
       if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
@@ -79,13 +80,12 @@ const App = {
       } else {
         hasGwGame = games.length > 0;
       }
-      if (hasGwGame && c.baseFitnessTier !== 'last_resort') {
+      if (hasGwGame && (this.manualOverrides[c.playerSlug] === 'xi' || c.baseFitnessTier !== 'last_resort')) {
         seenSlugs.add(c.playerSlug);
         confirmedXiCount++;
       }
     });
 
-    // 1) Aggiorna tramite ID noti se presenti
     const idMap = {
       'gallery-count': total,
       'total-cards': total,
@@ -107,11 +107,8 @@ const App = {
       if (el) el.textContent = String(val);
     });
 
-    // 2) Cerca nel DOM i 4 box cercando le scritte esatte dello screenshot:
-    // "CARTE IN GALLERIA", "CARTE IN-SEASON", "CONFIRMED XI", "SQUADRE GENERATE"
     const allElements = document.querySelectorAll('div, section, article, li');
     allElements.forEach(el => {
-      // Consideriamo solo i contenitori compatti (card KPI) che hanno tra 2 e 5 elementi figli
       if (el.children.length < 2 || el.children.length > 6) return;
       const firstChildText = (el.children[0]?.textContent || '').trim().toUpperCase();
       const valueChild = el.children[1];
@@ -176,9 +173,9 @@ const App = {
         align-items: stretch !important;
       }
       .sh-lineup-card, .lineup-card {
-        flex: 0 0 365px !important;
-        min-width: 350px !important;
-        max-width: 390px !important;
+        flex: 0 0 385px !important;
+        min-width: 365px !important;
+        max-width: 410px !important;
         background: #141519 !important;
         border: 1px solid rgba(212, 175, 55, 0.42) !important;
         border-radius: 14px !important;
@@ -228,7 +225,27 @@ const App = {
       .sh-meta { flex: 1; min-width: 0; }
       .sh-name { font-weight: 700; font-size: 13.5px; color: #fff; line-height: 1.3; }
       .sh-sub { font-size: 11.5px; color: #b0b6be; margin-top: 3px; line-height: 1.35; }
+      .sh-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
       .sh-pts { font-weight: 800; font-size: 14.5px; color: #f3d266; white-space: nowrap; }
+      .sh-bench-btn {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        color: #b0b6be;
+        border-radius: 5px;
+        padding: 2px 6px;
+        font-size: 10px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .sh-bench-btn:hover {
+        border-color: #f3d266;
+        color: #f3d266;
+      }
+      .sh-bench-btn.is-benched {
+        background: rgba(244, 67, 54, 0.2);
+        border-color: rgba(244, 67, 54, 0.65);
+        color: #ff8a95;
+      }
       .sh-season-badge {
         display: inline-block;
         font-size: 10px;
@@ -261,18 +278,19 @@ const App = {
         position: absolute;
         left: 0;
         top: calc(100% + 6px);
-        width: 265px;
-        max-width: 78vw;
+        width: 295px;
+        max-width: 82vw;
         background: #0e0f12;
         border: 1px solid #d4af37;
-        border-radius: 8px;
-        padding: 10px;
+        border-radius: 9px;
+        padding: 11px 12px;
         color: #ececec;
         font-size: 11.5px;
         font-weight: 400;
-        line-height: 1.45;
+        line-height: 1.5;
         z-index: 9999;
-        white-space: normal;
+        white-space: pre-line;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.85);
       }
       .player-info-trigger:hover .tactical-tooltip-box,
       .player-info-trigger.active .tactical-tooltip-box { display: block; }
@@ -455,6 +473,17 @@ const App = {
     });
 
     document.addEventListener('click', (e) => {
+      const benchToggle = e.target.closest('.sh-bench-btn');
+      if (benchToggle) {
+        e.stopPropagation();
+        const slug = benchToggle.dataset.slug;
+        if (slug) {
+          this.manualOverrides[slug] = this.manualOverrides[slug] === 'bench' ? null : 'bench';
+          this.runOptimizer();
+        }
+        return;
+      }
+
       const trigger = e.target.closest('.player-info-trigger');
       if (trigger) {
         e.stopPropagation();
@@ -519,7 +548,14 @@ const App = {
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
 
     const lineups = window.OptimizerEngine
-      ? OptimizerEngine.buildCascadePortfolio(this.cards, this.currentCompetition, this.currentScarcity, this.currentStrategy, selectedGw)
+      ? OptimizerEngine.buildCascadePortfolio(
+          this.cards,
+          this.currentCompetition,
+          this.currentScarcity,
+          this.currentStrategy,
+          selectedGw,
+          this.manualOverrides
+        )
       : [];
 
     this.updateGalleryCounters(lineups.length);
@@ -537,7 +573,6 @@ const App = {
     if (!targetGrid) {
       targetGrid = document.getElementById('sorarehub-horizontal-grid');
       if (!targetGrid) {
-        targetGrid = document.getElementById('sorarehub-horizontal-grid');
         targetGrid = document.createElement('div');
         targetGrid.id = 'sorarehub-horizontal-grid';
         const mainEl = document.querySelector('main') || document.body;
@@ -550,18 +585,16 @@ const App = {
     const inSeasonInRarity = rarityCards.filter(c => c.isInSeason).length;
 
     if (!lineups || lineups.length === 0) {
-      const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Ruoli non coperti in questa lega/rarità.`;
+      const reqNote = this.currentCompetition.inSeasonRequired > 0
+        ? `richiede almeno ${this.currentCompetition.inSeasonRequired}/5 carte In-Season 26/27 della lega`
+        : `nessuna rosa completa disponibile in questa lega/rarità`;
+      const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — ${reqNote}.`;
       this.notify(msg, true);
       targetGrid.innerHTML = `<div class="sh-lineup-card"><p>${msg}</p></div>`;
       return;
     }
 
-    const hasActiveGames = lineups.some(l => l.activeMatchesCount > 0);
-    const statusNote = hasActiveGames
-      ? `✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`
-      : `ℹ️ ${this.currentCompetition.name} in sosta in ${selectedGw?.label || 'questa GW'}: mostrate le ${lineups.length} migliori formazioni di club (Nazionali escluse dai campionati).`;
-
-    this.notify(statusNote);
+    this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} • In-Season totali: ${inSeasonInRarity}`);
 
     targetGrid.innerHTML = lineups.map(lineup => {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
@@ -580,6 +613,9 @@ const App = {
           matchLine = `${p.activeMatch.isHome === true ? '🏠' : '✈️'} vs ${this.escapeHtml(p.activeMatch.opponentName)}`;
         }
 
+        const isBenched = this.manualOverrides[p.playerSlug] === 'bench';
+        const benchBtnLabel = isBenched ? '🪑 Panchina' : 'XI';
+        const benchBtnCls = isBenched ? 'sh-bench-btn is-benched' : 'sh-bench-btn';
         const roleCls = `pos-${p.displayRole.toLowerCase()}`;
 
         return `
@@ -594,7 +630,10 @@ const App = {
               </div>
               <div class="sh-sub">${this.escapeHtml(p.club)} • ${matchLine} • L15: ${p.l15} • L5: ${p.l5}</div>
             </div>
-            <div class="sh-pts">${p.projectedScore} pt</div>
+            <div class="sh-right">
+              <div class="sh-pts">${p.projectedScore} pt</div>
+              ${p.activeMatch ? `<button type="button" class="${benchBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Segna in panchina se non è nell'11 ufficiale">${benchBtnLabel}</button>` : ''}
+            </div>
           </div>
         `;
       }).join('');
