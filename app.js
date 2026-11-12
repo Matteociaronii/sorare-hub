@@ -1,4 +1,4 @@
-// SorareHub - Application Controller (Carbon & Gold Edition + Visible Status Banners + Real GW Selector + National Team Display)
+// SorareHub - Application Controller (Carbon & Gold Edition + Gallery Counter Sync + Visible Banners + Real GW Selector)
 const App = {
   cards: [],
   gameweeks: [],
@@ -9,6 +9,7 @@ const App = {
   currentCompetition: CONFIG.OFFICIAL_COMPETITIONS[0],
 
   async init() {
+    this.injectFavicon();
     this.injectTacticalStyles();
     this.ensureBannerElement();
     this.populateCompetitionDropdown();
@@ -33,6 +34,14 @@ const App = {
     }
   },
 
+  injectFavicon() {
+    if (document.querySelector('link[rel="icon"]')) return;
+    const link = document.createElement('link');
+    link.rel = 'icon';
+    link.href = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">⚽</text></svg>';
+    document.head.appendChild(link);
+  },
+
   ensureBannerElement() {
     let banner = document.getElementById('status-banner');
     if (!banner) {
@@ -42,6 +51,29 @@ const App = {
       const mainContainer = document.querySelector('main') || document.body;
       mainContainer.insertBefore(banner, mainContainer.firstChild);
     }
+  },
+
+  updateGalleryCounters() {
+    const total = this.cards.length;
+    const counts = {
+      limited: this.cards.filter(c => c.scarcity === 'limited').length,
+      rare: this.cards.filter(c => c.scarcity === 'rare').length,
+      super_rare: this.cards.filter(c => c.scarcity === 'super_rare').length,
+      unique: this.cards.filter(c => c.scarcity === 'unique').length
+    };
+
+    // Aggiorna tutti i possibili ID/classi contatore presenti nel DOM originale
+    const counterIds = ['gallery-count', 'total-cards', 'cards-count', 'card-count'];
+    counterIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.textContent = `${total} (L:${counts.limited} • R:${counts.rare} • SR:${counts.super_rare} • U:${counts.unique})`;
+      }
+    });
+
+    document.querySelectorAll('[data-gallery-count], .gallery-count, .cards-counter').forEach(el => {
+      el.textContent = `${total}`;
+    });
   },
 
   injectTacticalStyles() {
@@ -198,7 +230,7 @@ const App = {
 
     if (loginBtn) loginBtn.disabled = true;
     if (loginBtnText) loginBtnText.textContent = '⏳ Sincronizzazione GW & Opta...';
-    this.notify('⏳ Connessione a Sorare in corso: scarico Gameweek e statistiche Opta...');
+    this.notify('⏳ Connessione a Sorare in corso: scarico carte Pro, Gameweek e statistiche Opta...');
 
     try {
       const data = await SorareAPI.fetchCurrentUserGallery(forceRefresh);
@@ -208,8 +240,10 @@ const App = {
         this.gameweeks = data.gameweeks || [];
         this.selectedGwIndex = 0;
 
+        this.updateGalleryCounters();
+
         if (loginBtnText) {
-          loginBtnText.textContent = `✅ @${this.user?.nickname || 'Manager'} (${this.cards.length} carte)`;
+          loginBtnText.textContent = `✅ @${this.user?.nickname || 'Manager'} (${this.cards.length} carte Pro)`;
         }
         if (loginBtn) {
           loginBtn.classList.add('connected');
@@ -219,7 +253,7 @@ const App = {
         this.renderGwSelector();
         const activeGw = this.gameweeks[this.selectedGwIndex];
         const gwBadge = activeGw ? ` • ${activeGw.label} (${activeGw.dateRangeText})` : '';
-        this.notify(`✅ Sincronizzate ${this.cards.length} carte${gwBadge}`);
+        this.notify(`✅ Sincronizzate ${this.cards.length} carte Pro (escluse Common)${gwBadge}`);
         this.runOptimizer();
       }
     } catch (err) {
@@ -317,10 +351,11 @@ const App = {
     const grid = document.getElementById('lineups-grid');
     const summary = document.getElementById('portfolio-summary');
     const gwInfoStr = selectedGw ? ` • <strong>${selectedGw.label}</strong> (${selectedGw.dateRangeText})` : '';
+    const rarityCardsCount = this.cards.filter(c => c.scarcity === this.currentScarcity.toLowerCase()).length;
 
     if (!lineups || lineups.length === 0) {
       if (summary) {
-        summary.innerHTML = `Nessuna formazione valida per <strong>${this.currentCompetition.name}</strong> (${this.currentScarcity.toUpperCase()})${gwInfoStr}.`;
+        summary.innerHTML = `Galleria: <strong>${this.cards.length} carte Pro</strong> (${rarityCardsCount} ${this.currentScarcity.toUpperCase()}) • Nessuna formazione valida per <strong>${this.currentCompetition.name}</strong>${gwInfoStr}.`;
       }
       if (grid) {
         grid.innerHTML = `
@@ -335,8 +370,9 @@ const App = {
     const totalPortfolioPoints = lineups.reduce((acc, l) => acc + l.totalProjected, 0);
     if (summary) {
       summary.innerHTML = `
-        <strong>${lineups.length} Formazioni Ottimizzate</strong> per <strong>${this.currentCompetition.name}</strong> (${this.currentScarcity.toUpperCase()})${gwInfoStr} •
-        Proiezione Totale Portafoglio: <strong>${totalPortfolioPoints} pt</strong>
+        Galleria: <strong>${this.cards.length} carte Pro</strong> (${rarityCardsCount} ${this.currentScarcity.toUpperCase()}) •
+        <strong>${lineups.length} Formazioni Ottimizzate</strong> per <strong>${this.currentCompetition.name}</strong>${gwInfoStr} •
+        Proiezione Totale: <strong>${totalPortfolioPoints} pt</strong>
       `;
     }
 
