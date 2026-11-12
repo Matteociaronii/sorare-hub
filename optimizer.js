@@ -1,12 +1,61 @@
-// SorareHub - Strict Anti-Duplicate + National Teams Only in All-Star + Contender/League Safe Optimizer
+// SorareHub - Official Contender/Challenger Rules + Strict In-Season + Full Opta Tactical Insights + Bench Override
 const OptimizerEngine = {
-  CHAMPION_LEAGUES: ['premier-league', 'serie-a', 'laliga', 'la-liga', 'primera-division', 'bundesliga', 'ligue-1'],
-  CHALLENGER_LEAGUES: ['eredivisie', 'primeira-liga', 'liga-portugal', 'jupiler-pro-league', 'first-division-a', 'super-lig', 'turkish-super-lig', 'premiership', 'scottish-premiership', 'mls', 'major-league-soccer', 'superliga', 'danish-superliga', 'bundesliga-at', 'austrian-bundesliga', 'super-league', 'swiss-super-league'],
+  CHAMPION_LEAGUES: [
+    'premier-league',
+    'serie-a',
+    'laliga',
+    'la-liga',
+    'primera-division',
+    'bundesliga',
+    'ligue-1'
+  ],
 
-  isCardEligibleForCompetition(card, competition) {
+  // Lista ufficiale Sorare Contender (Limited/Rare + espansione Super Rare/Unique)
+  CONTENDER_LEAGUES_BASE: [
+    'austrian-bundesliga',
+    'bundesliga-at',
+    'supersport-hnl',
+    'prva-hnl',
+    'croatian-first-football-league',
+    '2-bundesliga',
+    '2-bundesliga-de',
+    'ligue-2',
+    'ligue-2-fr'
+  ],
+  CONTENDER_LEAGUES_HIGH_SCARCITY: [
+    'scottish-premiership',
+    'premiership',
+    'efl-championship',
+    'championship',
+    'j1-league',
+    'j-league'
+  ],
+
+  // Lista ufficiale Sorare Challenger
+  CHALLENGER_LEAGUES: [
+    'primeira-liga',
+    'liga-portugal',
+    'eredivisie',
+    'jupiler-pro-league',
+    'first-division-a',
+    'scottish-premiership',
+    'premiership',
+    'super-lig',
+    'turkish-super-lig',
+    'danish-superliga',
+    'superliga',
+    'swiss-super-league',
+    'super-league',
+    'eliteserien',
+    'allsvenskan',
+    'ekstraklasa'
+  ],
+
+  isCardEligibleForCompetition(card, competition, scarcity) {
     const compId = String(competition.id || '').toLowerCase();
     const compName = String(competition.name || '').toLowerCase();
     const cardLeague = String(card.leagueSlug || '').toLowerCase();
+    const targetScarcity = String(scarcity || 'limited').toLowerCase();
 
     if (competition.u23Only || compId.includes('u23')) {
       return Boolean(card.isU23);
@@ -16,26 +65,22 @@ const OptimizerEngine = {
       return true;
     }
 
-    // Contender: tutte le leghe non Champion (2ª serie, Asia, Sudamerica, Croazia, Polonia, Belgio/Austria/Scozia/ecc.)
+    // Contender: rigorosamente le leghe ufficiali Sorare Contender
     if (compId.includes('contender') || compName.includes('contender')) {
-      const isBig5 = this.CHAMPION_LEAGUES.some(l => cardLeague.includes(l));
-      return !isBig5 && cardLeague !== 'other';
+      const allowedContender = (targetScarcity === 'super_rare' || targetScarcity === 'unique')
+        ? [...this.CONTENDER_LEAGUES_BASE, ...this.CONTENDER_LEAGUES_HIGH_SCARCITY]
+        : this.CONTENDER_LEAGUES_BASE;
+      return allowedContender.some(l => cardLeague === l || cardLeague.includes(l));
     }
 
-    // Challenger
+    // Challenger: rigorosamente le leghe ufficiali Sorare Challenger
     if (compId.includes('challenger') || compName.includes('challenger')) {
-      const isBig5 = this.CHAMPION_LEAGUES.some(l => cardLeague.includes(l));
-      if (isBig5) return false;
-      if (this.CHALLENGER_LEAGUES.some(l => cardLeague.includes(l))) return true;
-      if (Array.isArray(competition.leagues)) {
-        return competition.leagues.some(l => cardLeague.includes(String(l).toLowerCase()));
-      }
-      return true;
+      return this.CHALLENGER_LEAGUES.some(l => cardLeague === l || cardLeague.includes(l));
     }
 
     // Champion Europe
     if (compId.includes('champion') || compName.includes('champion')) {
-      return this.CHAMPION_LEAGUES.some(l => cardLeague.includes(l));
+      return this.CHAMPION_LEAGUES.some(l => cardLeague === l || cardLeague.includes(l));
     }
 
     if (Array.isArray(competition.leagues) && !competition.leagues.includes('ALL')) {
@@ -45,7 +90,7 @@ const OptimizerEngine = {
     return true;
   },
 
-  buildCascadePortfolio(allCards, competition, scarcity, strategy, selectedGw = null) {
+  buildCascadePortfolio(allCards, competition, scarcity, strategy, selectedGw = null, manualOverrides = {}) {
     if (!Array.isArray(allCards) || allCards.length === 0 || !competition) return [];
 
     const targetScarcity = String(scarcity || 'limited').toLowerCase();
@@ -57,21 +102,21 @@ const OptimizerEngine = {
 
     const compId = String(competition.id || '').toLowerCase();
     const compName = String(competition.name || '').toLowerCase();
-    // Regola richiesta: le partite delle Nazionali valgono SOLO in All-Star!
+    // Le partite delle Nazionali valgono SOLO in All-Star
     const allowNationalTeamMatches = compId.includes('all_star') || compId.includes('all-star') || compName.includes('all-star');
 
-    // 1. Filtra per rarità e lega e rimuove doppioni della stessa carta tenendo sempre la versione più forte (In-Season > Classic, poi bonus più alto)
+    // 1. Filtra per rarità e competizione ufficiale Sorare
     const eligibleCards = allCards.filter(card => {
       if (!card) return false;
       if (card.scarcity !== targetScarcity) return false;
-      return this.isCardEligibleForCompetition(card, competition);
+      return this.isCardEligibleForCompetition(card, competition, targetScarcity);
     });
 
     if (eligibleCards.length < slotsTemplate.length) return [];
 
-    // 2. Valuta ogni carta sulla Gameweek selezionata (filtrando le Nazionali fuori dai campionati di club)
+    // 2. Valuta ogni carta con analisi tattica Opta completa e override manuali (XI / Panchina)
     const evaluatedPool = eligibleCards.map(card =>
-      this.evaluateCardForGw(card, selectedGw, strategy, allowNationalTeamMatches)
+      this.evaluateCardForGw(card, selectedGw, strategy, allowNationalTeamMatches, manualOverrides[card.playerSlug] || null)
     );
 
     const lineups = [];
@@ -82,36 +127,26 @@ const OptimizerEngine = {
       const available = evaluatedPool.filter(c => !usedPlayerSlugsGlobal.has(c.playerSlug));
       if (available.length < slotsTemplate.length) break;
 
-      let picked = this.selectBestLineupForSlots(available, slotsTemplate, requiredInSeason);
-
-      // Se in Contender / Campionato non ci sono abbastanza In-Season per arrivare a 4/5, mostra comunque la formazione con il massimo di In-Season possibili
-      if (!picked && requiredInSeason > 0) {
-        picked = this.selectBestLineupForSlots(available, slotsTemplate, 0);
-      }
-
+      // Rispetta RIGOROSAMENTE il requisito In-Season (nessun fallback a formazioni full-Classic nei tornei In-Season!)
+      const picked = this.selectBestLineupForSlots(available, slotsTemplate, requiredInSeason);
       if (!picked || picked.length < slotsTemplate.length) break;
 
-      const activePlayersInLineup = picked.filter(p => Boolean(p.activeMatch)).length;
-
-      // In All-Star (o quando ci sono partite nella GW) generiamo formazioni finché ci sono giocatori con match reale;
-      // se invece l'intero campionato è in sosta (0 partite per chiunque), generiamo comunque le migliori rose del campionato senza bloccare a 0
-      const totalActiveInWholePool = available.filter(c => Boolean(c.activeMatch)).length;
+      const activePlayersInLineup = picked.filter(p => Boolean(p.activeMatch) && p.selectionPriority > 0).length;
+      const totalActiveInWholePool = available.filter(c => Boolean(c.activeMatch) && c.selectionPriority > 0).length;
       if (totalActiveInWholePool > 0 && activePlayersInLineup === 0) break;
 
       picked.forEach(p => usedPlayerSlugsGlobal.add(p.playerSlug));
 
       // Capitano (+50%)
-      const candidatesForCaptain = picked.filter(p => Boolean(p.activeMatch));
+      const candidatesForCaptain = picked.filter(p => Boolean(p.activeMatch) && p.selectionPriority > 0);
       const captainPool = candidatesForCaptain.length > 0 ? [...candidatesForCaptain] : [...picked];
-      captainPool.sort((a, b) => (b.projectedScore || b.l15 || 0) - (a.projectedScore || a.l15 || 0));
+      captainPool.sort((a, b) => (b.projectedScore || b.standbyScore || 0) - (a.projectedScore || a.standbyScore || 0));
       const captainId = captainPool[0]?.id;
 
       const finalStarters = picked.map(p => {
         const isCap = p.id === captainId;
-        const baseScore = p.projectedScore > 0 ? p.projectedScore : Number(((p.l15 || p.l5 || 35) * (p.powerMultiplier || 1)).toFixed(1));
-        const finalScore = p.activeMatch
-          ? (isCap ? Number((p.projectedScore * 1.5).toFixed(1)) : p.projectedScore)
-          : (totalActiveInWholePool === 0 ? (isCap ? Number((baseScore * 1.5).toFixed(1)) : baseScore) : 0);
+        const baseScore = p.projectedScore > 0 ? p.projectedScore : (totalActiveInWholePool === 0 ? p.standbyScore : 0);
+        const finalScore = isCap ? Number((baseScore * 1.5).toFixed(1)) : baseScore;
 
         return {
           ...p,
@@ -139,15 +174,55 @@ const OptimizerEngine = {
     return lineups;
   },
 
-  evaluateCardForGw(card, selectedGw, strategy, allowNationalTeamMatches) {
+  buildDetailedOptaInsight(card, activeMatch, isCeiling, manualStatus) {
+    const traits = card.tacticalTraits || {};
+    const traitTags = [];
+    if (traits.setPiece) traitTags.push('🎯 Piazzati/Corner');
+    if (traits.aerial) traitTags.push('✈️ Gioco aereo');
+    if (traits.ballWinner) traitTags.push('🛡️ Recuperi/Intercetti');
+    if (traits.clinical) traitTags.push('⚡ Finalizzazione');
+    if (traits.cleanSheets > 0) traitTags.push(`🧤 ${traits.cleanSheets} Clean Sheet`);
+    if (traits.goals > 0 || traits.assists > 0) traitTags.push(`⚽ ${traits.goals || 0}G / ${traits.assists || 0}A (L5)`);
+    if (card.position === 'GK' && traits.saves > 0) traitTags.push(`👐 ${traits.saves} parate (L5)`);
+
+    let statusLine = '';
+    if (manualStatus === 'bench') {
+      statusLine = '🪑 Segnalato IN PANCHINA (ingresso a gara in corso)';
+    } else if (manualStatus === 'xi') {
+      statusLine = '✅ Confermato TITOLARE XI';
+    } else if (card.baseFitnessTier === 'starter') {
+      statusLine = `✅ Titolare fisso (${card.starterCount}/5 dal 1' • ${card.avgMins}' medi)`;
+    } else if (card.baseFitnessTier === 'rotation') {
+      statusLine = `⚠️ In rotazione (${card.playedCount}/5 presenze • ${card.avgMins}' medi)`;
+    } else {
+      statusLine = `⏸️ ${card.baseUnavailableReason || 'Minutaggio ridotto nelle ultime 5'}`;
+    }
+
+    const matchContext = activeMatch
+      ? (activeMatch.isNationalTeam
+        ? `🌍 Match Nazionale: ${activeMatch.teamName} (${activeMatch.competitionName}).`
+        : `${activeMatch.isHome ? '🏠 Match in casa' : '✈️ Match in trasferta'} vs ${activeMatch.opponentName} (${activeMatch.competitionName}).`)
+      : `⏸️ Nessuna partita in calendario per questo torneo nella GW selezionata.`;
+
+    const optaBreakdown = `📊 Opta L5: AA ${card.avgAas} pt/gara • Decisive ${card.avgDecisive} pt/gara • Picco max ${card.maxRecentScore} pt (σ=${card.stdDev}).`;
+    const traitsLine = traitTags.length > 0
+      ? `🔍 Profilo tattico: ${traitTags.join(' • ')}.`
+      : `🔍 Profilo tattico: contributo equilibrato sul possesso.`;
+
+    const strategyNote = isCeiling
+      ? `🚀 Strategia Ceiling: valorizza picchi decisivi (${card.maxRecentScore} pt) e bonus carta +${card.bonusPct}%.`
+      : `🛡️ Strategia Floor: premia costanza All-Around (${card.avgAas} AA) e bassa varianza (σ=${card.stdDev}).`;
+
+    return `${statusLine}\n${matchContext}\n${optaBreakdown}\n${traitsLine}\n${strategyNote}`;
+  },
+
+  evaluateCardForGw(card, selectedGw, strategy, allowNationalTeamMatches, manualStatus = null) {
     const allGames = Array.isArray(card.scheduleGames) ? card.scheduleGames : [];
-    // Nei campionati di club esclude completamente le partite delle Nazionali
     const allowedGames = allowNationalTeamMatches
       ? allGames
       : allGames.filter(g => !g.isNationalTeam);
 
     let activeMatch = null;
-
     if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
       const gwStart = new Date(selectedGw.startDate).getTime();
       const gwEnd = new Date(selectedGw.endDate).getTime();
@@ -166,21 +241,22 @@ const OptimizerEngine = {
       : (baseL15 * 0.55) + (baseL5 * 0.35) + ((card.avgAas || 15) * 0.25);
 
     const standbyScore = Number(Math.max(15, rawExpected * (card.powerMultiplier || 1)).toFixed(1));
+    const detailedInsight = this.buildDetailedOptaInsight(card, activeMatch, isCeiling, manualStatus);
 
-    // Regola Zero-DNP: se non ha partita valida in questa GW per questo torneo, selectionPriority = 0 e projectedScore = 0
     if (!activeMatch) {
       return {
         ...card,
         activeMatch: null,
         isHome: null,
-        opponentName: 'Nessuna partita di club in GW',
+        opponentName: 'Nessuna partita',
         availabilityTier: 'dnp',
+        manualStatus: manualStatus,
         isLastResort: true,
         unavailableReason: 'Nessuna partita in questa GW per questo torneo',
         projectedScore: 0,
         standbyScore: standbyScore,
         selectionPriority: 0,
-        matchupInsight: `${card.name} (${card.club}) non ha partite valide per questo torneo nella GW selezionata.`
+        matchupInsight: detailedInsight
       };
     }
 
@@ -191,74 +267,62 @@ const OptimizerEngine = {
         isHome: activeMatch.isHome,
         opponentName: activeMatch.opponentName,
         availabilityTier: 'dnp',
+        manualStatus: manualStatus,
         isLastResort: true,
         unavailableReason: card.baseUnavailableReason,
         projectedScore: 0,
         standbyScore: 0,
         selectionPriority: 0,
-        matchupInsight: `${card.name}: ${card.baseUnavailableReason}.`
+        matchupInsight: detailedInsight
+      };
+    }
+
+    // Se l'utente ha segnato il giocatore in PANCHINA (es. formazioni ufficiali uscite), declassa la priorità sotto i titolari reali
+    if (manualStatus === 'bench') {
+      const benchScore = Number(Math.max(10, rawExpected * 0.45 * (card.powerMultiplier || 1)).toFixed(1));
+      return {
+        ...card,
+        activeMatch: activeMatch,
+        isHome: activeMatch.isHome,
+        opponentName: activeMatch.opponentName,
+        availabilityTier: 'bench',
+        manualStatus: 'bench',
+        isLastResort: false,
+        unavailableReason: '',
+        projectedScore: benchScore,
+        standbyScore: benchScore,
+        selectionPriority: 1,
+        matchupInsight: detailedInsight
       };
     }
 
     if (activeMatch.isHome === true) rawExpected *= 1.04;
-    if (card.baseFitnessTier === 'rotation') rawExpected *= 0.88;
+    if (manualStatus !== 'xi' && card.baseFitnessTier === 'rotation') rawExpected *= 0.88;
 
     const projectedScore = Number(Math.max(15, rawExpected * (card.powerMultiplier || 1)).toFixed(1));
-    const priorityTier = card.baseFitnessTier === 'starter' ? 2 : 1;
-
-    const matchLabel = activeMatch.isNationalTeam
-      ? `${activeMatch.teamName} (${activeMatch.competitionName})`
-      : `${activeMatch.isHome ? 'In casa' : 'In trasferta'} contro ${activeMatch.opponentName}`;
-
-    const insight = `${matchLabel}. Media L15: ${card.l15}, L5: ${card.l5}, minuti medi: ${card.avgMins}'.`;
+    const priorityTier = (manualStatus === 'xi' || card.baseFitnessTier === 'starter') ? 3 : 2;
 
     return {
       ...card,
       activeMatch: activeMatch,
       isHome: activeMatch.isHome,
       opponentName: activeMatch.opponentName,
-      availabilityTier: card.baseFitnessTier === 'starter' ? 'starter' : 'rotation',
+      availabilityTier: priorityTier === 3 ? 'starter' : 'rotation',
+      manualStatus: manualStatus,
       isLastResort: false,
       unavailableReason: '',
       projectedScore: projectedScore,
       standbyScore: standbyScore,
       selectionPriority: priorityTier,
-      matchupInsight: insight
+      matchupInsight: detailedInsight
     };
   },
 
   selectBestLineupForSlots(pool, slotsTemplate, requiredInSeason) {
-    const selected = [];
-    // Blocca SIA l'ID della carta SIA lo slug/nome del giocatore dentro la stessa formazione!
     const usedCardIds = new Set();
     const usedPlayerSlugsInTeam = new Set();
+    const selectedTeamPositionKeys = new Set();
 
-    const sortCandidates = (list, preferInSeason) => {
-      return [...list].sort((a, b) => {
-        // 1) Chi ha una partita reale nella GW vince SEMPRE su chi non gioca (Zero-DNP)
-        const aHasGame = a.selectionPriority > 0 ? 1 : 0;
-        const bHasGame = b.selectionPriority > 0 ? 1 : 0;
-        if (bHasGame !== aHasGame) return bHasGame - aHasGame;
-
-        // 2) Se richiesto dal torneo SO5, priorità alle carte In-Season
-        if (preferInSeason && a.isInSeason !== b.isInSeason) {
-          return (b.isInSeason ? 1 : 0) - (a.isInSeason ? 1 : 0);
-        }
-
-        // 3) Titolare fisso (2) > Rotazione (1)
-        if (b.selectionPriority !== a.selectionPriority) {
-          return b.selectionPriority - a.selectionPriority;
-        }
-
-        // 4) Punteggio proiettato (o standbyScore se tutto il campionato è in sosta)
-        const scoreDiff = (b.projectedScore || b.standbyScore || 0) - (a.projectedScore || a.standbyScore || 0);
-        if (scoreDiff !== 0) return scoreDiff;
-
-        return (b.isInSeason ? 1 : 0) - (a.isInSeason ? 1 : 0);
-      });
-    };
-
-    // Seleziona prima i 4/6 ruoli fissi (GK, DEF, MID, FWD) e per ultimo EXTRA così non ruba mai l'unico giocatore di un ruolo singolo
     const orderedSlotIndices = slotsTemplate
       .map((role, idx) => ({ role, idx }))
       .sort((a, b) => (a.role === 'EXTRA' ? 1 : 0) - (b.role === 'EXTRA' ? 1 : 0));
@@ -291,18 +355,49 @@ const OptimizerEngine = {
         }
       }
 
-      const sorted = sortCandidates(poolToSort, needInSeasonNow || requiredInSeason > 0);
+      const sorted = [...poolToSort].sort((a, b) => {
+        // 1) Chi ha una partita valida nella GW ha sempre la precedenza
+        const aHasGame = a.selectionPriority > 0 ? 1 : 0;
+        const bHasGame = b.selectionPriority > 0 ? 1 : 0;
+        if (bHasGame !== aHasGame) return bHasGame - aHasGame;
+
+        // 2) Se il torneo richiede carte In-Season, dà precedenza alle 26/27
+        if ((needInSeasonNow || requiredInSeason > 0) && a.isInSeason !== b.isInSeason) {
+          return (b.isInSeason ? 1 : 0) - (a.isInSeason ? 1 : 0);
+        }
+
+        // 3) Titolare XI (3) > Rotazione (2) > Panchina manuale (1) > DNP (0)
+        if (b.selectionPriority !== a.selectionPriority) {
+          return b.selectionPriority - a.selectionPriority;
+        }
+
+        // 4) Penalizza due difensori/portieri della stessa squadra nella stessa partita (es. Cucurella + Grimaldo nella Spagna)
+        const aTeamKey = `${a.activeMatch?.teamName || a.clubSlug}_${a.position}`;
+        const bTeamKey = `${b.activeMatch?.teamName || b.clubSlug}_${b.position}`;
+        const aPenalty = (a.position === 'DEF' || a.position === 'GK') && selectedTeamPositionKeys.has(aTeamKey) ? 12 : 0;
+        const bPenalty = (b.position === 'DEF' || b.position === 'GK') && selectedTeamPositionKeys.has(bTeamKey) ? 12 : 0;
+
+        const aEffScore = (a.projectedScore || a.standbyScore || 0) - aPenalty;
+        const bEffScore = (b.projectedScore || b.standbyScore || 0) - bPenalty;
+        if (bEffScore !== aEffScore) return bEffScore - aEffScore;
+
+        return (b.isInSeason ? 1 : 0) - (a.isInSeason ? 1 : 0);
+      });
+
       const chosen = sorted[0];
       if (!chosen) return null;
 
       usedCardIds.add(chosen.id);
       usedPlayerSlugsInTeam.add(chosen.playerSlug);
+      selectedTeamPositionKeys.add(`${chosen.activeMatch?.teamName || chosen.clubSlug}_${chosen.position}`);
+
       tempSelectedByIndex[originalIdx] = {
         ...chosen,
         slotRole: slotRole
       };
     }
 
+    const selected = [];
     for (let i = 0; i < tempSelectedByIndex.length; i++) {
       if (!tempSelectedByIndex[i]) return null;
       selected.push(tempSelectedByIndex[i]);
