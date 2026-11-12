@@ -116,7 +116,7 @@ const SorareAPI = {
                   activeSuspensions {
                     reason
                   }
-                  so5Scores(last: 5) {
+                  so5Scores(last: 10) {
                     score
                     decisiveScore {
                       totalScore
@@ -137,13 +137,11 @@ const SorareAPI = {
                       slug
                       displayName
                     }
-                    activeCompetitions {
-                      slug
-                    }
-                    upcomingGames(first: 1) {
+                    upcomingGames(first: 3) {
                       date
                       competition {
                         slug
+                        displayName
                       }
                       homeTeam {
                         ... on Club {
@@ -240,7 +238,9 @@ const SorareAPI = {
 
   enrichCardsWithRealOptaData(rawCards) {
     const now = Date.now();
-    const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
+    // Finestra 24 giorni per includere anche i campionati fermi per la sosta nazionali FIFA
+    const scheduleWindowMs = 24 * 24 * 60 * 60 * 1000;
+    const uefaWindowMs = 21 * 24 * 60 * 60 * 1000;
 
     return (rawCards || [])
       .filter(c => c && (c.name || c.player?.displayName))
@@ -256,40 +256,65 @@ const SorareAPI = {
         const clubSlug = club.slug || 'no-club';
         const leagueSlug = (club.domesticLeague?.slug || 'other').toLowerCase();
 
-        // Rilevamento competizioni UEFA reali del club
-        const activeComps = Array.isArray(club.activeCompetitions)
-          ? club.activeCompetitions.map(ac => String(ac.slug || '').toLowerCase())
-          : [];
-
         const upcomingList = Array.isArray(club.upcomingGames) ? club.upcomingGames : [];
         const upcomingNode = upcomingList[0] || null;
-        const upcomingCompSlug = String(upcomingNode?.competition?.slug || '').toLowerCase();
 
-        const isUefaChampions =
-          activeComps.some(s => s.includes('champions-league')) ||
-          upcomingCompSlug.includes('champions-league');
+        // Controllo UEFA rigoroso: solo partite effettivamente in calendario nella fase principale UEFA
+        const validUefaGames = upcomingList.filter(g => {
+          if (!g || !g.date) return false;
+          const t = new Date(g.date).getTime();
+          return !Number.isNaN(t) && (t - now) <= uefaWindowMs;
+        });
 
-        const isUefaContender =
-          activeComps.some(s => s.includes('europa-league') || s.includes('conference-league')) ||
-          upcomingCompSlug.includes('europa-league') ||
-          upcomingCompSlug.includes('conference-league');
+        const isUefaChampions = validUefaGames.some(g => {
+          const cSlug = String(g.competition?.slug || '').toLowerCase();
+          return (cSlug === 'uefa-champions-league' || (cSlug.includes('champions-league') && !cSlug.includes('qualif')));
+        });
 
-        // Stagione In-Season (2026 per leghe europee 2026/27, >= 2026 o bonus stagionale attivo)
+        const isUefaContender = validUefaGames.some(g => {
+          const cSlug = String(g.competition?.slug || '').toLowerCase();
+          return (
+            cSlug === 'uefa-europa-league' ||
+            cSlug === 'uefa-conference-league' ||
+            cSlug === 'uefa-europa-conference-league' ||
+            ((cSlug.includes('europa-league') || cSlug.includes('conference-league')) && !cSlug.includes('qualif'))
+          );
+        });
+
         const sYear = Number(card.seasonYear || 0);
         const isInSeason = sYear >= 2026;
 
-        // Under-23 per stagione 2026/27 (nati dal 1 luglio 2003 in poi)
         const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0;
         const u23Cutoff = new Date('2003-07-01').getTime();
         const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
 
-        // Medie reali L5 & L15
-        const l5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
-        const l15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0;
+        // Analisi reale delle partite SO5 (esclude i DNP come fa il sito ufficiale Sorare)
+        const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
+        const last5Window = allRecentScores.slice(0, 5);
+        const playedMatchesAll = allRecentScores.filter(s => {
+          if (!s) return false;
+          const sc = typeof s.score === 'number' ? s.score : 0;
+          const mins = typeof s.playerGameStats?.minsPlayed === 'number' ? s.playerGameStats.minsPlayed : 0;
+          return sc > 0 || mins > 0;
+        });
 
-        // Analisi reale delle ultime 5 partite SO5
-        const recentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
-        let playedCount = 0;
+        const last5Played = playedMatchesAll.slice(0, 5);
+
+        // Calcolo L5 ufficiale Sorare (media delle ultime 5 partite GIOCATE, escludendo DNP)
+        const apiL5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
+        const computedL5 = last5Played.length > 0
+          ? Number((last5Played.reduce((acc, m) => acc + (m.score || 0), 0) / last5Played.length).toFixed(1))
+          : 0;
+        const l5 = computedL5 > 0 ? computedL5 : apiL5;
+
+        // Calcolo L15 ufficiale Sorare (esclude DNP se il valore GraphQL include zeri)
+        const apiL15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0;
+        const computedL10 = playedMatchesAll.length > 0
+          ? Number((playedMatchesAll.reduce((acc, m) => acc + (m.score || 0), 0) / playedMatchesAll.length).toFixed(1))
+          : 0;
+        const l15 = apiL15 > 0 ? Math.max(apiL15, Number(((apiL15 + computedL10) / 2).toFixed(1))) : computedL10;
+
+        let playedInLast5Games = 0;
         let starterCount = 0;
         let totalMins = 0;
         let sumAas = 0;
@@ -302,14 +327,14 @@ const SorareAPI = {
         let totalCleanSheets = 0;
         let totalSaves = 0;
 
-        recentScores.forEach(s => {
+        last5Window.forEach(s => {
           if (!s) return;
           const sc = typeof s.score === 'number' ? s.score : 0;
           const stats = s.playerGameStats || {};
           const mins = typeof stats.minsPlayed === 'number' ? stats.minsPlayed : (sc > 0 ? 60 : 0);
 
           if (mins > 0 || sc > 0) {
-            playedCount++;
+            playedInLast5Games++;
             totalMins += mins;
             if (mins >= 55) starterCount++;
             validScoreValues.push(sc);
@@ -327,9 +352,9 @@ const SorareAPI = {
           }
         });
 
-        const avgMins = playedCount > 0 ? Math.round(totalMins / playedCount) : 0;
-        const avgAas = playedCount > 0 ? Number((sumAas / playedCount).toFixed(1)) : 0;
-        const avgDecisive = playedCount > 0 ? Number((sumDecisive / playedCount).toFixed(1)) : 0;
+        const avgMins = playedInLast5Games > 0 ? Math.round(totalMins / playedInLast5Games) : 0;
+        const avgAas = playedInLast5Games > 0 ? Number((sumAas / playedInLast5Games).toFixed(1)) : 0;
+        const avgDecisive = playedInLast5Games > 0 ? Number((sumDecisive / playedInLast5Games).toFixed(1)) : 0;
 
         let stdDev = 0;
         if (validScoreValues.length > 1) {
@@ -345,13 +370,13 @@ const SorareAPI = {
 
         let hasUpcomingGame = false;
         let isHome = null;
-        let opponentName = 'Nessuna partita in GW';
+        let opponentName = 'Sosta Nazionali / Prossimo turno';
         let opponentSlug = '';
         let gameDate = null;
 
         if (upcomingNode && upcomingNode.date) {
           const gTime = new Date(upcomingNode.date).getTime();
-          if (!Number.isNaN(gTime) && (gTime - now) <= tenDaysMs) {
+          if (!Number.isNaN(gTime) && (gTime - now) <= scheduleWindowMs) {
             hasUpcomingGame = true;
             gameDate = upcomingNode.date;
             if (upcomingNode.homeTeam?.slug === clubSlug) {
@@ -366,6 +391,7 @@ const SorareAPI = {
           }
         }
 
+        // Classificazione titolarità basata sulle presenze reali recenti
         let availabilityTier = 'last_resort';
         let unavailableReason = '';
 
@@ -375,22 +401,20 @@ const SorareAPI = {
           unavailableReason = 'Squalificato';
         } else if (!club.slug) {
           unavailableReason = 'Senza club attivo';
-        } else if (!hasUpcomingGame) {
-          unavailableReason = 'Nessuna partita in programma in questa Gameweek';
-        } else if (l5 <= 0 && playedCount === 0) {
-          unavailableReason = 'Nessuna presenza nelle ultime 5 partite (L5: 0)';
-        } else if (starterCount >= 3 || (playedCount >= 4 && avgMins >= 55)) {
+        } else if (l5 <= 0 && playedInLast5Games === 0) {
+          unavailableReason = 'Nessuna presenza nelle ultime 5 partite';
+        } else if (starterCount >= 3 || (playedInLast5Games >= 3 && avgMins >= 60)) {
           availabilityTier = 'starter';
-        } else if (playedCount >= 1 && l5 > 0) {
+        } else if (playedInLast5Games >= 1 && l5 > 0) {
           availabilityTier = 'rotation';
         } else {
           unavailableReason = 'Inattivo / fuori dalle rotazioni recenti';
         }
 
-        const isSetPieceTaker = pos !== 'GK' && playedCount > 0 && (avgAas >= 26 || totalAssists >= 2);
-        const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedCount > 0 && (avgAas >= 22);
-        const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedCount > 0 && (avgAas >= 23);
-        const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && playedCount > 0 && ((totalGoals + totalAssists) >= 2 || avgDecisive >= 28);
+        const isSetPieceTaker = pos !== 'GK' && playedInLast5Games > 0 && (avgAas >= 26 || totalAssists >= 2);
+        const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedInLast5Games > 0 && (avgAas >= 22);
+        const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedInLast5Games > 0 && (avgAas >= 23);
+        const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && playedInLast5Games > 0 && ((totalGoals + totalAssists) >= 2 || avgDecisive >= 28);
 
         const rawPower = parseFloat(card.power) || (isInSeason ? 1.05 : 1.00);
         const totalBonusPct = Math.round((rawPower - 1) * 100);
@@ -416,7 +440,7 @@ const SorareAPI = {
           avgDecisive: avgDecisive,
           maxRecentScore: Math.round(maxRecentScore),
           stdDev: stdDev,
-          playedCount: playedCount,
+          playedCount: playedInLast5Games,
           starterCount: starterCount,
           avgMins: avgMins,
           availabilityTier: availabilityTier,
