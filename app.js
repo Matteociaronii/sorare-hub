@@ -1,265 +1,406 @@
-// SorareHub - Core Logic with Opta & StatsBomb Engine
+// SorareHub - Main Application Controller
+document.addEventListener('DOMContentLoaded', async () => {
+  let currentGallery = [];
+  let selectedScarcity = 'limited';
+  let selectedStrategy = 'floor';
+
+  const compSelect = document.getElementById('comp-select');
+  const loginBtn = document.getElementById('login-btn');
+  const demoBtn = document.getElementById('demo-btn');
+  const runBtn = document.getElementById('run-optimizer-btn');
+  const lineupsOutput = document.getElementById('lineups-output');
+
+  // 1. Popola selettore competizioni ufficiali Sorare
+  if (compSelect && CONFIG.OFFICIAL_COMPETITIONS) {
 const App = {
-  userCards: [],
-  currentUser: null,
-  activeRarity: 'limited',
-  activeStrategy: 'floor',
+  state: {
+    cards: [],
+    user: null,
+    selectedCompetitionId: 'premier_league_in_season',
+    selectedScarcity: 'limited',
+    selectedStrategy: 'floor',
+    isDemo: false
+  },
 
   init() {
-    this.checkSession();
+    this.populateCompetitionsMenu();
+    this.bindEvents();
+    this.checkOAuthCallback();
   },
 
-  notify(message, isError = false) {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.textContent = message;
-    toast.style.cssText = `
-      background: ${isError ? '#7f1d1d' : '#181b22'};
-      color: #fff;
-      padding: 9px 14px;
-      border-radius: 6px;
-      border: 1px solid ${isError ? '#ef4444' : '#f59e0b'};
-      font-size: 12px;
-      font-weight: 700;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-    `;
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), 4000);
-  },
+  populateCompetitionsMenu() {
+    const compSelect = document.getElementById('comp-select');
+    if (!compSelect || !CONFIG.OFFICIAL_COMPETITIONS) return;
 
-  setRarity(rarity) {
-    this.activeRarity = rarity;
-    ['limited', 'rare', 'super_rare', 'unique'].forEach(r => {
-      const btn = document.getElementById(`btn-rarity-${r}`);
-      if (btn) btn.classList.toggle('active', r === rarity);
+compSelect.innerHTML = '';
+
+    // Raggruppa per tipologia visiva
+    const inSeasonGroup = document.createElement('optgroup');
+    inSeasonGroup.label = '— IN-SEASON (SO5: Min 4 In-Season, Mono-Lega) —';
+
+    const classicGroup = document.createElement('optgroup');
+    classicGroup.label = '— CLASSIC (SO7: 7 Titolari, Tutte le Annate) —';
+
+CONFIG.OFFICIAL_COMPETITIONS.forEach(comp => {
+      const opt = document.createElement('option');
+      opt.value = comp.id;
+      opt.textContent = comp.name;
+      compSelect.appendChild(opt);
     });
+  }
+      const option = document.createElement('option');
+      option.value = comp.id;
+      option.textContent = comp.name;
+
+  // 2. Selettori Rarità e Strategia
+  document.querySelectorAll('#scarcity-selector .pill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#scarcity-selector .pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedScarcity = btn.dataset.scarcity;
+      if (currentGallery.length) executeOptimization();
+    });
+  });
+
+  document.querySelectorAll('#strategy-selector .pill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#strategy-selector .pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedStrategy = btn.dataset.strategy;
+      if (currentGallery.length) executeOptimization();
+      if (comp.format === 'SO5') {
+        inSeasonGroup.appendChild(option);
+      } else {
+        classicGroup.appendChild(option);
+      }
+});
+  });
+
+  if (compSelect) {
+    compSelect.addEventListener('change', () => {
+      if (currentGallery.length) executeOptimization();
+    });
+  }
+    compSelect.appendChild(inSeasonGroup);
+    compSelect.appendChild(classicGroup);
+
+  // 3. Gestione Click Pulsante Login OAuth
+  if (loginBtn) {
+    loginBtn.addEventListener('click', () => {
+      loginBtn.innerHTML = '<span>Reindirizzamento...</span>';
+      SorareAPI.startOAuthFlow();
+    });
+  }
+    compSelect.value = this.state.selectedCompetitionId;
   },
 
-  setStrategy(strat) {
-    this.activeStrategy = strat;
-    const btnF = document.getElementById('btn-strat-floor');
-    const btnC = document.getElementById('btn-strat-ceiling');
-    if (btnF) btnF.classList.toggle('active', strat === 'floor');
-    if (btnC) btnC.classList.toggle('active', strat === 'ceiling');
+  // 4. Modalità Demo
+  if (demoBtn) {
+    demoBtn.addEventListener('click', () => {
+      currentGallery = SorareAPI.getDemoGallery();
+      updateTelemetryUI('Demo Mode Pro', currentGallery);
+      executeOptimization();
+    });
+  }
+  bindEvents() {
+    const compSelect = document.getElementById('comp-select');
+    if (compSelect) {
+      compSelect.addEventListener('change', (e) => {
+        this.state.selectedCompetitionId = e.target.value;
+        if (this.state.cards.length > 0) this.runOptimizer();
+      });
+    }
+
+  if (runBtn) {
+    runBtn.addEventListener('click', () => {
+      if (!currentGallery.length) {
+        currentGallery = SorareAPI.getDemoGallery();
+        updateTelemetryUI('Demo Mode Pro', currentGallery);
+      }
+      executeOptimization();
+    });
+  }
+    const scarcityContainer = document.getElementById('scarcity-selector');
+    if (scarcityContainer) {
+      scarcityContainer.addEventListener('click', (e) => {
+        const btn = e.target.closest('.pill-btn');
+        if (!btn) return;
+        scarcityContainer.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.state.selectedScarcity = btn.dataset.scarcity;
+        if (this.state.cards.length > 0) this.runOptimizer();
+      });
+    }
+
+    const strategyContainer = document.getElementById('strategy-selector');
+    if (strategyContainer) {
+      strategyContainer.addEventListener('click', (e) => {
+        const btn = e.target.closest('.pill-btn');
+        if (!btn) return;
+        strategyContainer.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.state.selectedStrategy = btn.dataset.strategy;
+        if (this.state.cards.length > 0) this.runOptimizer();
+      });
+    }
+
+    const runBtn = document.getElementById('run-optimizer-btn');
+    if (runBtn) {
+      runBtn.addEventListener('click', () => this.runOptimizer());
+    }
+
+  // 5. Verifica Ritorno da Sorare (OAuth Callback)
+  const token = await SorareAPI.handleOAuthCallback();
+  const storedToken = token || localStorage.getItem('sorare_access_token');
+    const demoBtn = document.getElementById('demo-btn');
+    if (demoBtn) {
+      demoBtn.addEventListener('click', () => this.loadDemoGallery());
+    }
   },
 
-  async checkSession() {
+  async checkOAuthCallback() {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
-    let token = localStorage.getItem('sorare_access_token');
+
+    // Se c'è un codice nell'URL, lo consumiamo e puliamo subito la barra degli indirizzi
+    // per non rieseguire la richiesta ad ogni reload
     if (code) {
-      token = await SorareAPI.handleOAuthCallback(code);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      const token = await SorareAPI.handleOAuthCallback(code);
+      if (token) {
+        await this.loadUserGallery();
+      }
+      return;
     }
-    if (token) {
-      await this.initUserGallery();
-    }
+
+  if (storedToken) {
+    if (loginBtn) {
+      loginBtn.innerHTML = '<span>Caricamento Gallery...</span>';
+    // Se abbiamo già un token salvato, carichiamo la galleria
+    const existingToken = localStorage.getItem('sorare_access_token');
+    if (existingToken) {
+      await this.loadUserGallery();
+}
   },
 
-  async initUserGallery() {
-    try {
-      const data = await SorareAPI.fetchCurrentUserGallery();
+  async loadUserGallery() {
+try {
+const data = await SorareAPI.fetchCurrentUserGallery();
+      if (data && data.cards) {
+        currentGallery = data.cards;
+        updateTelemetryUI(`@${data.user.nickname || data.user.slug}`, currentGallery);
+        if (loginBtn) {
+          loginBtn.innerHTML = '<span>Connesso</span>';
+          loginBtn.classList.remove('btn-gold');
+          loginBtn.classList.add('btn-secondary');
+        }
+        executeOptimization();
+      }
+    } catch (e) {
+      console.error(e);
+      if (loginBtn) loginBtn.innerHTML = '<span>Connetti Sorare</span>';
       if (!data) return;
 
-      this.currentUser = data.user;
-      this.userCards = data.cards || [];
+      this.state.user = data.user;
+      this.state.cards = data.cards;
+      this.state.isDemo = false;
 
-      // Filtra le limited (la tua collezione giocabile nei tornei)
-      const limiteds = this.userCards.filter(c => c.scarcity === 'limited');
-      const inSeasons = limiteds.filter(c => c.isInSeason);
-      const starters = limiteds.filter(c => c.confirmedXi);
-
-      // Aggiorna gli indicatori dello screenshot originale
-      const btnLogin = document.getElementById('btn-login');
-      if (btnLogin) {
-        btnLogin.textContent = `@${this.currentUser.nickname || this.currentUser.slug}`;
-        btnLogin.style.background = '#181b22';
-        btnLogin.style.color = '#f59e0b';
-        btnLogin.style.border = '1px solid #f59e0b';
-      }
-
-      document.getElementById('stat-cards-count').textContent = limiteds.length;
-      document.getElementById('stat-status-sub').textContent = 'Sincronizzato Live';
-      document.getElementById('stat-inseason-count').textContent = inSeasons.length;
-      document.getElementById('stat-confirmed-count').textContent = starters.length;
-      document.getElementById('gallery-counter-num').textContent = limiteds.length;
-
-      this.notify(`✅ Sincronizzazione completata: ${limiteds.length} Limited pronte!`);
-      this.filterGallery();
+      this.updateNavbarUser(data.user.nickname || data.user.slug);
+      this.updateTelemetry();
+      this.runOptimizer();
     } catch (err) {
-      console.error(err);
-      this.notify(`Errore: ${err.message}`, true);
+      console.error('Errore caricamento galleria utente:', err);
+}
+  }
+  },
+
+  function updateTelemetryUI(userLabel, cards) {
+    const totalEl = document.getElementById('stat-total-cards');
+    const slugEl = document.getElementById('stat-user-slug');
+    const inSeasonEl = document.getElementById('stat-inseason-cards');
+    const startersEl = document.getElementById('stat-starters');
+  loadDemoGallery() {
+    this.state.isDemo = true;
+    this.state.user = { nickname: 'DemoManager', slug: 'demo' };
+    this.state.cards = this.getMockDemoCards();
+
+    if (totalEl) totalEl.textContent = cards.length;
+    if (slugEl) slugEl.textContent = userLabel;
+    if (inSeasonEl) inSeasonEl.textContent = cards.filter(c => c.isInSeason).length;
+    if (startersEl) startersEl.textContent = cards.filter(c => c.confirmedXi).length;
+  }
+    this.updateNavbarUser('DemoManager (Simulazione)');
+    this.updateTelemetry();
+    this.runOptimizer();
+  },
+
+  function executeOptimization() {
+    const compId = compSelect ? compSelect.value : CONFIG.OFFICIAL_COMPETITIONS[0].id;
+    const competition = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === compId) || CONFIG.OFFICIAL_COMPETITIONS[0];
+  updateNavbarUser(name) {
+    const loginBtnText = document.getElementById('login-btn-text');
+    if (loginBtnText) {
+      loginBtnText.textContent = `👤 @${name}`;
     }
   },
 
-  // Generatore HTML per singola card grafica con badge Opta & StatsBomb
-  buildCardHtml(card, isSlot = false) {
-    const fallback = 'https://assets.sorare.com/placeholder.png';
-    const cap = card.isCaptain ? '<div style="position:absolute;bottom:4px;left:4px;background:#f59e0b;color:#000;font-weight:900;border-radius:3px;padding:1px 5px;font-size:9px;">(C)</div>' : '';
-    const slotStyle = isSlot ? 'style="width: 135px; flex-shrink: 0;"' : '';
+  updateTelemetry() {
+    const total = this.state.cards.length;
+    const inSeason = this.state.cards.filter(c => c.isInSeason).length;
+    const starters = this.state.cards.filter(c => c.confirmedXi).length;
 
-    return `
-      <div class="sorare-card-box ${card.scarcity}" ${slotStyle}>
-        <div style="position:relative; width:100%; aspect-ratio:0.75; background:#0b0c10; overflow:hidden;">
-          <span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.85);color:#fff;padding:2px 5px;border-radius:3px;font-size:10px;font-weight:800;">${card.position}</span>
-          <span style="position:absolute;top:4px;right:4px;background:#10b981;color:#fff;padding:2px 5px;border-radius:3px;font-size:9px;font-weight:800;">+${card.bonusPct}%</span>
-          <img src="${card.pictureUrl || fallback}" alt="${card.name}" loading="lazy" style="width:100%; height:100%; object-fit:cover;" onerror="this.src='${fallback}'" />
-          ${cap}
-        </div>
-        <div style="padding: 8px; background:#12141a;">
-          <div style="font-weight:700; font-size:12px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${card.name}</div>
-          <div style="font-size:10px; color:#8c93a4; margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${card.club}</div>
-          <div style="display:flex; justify-content:space-between; background:#0b0c10; padding:4px 6px; border-radius:4px; font-size:10px;">
-            <div><span style="color:#64748b; font-size:8px; display:block;">L5</span><strong>${card.l5}</strong></div>
-            <div><span style="color:#64748b; font-size:8px; display:block;">L15</span><strong>${card.l15}</strong></div>
-            <div><span style="color:#64748b; font-size:8px; display:block;">AAS</span><strong style="color:#10b981;">${card.optaAas}</strong></div>
-          </div>
-        </div>
-      </div>
-    `;
+    document.getElementById('stat-total-cards').textContent = total;
+    document.getElementById('stat-inseason-cards').textContent = inSeason;
+    document.getElementById('stat-starters').textContent = starters;
+    document.getElementById('stat-user-slug').textContent = this.state.user?.nickname ? `@${this.state.user.nickname}` : 'Demo';
   },
 
-  // Filtra e ordina la vetrina carte
-  filterGallery() {
-    const search = (document.getElementById('gallery-search')?.value || '').toLowerCase();
-    const pool = document.getElementById('gallery-filter-pool')?.value || 'limited_only';
-    const pos = document.getElementById('gallery-filter-pos')?.value || 'ALL';
-    const sort = document.getElementById('gallery-sort')?.value || 'l15-desc';
+  runOptimizer() {
+    const comp = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === this.state.selectedCompetitionId);
+    if (!comp) return;
 
-    let list = this.userCards.filter(c => {
-      if (pool === 'limited_only' && c.scarcity !== 'limited') return false;
-      if (pool === 'common_only' && (c.scarcity !== 'common' && c.scarcity !== 'custom')) return false;
+const lineups = OptimizerEngine.buildCascadePortfolio(
+      currentGallery,
+      competition,
+      selectedScarcity,
+      selectedStrategy
+      this.state.cards,
+      comp,
+      this.state.selectedScarcity,
+      this.state.selectedStrategy
+);
 
-      const matchSearch = c.name.toLowerCase().includes(search) || c.club.toLowerCase().includes(search);
-      const matchPos = pos === 'ALL' || c.position === pos;
-      return matchSearch && matchPos;
-    });
-
-    list.sort((a, b) => {
-      if (sort === 'l15-desc') return (b.l15 || 0) - (a.l15 || 0);
-      if (sort === 'l5-desc') return (b.l5 || 0) - (a.l5 || 0);
-      if (sort === 'bonus-desc') return b.bonusPct - a.bonusPct;
-      if (sort === 'name-asc') return a.name.localeCompare(b.name);
-      return 0;
-    });
-
-    const grid = document.getElementById('cards-grid');
-    if (!grid) return;
-    if (list.length === 0) {
-      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#8c93a4;padding:30px;">Nessuna carta trovata con questi filtri.</div>';
-      return;
-    }
-    grid.innerHTML = list.map(c => this.buildCardHtml(c)).join('');
+    const builtEl = document.getElementById('stat-lineups-built');
+    if (builtEl) builtEl.textContent = lineups.length;
+    renderLineups(lineups, competition);
+  }
+    document.getElementById('stat-lineups-built').textContent = lineups.length;
+    this.renderLineups(lineups, comp);
   },
 
-  // Risolutore Portfolio a cascata senza sovrapposizione di carte
-  generateOptimizedLineups() {
-    const competition = document.getElementById('competition-select')?.value || 'PREMIER_LEAGUE_IN_SEASON';
-    const pool = this.userCards.filter(c => c.scarcity === this.activeRarity);
-
-    if (pool.length < 5) {
-      this.notify(`Servono almeno 5 carte ${this.activeRarity} per comporre formazioni.`, true);
-      return;
-    }
-
-    const usedIds = new Set();
-    const lineups = [];
-
-    // Funzione di punteggio strategica (Floor AAS vs Ceiling con metriche Opta/StatsBomb)
-    const scoreFn = (c) => {
-      const base = this.activeStrategy === 'floor'
-        ? (c.l15 * 0.65 + c.optaAas * 0.35)
-        : (c.l5 * 0.55 + c.l15 * 0.25 + (c.xgXa * 25));
-      return base * c.powerMultiplier;
-    };
-
-    for (let r = 0; r < 5; r++) {
-      const avail = pool.filter(c => !usedIds.has(c.id));
-      const gk = avail.filter(c => c.position === 'GK').sort((a, b) => scoreFn(b) - scoreFn(a))[0];
-      const def = avail.filter(c => c.position === 'DEF' && c.id !== gk?.id).sort((a, b) => scoreFn(b) - scoreFn(a))[0];
-      const mid = avail.filter(c => c.position === 'MID' && c.id !== gk?.id && c.id !== def?.id).sort((a, b) => scoreFn(b) - scoreFn(a))[0];
-      const fwd = avail.filter(c => c.position === 'FWD' && c.id !== gk?.id && c.id !== def?.id && c.id !== mid?.id).sort((a, b) => scoreFn(b) - scoreFn(a))[0];
-
-      if (!gk || !def || !mid || !fwd) break;
-
-      const taken = new Set([gk.id, def.id, mid.id, fwd.id]);
-      const extra = avail.filter(c => !taken.has(c.id) && c.position !== 'GK').sort((a, b) => scoreFn(b) - scoreFn(a))[0];
-
-      if (!extra) break;
-
-      const team = [gk, def, mid, fwd, extra];
-      team.forEach(c => usedIds.add(c.id));
-
-      let bestCap = team[0];
-      team.forEach(c => {
-        if (scoreFn(c) > scoreFn(bestCap)) bestCap = c;
-      });
-      bestCap.isCaptain = true;
-
-      const totalProjected = team.reduce((acc, c) => acc + (scoreFn(c) * (c.isCaptain ? 1.2 : 1)), 0);
-
-      lineups.push({
-        rank: r + 1,
-        competition: competition.replace(/_/g, ' '),
-        projected: Math.round(totalProjected),
-        cards: team
-      });
-    }
-
-    document.getElementById('stat-teams-count').textContent = lineups.length;
-
-    const container = document.getElementById('lineups-results-container');
+  function renderLineups(lineups, competition) {
+    if (!lineupsOutput) return;
+  renderLineups(lineups, comp) {
+    const container = document.getElementById('lineups-output');
     if (!container) return;
 
+    if (!lineups.length) {
+      lineupsOutput.innerHTML = `
     if (lineups.length === 0) {
-      container.innerHTML = '<div style="background:#12141a;border:1px solid #242834;border-radius:8px;padding:24px;text-align:center;color:#8c93a4;">Nessuna formazione completa componibile (manca portiere o ruoli chiave).</div>';
-      return;
-    }
+      container.innerHTML = `
+       <div class="empty-placeholder carbon-card">
+         <div class="placeholder-icon">⚠️</div>
+          <h2>Carte Insufficienti per ${competition.name}</h2>
+          <p>Non ci sono abbastanza carte eleggibili (richieste minimo ${competition.inSeasonRequired} In-Season) nella rarità ${selectedScarcity.toUpperCase()} per completare la formazione.</p>
+          <h2>Nessuna formazione completabile per questa competizione</h2>
+          <p>Non hai abbastanza carte <strong>${this.state.selectedScarcity.toUpperCase()}</strong> per formare un team in <strong>${comp.name}</strong> rispettando i requisiti (formato ${comp.format}, min. ${comp.inSeasonRequired} In-Season).</p>
+       </div>
+     `;
+return;
+}
 
-    container.innerHTML = lineups.map(l => `
-      <div style="background:#12141a; border:1px solid #242834; border-radius:10px; padding:16px; margin-top:16px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <div>
-            <strong style="color:#fff; font-size:14px;">TEAM #${l.rank} • ${l.competition}</strong>
-            <span style="color:#8c93a4; font-size:11px; margin-left:8px;">Zero carte sovrapposte</span>
+    lineupsOutput.innerHTML = lineups.map(lineup => `
+      <div class="lineup-block carbon-card">
+        <div class="lineup-header">
+          <div class="lineup-title-group">
+            <span class="team-rank-badge">${lineup.rankLabel}</span>
+            <h3>${competition.name}</h3>
           </div>
-          <div style="background:#181b22; border:1px solid var(--accent-gold); padding:5px 12px; border-radius:6px; font-weight:800; font-size:13px; color:var(--text-gold);">
-            Previsto: ${l.projected} pts
+          <div class="lineup-meta">
+            <span class="meta-pill">In-Season: <strong class="text-emerald">${lineup.inSeasonCount}/${lineup.starters.length}</strong></span>
+            <span class="meta-pill">Proiezione Totale: <strong class="text-gold">${lineup.totalProjected} pt</strong></span>
+    let html = '';
+    lineups.forEach((team) => {
+      html += `
+        <div class="team-card carbon-card">
+          <div class="team-header">
+            <div>
+              <span class="team-rank-badge">${team.rankLabel}</span>
+              <span class="team-meta">${comp.name} • ${team.format}</span>
+            </div>
+            <div class="team-score">
+              <span class="score-label">Proiezione Opta:</span>
+              <span class="score-value text-gold">${team.totalProjected} pts</span>
+            </div>
+         </div>
+        </div>
+
+        <div class="players-grid ${lineup.format === 'SO7' ? 'so7-grid' : ''}">
+          ${lineup.starters.map(p => `
+            <div class="player-card ${p.isCaptain ? 'captain-card' : ''}">
+              <div>
+                <div class="slot-header">
+                  <span class="pos-tag">${p.slotRole} ${p.isCaptain ? '© CAP' : ''}</span>
+                  <span class="season-tag ${p.isInSeason ? 'in-season' : 'classic'}">
+                    ${p.isInSeason ? 'IN-SEASON' : 'CLASSIC'} (+${p.bonusPct}%)
+                  </span>
+                </div>
+          <div class="pitch-container">
+            ${team.starters.map(p => `
+              <div class="player-slot ${p.isCaptain ? 'is-captain' : ''}">
+                ${p.isCaptain ? '<span class="captain-badge">CAP (+50%)</span>' : ''}
+                <div class="player-role-tag">${p.slotRole}</div>
+               <div class="player-name">${p.name}</div>
+               <div class="player-club">${p.club}</div>
+                <div class="metrics-box">
+                  <div class="metric-row"><span>Opta AAS:</span><span>${p.optaAas} pt</span></div>
+                  <div class="metric-row"><span>xG + xA:</span><span>${p.xgXa}</span></div>
+                  <div class="metric-row"><span>Proiezione EV:</span><span>${p.projectedScore} pt</span></div>
+                <div class="player-stats">
+                  <span class="stat-pill ${p.isInSeason ? 'pill-inseason' : 'pill-classic'}">${p.isInSeason ? 'IN-SEASON' : 'CLASSIC'}</span>
+                  <span class="stat-pts">${p.projectedScore}p</span>
+               </div>
+             </div>
+              <div class="badges-list">
+                ${p.badges.map(b => `<span class="tactical-badge">${b}</span>`).join('')}
+              </div>
+            </div>
+          `).join('')}
+            `).join('')}
           </div>
-        </div>
-        <div style="display:flex; gap:12px; overflow-x:auto; padding-bottom:6px;">
-          ${l.cards.map(c => this.buildCardHtml(c, true)).join('')}
-        </div>
+       </div>
       </div>
     `).join('');
+      `;
+    });
+
+    container.innerHTML = html;
   },
 
-  runDemoMode() {
-    this.notify('Caricamento modalità Demo simulata...');
-    const positions = ['GK', 'DEF', 'DEF', 'MID', 'MID', 'FWD', 'FWD'];
-    const mock = positions.flatMap((pos, i) => [
-      {
-        id: `demo_${pos}_${i}`,
-        name: `${pos} Starter`,
-        club: 'Demo Club',
-        position: pos,
-        scarcity: 'limited',
-        isInSeason: true,
-        confirmedXi: true,
-        l5: 56 + (i * 2),
-        l15: 53 + (i * 2),
-        bonusPct: 5,
-        powerMultiplier: 1.05,
-        optaAas: 48,
-        xgXa: 0.35,
-        oppXga: 1.10,
-        pictureUrl: 'https://assets.sorare.com/placeholder.png'
-      }
-    ]);
-    this.userCards = mock;
-    this.initUserGallery();
-  }
+  getMockDemoCards() {
+    // Genera carte coerenti per testare tutte le nuove competizioni
+    const mock = [
+      // Premier League
+      { id: 'p1', name: 'Erling Haaland', club: 'Manchester City', leagueSlug: 'premier-league-gb-eng', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.15, optaAas: 62, xgXa: 0.95, confirmedXi: true },
+      { id: 'p2', name: 'Bukayo Saka', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.12, optaAas: 58, xgXa: 0.80, confirmedXi: true },
+      { id: 'p3', name: 'William Saliba', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 54, xgXa: 0.20, confirmedXi: true },
+      { id: 'p4', name: 'David Raya', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'GK', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 50, xgXa: 0.05, confirmedXi: true },
+      { id: 'p5', name: 'Declan Rice', club: 'Arsenal', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 56, xgXa: 0.35, confirmedXi: true },
+      { id: 'p6', name: 'Cole Palmer', club: 'Chelsea', leagueSlug: 'premier-league-gb-eng', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: true, isUefaContender: true, powerMultiplier: 1.15, optaAas: 60, xgXa: 0.90, confirmedXi: true },
+      { id: 'p7', name: 'Virgil van Dijk', club: 'Liverpool', leagueSlug: 'premier-league-gb-eng', position: 'DEF', scarcity: 'limited', isInSeason: false, isU23: false, isUefaChampions: true, powerMultiplier: 1.05, optaAas: 58, xgXa: 0.25, confirmedXi: true },
+
+      // LaLiga
+      { id: 'l1', name: 'Kylian Mbappé', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.19, optaAas: 65, xgXa: 1.10, confirmedXi: true },
+      { id: 'l2', name: 'Vinicius Jr', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.16, optaAas: 63, xgXa: 0.98, confirmedXi: true },
+      { id: 'l3', name: 'Jude Bellingham', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: true, isUefaChampions: true, powerMultiplier: 1.18, optaAas: 62, xgXa: 0.85, confirmedXi: true },
+      { id: 'l4', name: 'Thibaut Courtois', club: 'Real Madrid', leagueSlug: 'laliga-es', position: 'GK', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 52, xgXa: 0.05, confirmedXi: true },
+      { id: 'l5', name: 'Lamine Yamal', club: 'Barcelona', leagueSlug: 'laliga-es', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: true, isUefaChampions: true, powerMultiplier: 1.20, optaAas: 66, xgXa: 1.05, confirmedXi: true },
+      { id: 'l6', name: 'Pau Cubarsí', club: 'Barcelona', leagueSlug: 'laliga-es', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: true, isUefaChampions: true, powerMultiplier: 1.10, optaAas: 53, xgXa: 0.15, confirmedXi: true },
+      { id: 'l7', name: 'Pedri', club: 'Barcelona', leagueSlug: 'laliga-es', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, isUefaChampions: true, powerMultiplier: 1.14, optaAas: 61, xgXa: 0.70, confirmedXi: true },
+
+      // MLS
+      { id: 'm1', name: 'Lionel Messi', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.20, optaAas: 70, xgXa: 1.25, confirmedXi: true },
+      { id: 'm2', name: 'Luis Suárez', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'FWD', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.10, optaAas: 55, xgXa: 0.75, confirmedXi: true },
+      { id: 'm3', name: 'Sergio Busquets', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'MID', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.08, optaAas: 58, xgXa: 0.30, confirmedXi: true },
+      { id: 'm4', name: 'Jordi Alba', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'DEF', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.10, optaAas: 54, xgXa: 0.40, confirmedXi: true },
+      { id: 'm5', name: 'Drake Callender', club: 'Inter Miami', leagueSlug: 'mls-us', position: 'GK', scarcity: 'limited', isInSeason: true, isU23: false, powerMultiplier: 1.05, optaAas: 48, xgXa: 0.05, confirmedXi: true }
+    ];
+    return mock;
+}
 };
 
-document.addEventListener('DOMContentLoaded', () => App.init());
+document.addEventListener('DOMContentLoaded', () => {
+  App.init();
+});
+
 window.App = App;
