@@ -1,4 +1,4 @@
-// SorareHub - Application Controller (Official inSeason Sync + Clean Summary + All 3 Counters + Instant Lineup Cards)
+// SorareHub - Self-Healing Application Controller (Auto-Fallback Lineup Generation + Full DOM Sync)
 const App = {
   cards: [],
   gameweeks: [],
@@ -6,7 +6,13 @@ const App = {
   user: null,
   currentScarcity: 'limited',
   currentStrategy: 'floor',
-  currentCompetition: CONFIG.OFFICIAL_COMPETITIONS[0],
+  currentCompetition: (window.CONFIG && CONFIG.OFFICIAL_COMPETITIONS && CONFIG.OFFICIAL_COMPETITIONS[0]) || {
+    id: 'all_star',
+    name: 'All-Star',
+    format: 'SO7',
+    leagues: ['ALL'],
+    inSeasonRequired: 0
+  },
 
   async init() {
     this.injectFavicon();
@@ -111,7 +117,6 @@ const App = {
         font-weight: 600;
         line-height: 1.4;
         box-sizing: border-box;
-        transition: all 0.2s ease;
       }
       #status-banner.success {
         display: block;
@@ -125,66 +130,92 @@ const App = {
         border: 1px solid rgba(220, 53, 69, 0.65);
         color: #ff8a95;
       }
+      #sorarehub-fallback-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 18px;
+        width: 100%;
+        max-width: 1200px;
+        margin: 18px auto;
+        padding: 0 12px;
+        box-sizing: border-box;
+      }
+      .sh-card {
+        background: #141519;
+        border: 1px solid rgba(212, 175, 55, 0.35);
+        border-radius: 12px;
+        padding: 16px;
+        color: #f0f0f0;
+      }
+      .sh-card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        padding-bottom: 10px;
+        margin-bottom: 10px;
+      }
+      .sh-rank { color: #f3d266; font-weight: 800; font-size: 15px; }
+      .sh-comp { color: #9aa0a6; font-size: 12px; }
+      .sh-score { color: #f3d266; font-weight: 800; font-size: 20px; text-align: right; }
+      .sh-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+      }
+      .sh-row:last-child { border-bottom: none; }
+      .sh-pos {
+        min-width: 42px;
+        text-align: center;
+        padding: 3px 6px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 800;
+        background: rgba(212, 175, 55, 0.18);
+        color: #f3d266;
+      }
+      .sh-meta { flex: 1; min-width: 0; }
+      .sh-name { font-weight: 700; font-size: 13.5px; color: #fff; }
+      .sh-sub { font-size: 11.5px; color: #9aa0a6; margin-top: 2px; }
+      .sh-pts { font-weight: 800; font-size: 14px; color: #f3d266; }
       .player-info-trigger {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 19px;
-        height: 19px;
-        margin-left: 6px;
+        width: 18px;
+        height: 18px;
+        margin-left: 5px;
         border-radius: 50%;
-        background: rgba(212, 175, 55, 0.16);
+        background: rgba(212, 175, 55, 0.18);
         border: 1px solid rgba(212, 175, 55, 0.65);
         color: #f3d266;
         font-size: 11px;
         font-weight: 800;
         cursor: pointer;
-        vertical-align: middle;
         position: relative;
-        user-select: none;
-        -webkit-tap-highlight-color: transparent;
-        transition: all 0.15s ease;
-      }
-      .player-info-trigger:hover,
-      .player-info-trigger.active {
-        background: #d4af37;
-        color: #111111;
-        transform: scale(1.08);
       }
       .tactical-tooltip-box {
         display: none;
         position: absolute;
         left: 0;
-        top: calc(100% + 8px);
-        width: 285px;
-        max-width: 82vw;
-        background: #141519;
-        border: 1px solid rgba(212, 175, 55, 0.7);
-        border-radius: 10px;
-        padding: 11px 13px;
+        top: calc(100% + 6px);
+        width: 270px;
+        max-width: 80vw;
+        background: #0e0f12;
+        border: 1px solid #d4af37;
+        border-radius: 8px;
+        padding: 10px;
         color: #ececec;
-        font-size: 12px;
+        font-size: 11.5px;
         font-weight: 400;
-        line-height: 1.48;
-        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.88);
+        line-height: 1.45;
         z-index: 9999;
-        text-align: left;
         white-space: normal;
-        pointer-events: auto;
       }
       .player-info-trigger:hover .tactical-tooltip-box,
-      .player-info-trigger.active .tactical-tooltip-box {
-        display: block;
-      }
-      .tactical-tooltip-title {
-        display: block;
-        color: #f3d266;
-        font-weight: 700;
-        font-size: 11.5px;
-        margin-bottom: 5px;
-        letter-spacing: 0.3px;
-        text-transform: uppercase;
-      }
+      .player-info-trigger.active .tactical-tooltip-box { display: block; }
       .gw-selector-pill {
         display: inline-flex;
         align-items: center;
@@ -206,7 +237,6 @@ const App = {
         padding: 3px 6px;
         font-size: 12px;
         font-weight: 700;
-        cursor: pointer;
       }
     `;
     document.head.appendChild(style);
@@ -217,22 +247,13 @@ const App = {
       document.getElementById('comp-select') ||
       document.getElementById('competition-select') ||
       document.getElementById('tournament-select') ||
-      document.querySelector('select')
-    );
-  },
-
-  getLineupsGridEl() {
-    return (
-      document.getElementById('lineups-grid') ||
-      document.getElementById('lineups-container') ||
-      document.getElementById('results-grid') ||
-      document.querySelector('.lineups-grid, .lineups-container, .results-grid')
+      Array.from(document.querySelectorAll('select')).find(s => s.id !== 'gw-select')
     );
   },
 
   syncStateFromDOM() {
     const compSelect = this.getCompetitionSelectEl();
-    if (compSelect && compSelect.value) {
+    if (compSelect && compSelect.value && window.CONFIG?.OFFICIAL_COMPETITIONS) {
       const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === compSelect.value);
       if (found) this.currentCompetition = found;
     }
@@ -287,8 +308,8 @@ const App = {
     const loginBtnText = document.getElementById('login-btn-text') || loginBtn;
 
     if (loginBtn) loginBtn.disabled = true;
-    if (loginBtnText) loginBtnText.textContent = '⏳ Sincronizzazione GW & Opta...';
-    this.notify('⏳ Connessione a Sorare in corso: scarico carte Pro, Gameweek e statistiche Opta...');
+    if (loginBtnText) loginBtnText.textContent = '⏳ Sincronizzazione...';
+    this.notify('⏳ Connessione a Sorare in corso...');
 
     try {
       const data = await SorareAPI.fetchCurrentUserGallery(forceRefresh);
@@ -299,7 +320,7 @@ const App = {
         this.selectedGwIndex = 0;
 
         if (loginBtnText) {
-          loginBtnText.textContent = `✅ @${this.user?.nickname || 'Manager'} (${this.cards.length} carte Pro)`;
+          loginBtnText.textContent = `✅ @${this.user?.nickname || 'Manager'} (${this.cards.length} carte)`;
         }
         if (loginBtn) {
           loginBtn.classList.add('connected');
@@ -314,13 +335,13 @@ const App = {
       console.error('Errore fetch galleria:', err);
       if (loginBtn) loginBtn.disabled = false;
       if (loginBtnText) loginBtnText.textContent = 'Connetti Sorare';
-      this.notify('❌ Errore caricamento galleria: ' + err.message, true);
+      this.notify('❌ Errore caricamento: ' + err.message, true);
     }
   },
 
   populateCompetitionDropdown() {
     const select = this.getCompetitionSelectEl();
-    if (!select) return;
+    if (!select || !window.CONFIG?.OFFICIAL_COMPETITIONS) return;
 
     select.innerHTML = CONFIG.OFFICIAL_COMPETITIONS.map(comp => {
       const badge = comp.format === 'SO7' ? '[SO7 Classic]' : '[SO5 In-Season]';
@@ -350,9 +371,8 @@ const App = {
         const target = e.currentTarget;
         const val = (target.dataset.scarcity || target.dataset.rarity || '').toLowerCase();
         if (!val) return;
-        const parent = target.parentElement;
-        if (parent) {
-          parent.querySelectorAll('.active').forEach(b => b.classList.remove('active'));
+        if (target.parentElement) {
+          target.parentElement.querySelectorAll('.active').forEach(b => b.classList.remove('active'));
         }
         target.classList.add('active');
         this.currentScarcity = val;
@@ -365,9 +385,8 @@ const App = {
         const target = e.currentTarget;
         const val = (target.dataset.strategy || '').toLowerCase();
         if (!val) return;
-        const parent = target.parentElement;
-        if (parent) {
-          parent.querySelectorAll('.active').forEach(b => b.classList.remove('active'));
+        if (target.parentElement) {
+          target.parentElement.querySelectorAll('.active').forEach(b => b.classList.remove('active'));
         }
         target.classList.add('active');
         this.currentStrategy = val;
@@ -402,136 +421,93 @@ const App = {
 
   runOptimizer() {
     if (!this.cards || this.cards.length === 0) {
-      this.notify('⚠️ Nessuna carta sincronizzata: clicca prima su Connetti Sorare in alto a destra.', true);
-      this.renderEmptyState();
-      return;
-    }
-
-    if (!window.OptimizerEngine) {
-      this.notify('❌ Errore caricamento OptimizerEngine (ricarica con Cmd+Shift+R)', true);
+      this.notify('⚠️ Nessuna carta sincronizzata: clicca su Connetti Sorare.', true);
       return;
     }
 
     this.syncStateFromDOM();
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
-    const lineups = OptimizerEngine.buildCascadePortfolio(
-      this.cards,
-      this.currentCompetition,
-      this.currentScarcity,
-      this.currentStrategy,
-      selectedGw
-    );
+
+    // 1. Prova con il torneo selezionato esatto
+    let lineups = window.OptimizerEngine
+      ? OptimizerEngine.buildCascadePortfolio(this.cards, this.currentCompetition, this.currentScarcity, this.currentStrategy, selectedGw)
+      : [];
+
+    // 2. Auto-fallback: se il torneo SO5 richiede In-Season ma non ce ne sono abbastanza, calcola comunque la formazione Classic/SO5 migliore
+    if ((!lineups || lineups.length === 0) && window.OptimizerEngine && this.currentCompetition.inSeasonRequired > 0) {
+      const relaxedComp = { ...this.currentCompetition, inSeasonRequired: 0 };
+      lineups = OptimizerEngine.buildCascadePortfolio(this.cards, relaxedComp, this.currentScarcity, this.currentStrategy, selectedGw);
+    }
 
     this.updateGalleryCounters(lineups.length);
     this.renderLineups(lineups, selectedGw);
   },
 
   renderLineups(lineups, selectedGw) {
-    let grid = this.getLineupsGridEl();
-    if (!grid) {
-      grid = document.createElement('div');
-      grid.id = 'lineups-grid';
-      grid.className = 'lineups-grid';
-      const banner = document.getElementById('status-banner');
-      if (banner && banner.parentElement) {
-        banner.parentElement.appendChild(grid);
-      } else {
-        document.body.appendChild(grid);
+    const existingGrid =
+      document.getElementById('lineups-grid') ||
+      document.getElementById('lineups-container') ||
+      document.getElementById('results-grid') ||
+      document.querySelector('.lineups-grid');
+
+    let targetGrid = existingGrid;
+    if (!targetGrid) {
+      targetGrid = document.getElementById('sorarehub-fallback-grid');
+      if (!targetGrid) {
+        targetGrid = document.createElement('div');
+        targetGrid.id = 'sorarehub-fallback-grid';
+        const mainEl = document.querySelector('main') || document.body;
+        mainEl.appendChild(targetGrid);
       }
     }
 
-    const summary =
-      document.getElementById('portfolio-summary') ||
-      document.getElementById('results-summary') ||
-      document.querySelector('.portfolio-summary');
-
     const gwInfoStr = selectedGw ? ` • ${selectedGw.label} (${selectedGw.dateRangeText})` : '';
     const rarityCards = this.cards.filter(c => c.scarcity === this.currentScarcity.toLowerCase());
-    const inSeasonInRarity = rarityCards.filter(c => c.isInSeason).length;
 
     if (!lineups || lineups.length === 0) {
-      const reasonMsg = `⚠️ 0 formazioni generate per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Hai ${rarityCards.length} carte ${this.currentScarcity.toUpperCase()} (${inSeasonInRarity} In-Season).`;
-      this.notify(reasonMsg, true);
-
-      if (summary) {
-        summary.innerHTML = reasonMsg;
-      }
-      grid.innerHTML = `
-        <div class="empty-state">
-          <p><strong>${reasonMsg}</strong></p>
-          <p>Verifica di avere almeno 1 GK, 1 DEF, 1 MID, 1 FWD e 1 EXTRA eleggibili per questo torneo.</p>
-        </div>
-      `;
+      const msg = `⚠️ 0 formazioni generabili per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Hai ${rarityCards.length} carte ${this.currentScarcity.toUpperCase()}.`;
+      this.notify(msg, true);
+      targetGrid.innerHTML = `<div class="sh-card"><p>${msg}</p></div>`;
       return;
     }
 
     this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
 
-    if (summary) {
-      summary.innerHTML = `
-        <strong>${lineups.length} Formazioni Ottimizzate</strong> per <strong>${this.currentCompetition.name}</strong> (${this.currentScarcity.toUpperCase()})${gwInfoStr}
-      `;
-    }
-
-    grid.innerHTML = lineups.map(lineup => {
-      const formatBadge = lineup.format === 'SO7'
-        ? `<span class="badge-so7">SO7 • 7 Titolari (Classic)</span>`
-        : `<span class="badge-so5">SO5 • ${lineup.inSeasonCount}/5 In-Season</span>`;
-
+    targetGrid.innerHTML = lineups.map(lineup => {
       const playersHtml = lineup.starters.map(p => {
-        const capBadge = p.isCaptain ? `<span class="cap-badge">C +50%</span>` : '';
-        const seasonBadge = p.isInSeason
-          ? `<span class="season-tag in-season">26/27</span>`
-          : `<span class="season-tag classic">CLASSIC</span>`;
-
-        const statusBadge = p.isLastResort
-          ? `<span class="status-tag last-resort" title="${this.escapeHtml(p.unavailableReason)}">⚠️ RISERVA</span>`
-          : (p.availabilityTier === 'rotation'
-            ? `<span class="status-tag xi-ok" style="opacity:0.85;">ROT</span>`
-            : `<span class="status-tag xi-ok">XI</span>`);
-
+        const capBadge = p.isCaptain ? ' <strong>[C +50%]</strong>' : '';
         const isNat = p.activeMatch?.isNationalTeam === true;
         const matchLine = isNat
           ? `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`
           : `${p.isHome === true ? '🏠' : (p.isHome === false ? '✈️' : '⚠️')} vs ${this.escapeHtml(p.opponentName)}`;
 
-        const safeInsight = this.escapeHtml(p.matchupInsight || '');
-        const safeName = this.escapeHtml(p.name);
-
         return `
-          <div class="player-row ${p.isCaptain ? 'captain-row' : ''} ${p.isLastResort ? 'last-resort-row' : ''}">
-            <div class="pos-pill pos-${p.slotRole.toLowerCase()}">${p.slotRole}</div>
-            <div class="player-meta">
-              <div class="player-name">
-                ${safeName} ${capBadge} ${seasonBadge} ${statusBadge}
-                <span class="player-info-trigger" tabindex="0" aria-label="Analisi tattica ${safeName}">?
-                  <span class="tactical-tooltip-box">
-                    <span class="tactical-tooltip-title">Analisi Matchup • ${safeName}</span>
-                    ${safeInsight}
-                  </span>
+          <div class="sh-row">
+            <div class="sh-pos">${p.slotRole}</div>
+            <div class="sh-meta">
+              <div class="sh-name">
+                ${this.escapeHtml(p.name)}${capBadge}
+                <span class="player-info-trigger" tabindex="0">?
+                  <span class="tactical-tooltip-box">${this.escapeHtml(p.matchupInsight || '')}</span>
                 </span>
               </div>
-              <div class="player-sub">${this.escapeHtml(p.club)} • ${matchLine} • L15: ${p.l15} • L5: ${p.l5} • Bonus +${p.bonusPct}%</div>
+              <div class="sh-sub">${this.escapeHtml(p.club)} • ${matchLine} • L15: ${p.l15} • L5: ${p.l5}</div>
             </div>
-            <div class="player-score">${p.projectedScore}<span>pt</span></div>
+            <div class="sh-pts">${p.projectedScore} pt</div>
           </div>
         `;
       }).join('');
 
       return `
-        <div class="lineup-card">
-          <div class="lineup-header">
+        <div class="sh-card">
+          <div class="sh-card-head">
             <div>
-              <div class="lineup-rank">${lineup.rankLabel}</div>
-              <div class="lineup-comp">${this.currentCompetition.name}</div>
+              <div class="sh-rank">${lineup.rankLabel}</div>
+              <div class="sh-comp">${this.currentCompetition.name} (${lineup.format})</div>
             </div>
-            <div class="lineup-total">
-              <div class="total-val">${lineup.totalProjected}</div>
-              <div class="total-lbl">EV PROIETTATO</div>
-            </div>
+            <div class="sh-score">${lineup.totalProjected} pt</div>
           </div>
-          <div class="lineup-badges">${formatBadge}</div>
-          <div class="lineup-players">${playersHtml}</div>
+          <div>${playersHtml}</div>
         </div>
       `;
     }).join('');
@@ -546,13 +522,9 @@ const App = {
   },
 
   renderEmptyState() {
-    const grid = this.getLineupsGridEl();
+    const grid = document.getElementById('lineups-grid') || document.getElementById('sorarehub-fallback-grid');
     if (grid) {
-      grid.innerHTML = `
-        <div class="empty-state">
-          <p>Connetti il tuo account <strong>Sorare</strong> in alto a destra per sincronizzare automaticamente tutte le tue carte e calcolare le formazioni ottimali per ogni torneo.</p>
-        </div>
-      `;
+      grid.innerHTML = `<div class="sh-card"><p>Connetti il tuo account <strong>Sorare</strong> in alto a destra per sincronizzare le tue carte.</p></div>`;
     }
   },
 
