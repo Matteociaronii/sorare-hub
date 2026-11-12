@@ -138,19 +138,17 @@ const SorareAPI = {
                       displayName
                     }
                     upcomingGames(first: 1) {
-                      nodes {
-                        date
-                        homeTeam {
-                          ... on Club {
-                            slug
-                            name
-                          }
+                      date
+                      homeTeam {
+                        ... on Club {
+                          slug
+                          name
                         }
-                        awayTeam {
-                          ... on Club {
-                            slug
-                            name
-                          }
+                      }
+                      awayTeam {
+                        ... on Club {
+                          slug
+                          name
                         }
                       }
                     }
@@ -319,8 +317,9 @@ const SorareAPI = {
         const isInjured = injuries.length > 0;
         const isSuspended = suspensions.length > 0;
 
-        // Controllo prossima partita della Gameweek
-        const upcomingNode = club.upcomingGames?.nodes?.[0] || null;
+        // Controllo prossima partita della Gameweek (upcomingGames è una lista diretta di Game)
+        const upcomingList = Array.isArray(club.upcomingGames) ? club.upcomingGames : (club.upcomingGames?.nodes || []);
+        const upcomingNode = upcomingList[0] || null;
         let hasUpcomingGame = false;
         let isHome = null;
         let opponentName = 'Nessuna partita in GW';
