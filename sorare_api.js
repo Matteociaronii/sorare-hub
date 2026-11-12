@@ -1,6 +1,6 @@
-// SorareHub - Rate-Limit Safe GraphQL Layer (Club + NationalTeam upcomingGames, 100 cards/page, Auto-Retry 429, 15-min Cache)
+// SorareHub - Complexity-Safe (<30k) & Rate-Limit Safe GraphQL Layer (Club + NationalTeam + Gameweeks)
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v4',
+  CACHE_KEY: 'sorarehub_gallery_cache_v5',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -75,7 +75,6 @@ const SorareAPI = {
       if (window.App && App.notify) {
         App.notify('❌ ' + err.message, true);
       }
-      alert('Errore durante il login Sorare: ' + err.message);
       return null;
     }
   },
@@ -203,15 +202,15 @@ const SorareAPI = {
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
     const gameweeks = await this.fetchActiveGameweeks(workerGraphqlEndpoint, token);
 
-    await new Promise(resolve => setTimeout(resolve, 400));
+    await new Promise(resolve => setTimeout(resolve, 350));
 
-    // upcomingGames su activeClub e su activeNationalTeam (entrambi Team nello schema Sorare)
+    // cards(first: 65) + so5Scores(last: 6) -> complessità ~16.500 (ben al di sotto del limite max 30.000)
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
           slug
           nickname
-          cards(first: 100, after: $after) {
+          cards(first: 65, after: $after) {
             pageInfo {
               hasNextPage
               endCursor
@@ -234,12 +233,11 @@ const SorareAPI = {
                   l15: averageScore(type: LAST_FIFTEEN_SO5_AVERAGE_SCORE)
                   activeInjuries {
                     status
-                    expectedEndDate
                   }
                   activeSuspensions {
                     reason
                   }
-                  so5Scores(last: 10) {
+                  so5Scores(last: 6) {
                     score
                     decisiveScore {
                       totalScore
@@ -250,7 +248,6 @@ const SorareAPI = {
                       goalAssist
                       cleanSheet
                       saves
-                      penaltiesSaved
                     }
                   }
                   activeClub {
@@ -258,9 +255,8 @@ const SorareAPI = {
                     slug
                     domesticLeague {
                       slug
-                      displayName
                     }
-                    upcomingGames(first: 4) {
+                    upcomingGames(first: 3) {
                       date
                       competition {
                         slug
@@ -283,7 +279,7 @@ const SorareAPI = {
                   activeNationalTeam {
                     name
                     slug
-                    upcomingGames(first: 3) {
+                    upcomingGames(first: 2) {
                       date
                       competition {
                         slug
@@ -317,7 +313,7 @@ const SorareAPI = {
     let userProfile = null;
     let batchIndex = 0;
 
-    while (hasNext && batchIndex < 15) {
+    while (hasNext && batchIndex < 20) {
       batchIndex++;
 
       const res = await this.fetchWithRetry(workerGraphqlEndpoint, {
@@ -373,7 +369,7 @@ const SorareAPI = {
 
       if (!hasNext || !cursor) break;
 
-      await new Promise(resolve => setTimeout(resolve, 650));
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     const enriched = this.enrichCardsWithRealOptaData(allCards);
@@ -478,10 +474,10 @@ const SorareAPI = {
         const l5 = computedL5 > 0 ? computedL5 : apiL5;
 
         const apiL15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0;
-        const computedL10 = playedMatchesAll.length > 0
+        const computedL6 = playedMatchesAll.length > 0
           ? Number((playedMatchesAll.reduce((acc, m) => acc + (m.score || 0), 0) / playedMatchesAll.length).toFixed(1))
           : 0;
-        const l15 = apiL15 > 0 ? Math.max(apiL15, Number(((apiL15 + computedL10) / 2).toFixed(1))) : computedL10;
+        const l15 = apiL15 > 0 ? Math.max(apiL15, Number(((apiL15 + computedL6) / 2).toFixed(1))) : computedL6;
 
         let playedInLast5Games = 0;
         let starterCount = 0;
