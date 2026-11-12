@@ -1,4 +1,4 @@
-// SorareHub - Real GraphQL SO5 Gameweeks, National Teams, Opta & Competition-Filtered Fixtures
+// SorareHub - Real GraphQL SO5 Gameweeks, Direct Player UpcomingGames (Club + National Team) & Opta Layer
 const SorareAPI = {
   generateRandomString(length = 32) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -164,11 +164,9 @@ const SorareAPI = {
     if (!token) return null;
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
-
-    // 1. Recupera le Gameweek ufficiali reali di Sorare
     const gameweeks = await this.fetchActiveGameweeks(workerGraphqlEndpoint, token);
 
-    // 2. Query carte + partite sia del Club sia della Nazionale
+    // Interroga direttamente player.upcomingGames(first: 5) che include SIA Club SIA Nazionali
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -223,46 +221,31 @@ const SorareAPI = {
                       slug
                       displayName
                     }
-                    upcomingGames(first: 4) {
-                      date
-                      competition {
+                  }
+                  upcomingGames(first: 5) {
+                    date
+                    competition {
+                      slug
+                      displayName
+                    }
+                    homeTeam {
+                      ... on Club {
                         slug
-                        displayName
+                        name
                       }
-                      homeTeam {
-                        ... on Club {
-                          slug
-                          name
-                        }
-                      }
-                      awayTeam {
-                        ... on Club {
-                          slug
-                          name
-                        }
+                      ... on NationalTeam {
+                        slug
+                        name
                       }
                     }
-                  }
-                  activeNationalTeam {
-                    name
-                    slug
-                    upcomingGames(first: 3) {
-                      date
-                      competition {
+                    awayTeam {
+                      ... on Club {
                         slug
-                        displayName
+                        name
                       }
-                      homeTeam {
-                        ... on NationalTeam {
-                          slug
-                          name
-                        }
-                      }
-                      awayTeam {
-                        ... on NationalTeam {
-                          slug
-                          name
-                        }
+                      ... on NationalTeam {
+                        slug
+                        name
                       }
                     }
                   }
@@ -361,44 +344,48 @@ const SorareAPI = {
         const clubSlug = club.slug || 'no-club';
         const leagueSlug = (club.domesticLeague?.slug || 'other').toLowerCase();
 
-        const natTeam = player.activeNationalTeam || {};
-        const natSlug = natTeam.slug || '';
-        const natName = natTeam.name || '';
-
-        // Raccoglie TUTTE le partite future (sia Club sia Nazionale) con la relativa competizione esatta
+        // Estrae tutte le prossime partite direttamente da player.upcomingGames (include Club + Nazionali)
         const scheduleGames = [];
+        const rawUpcoming = Array.isArray(player.upcomingGames) ? player.upcomingGames : [];
 
-        const clubGames = Array.isArray(club.upcomingGames) ? club.upcomingGames : [];
-        clubGames.forEach(g => {
+        rawUpcoming.forEach(g => {
           if (!g || !g.date) return;
-          const isHome = g.homeTeam?.slug === clubSlug;
+          const homeSlug = g.homeTeam?.slug || '';
+          const awaySlug = g.awayTeam?.slug || '';
+          const homeName = g.homeTeam?.name || 'Casa';
+          const awayName = g.awayTeam?.name || 'Trasferta';
+
+          // Se nessuna delle due squadre coincide col clubSlug, è una partita di Nazionale!
+          const isClubMatch = clubSlug !== 'no-club' && (homeSlug === clubSlug || awaySlug === clubSlug);
+          const isNationalTeam = !isClubMatch;
+
+          let isHome = true;
+          let opponentName = awayName;
+          let opponentSlug = awaySlug;
+          let teamName = clubName;
+
+          if (isClubMatch) {
+            isHome = homeSlug === clubSlug;
+            opponentName = isHome ? awayName : homeName;
+            opponentSlug = isHome ? awaySlug : homeSlug;
+            teamName = clubName;
+          } else {
+            // Partita con la Nazionale: identifica quale delle due è la nazionale del giocatore
+            teamName = `${homeName} vs ${awayName}`;
+            opponentName = awayName;
+            isHome = true;
+          }
+
           scheduleGames.push({
             date: g.date,
             timestamp: new Date(g.date).getTime(),
-            competitionSlug: String(g.competition?.slug || '').toLowerCase(),
-            competitionName: g.competition?.displayName || g.competition?.slug || 'Club',
+            competitionSlug: String(g.competition?.slug || (isNationalTeam ? 'international' : '')).toLowerCase(),
+            competitionName: g.competition?.displayName || g.competition?.slug || (isNationalTeam ? 'Nazionale FIFA' : 'Club'),
             isHome: isHome,
-            opponentName: isHome ? (g.awayTeam?.name || 'Avversario') : (g.homeTeam?.name || 'Avversario'),
-            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
-            isNationalTeam: false,
-            teamName: clubName
-          });
-        });
-
-        const natGames = Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : [];
-        natGames.forEach(g => {
-          if (!g || !g.date) return;
-          const isHome = g.homeTeam?.slug === natSlug;
-          scheduleGames.push({
-            date: g.date,
-            timestamp: new Date(g.date).getTime(),
-            competitionSlug: String(g.competition?.slug || 'international').toLowerCase(),
-            competitionName: g.competition?.displayName || 'Nazionale',
-            isHome: isHome,
-            opponentName: isHome ? (g.awayTeam?.name || 'Nazionale') : (g.homeTeam?.name || 'Nazionale'),
-            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
-            isNationalTeam: true,
-            teamName: natName
+            opponentName: opponentName,
+            opponentSlug: opponentSlug,
+            isNationalTeam: isNationalTeam,
+            teamName: teamName
           });
         });
 
@@ -488,7 +475,6 @@ const SorareAPI = {
         const isInjured = injuries.length > 0;
         const isSuspended = suspensions.length > 0;
 
-        // Titolarità di base sulle prestazioni recenti (poi combinata con la partita valida nella GW)
         let baseFitnessTier = 'last_resort';
         let baseUnavailableReason = '';
 
@@ -496,7 +482,7 @@ const SorareAPI = {
           baseUnavailableReason = 'Infortunato (segnalato su Sorare)';
         } else if (isSuspended) {
           baseUnavailableReason = 'Squalificato';
-        } else if (!club.slug && !natSlug) {
+        } else if (!club.slug && scheduleGames.length === 0) {
           baseUnavailableReason = 'Senza club/nazionale attiva';
         } else if (l5 <= 0 && playedInLast5Games === 0) {
           baseUnavailableReason = 'Nessuna presenza nelle ultime 5 partite';
@@ -523,7 +509,6 @@ const SorareAPI = {
           pictureUrl: card.pictureUrl || player.pictureUrl || null,
           club: clubName,
           clubSlug: clubSlug,
-          nationalTeamName: natName,
           leagueSlug: leagueSlug,
           scheduleGames: scheduleGames,
           position: pos,
