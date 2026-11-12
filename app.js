@@ -1,566 +1,570 @@
-// SorareHub - Official inSeasonUntil Field, Zero-422 GW Detection & Pro-Only GraphQL Layer
-const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v11',
-  CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
+// SorareHub - Application Controller (Official inSeason Sync + Clean Summary + All 3 Counters + Instant Lineup Cards)
+const App = {
+  cards: [],
+  gameweeks: [],
+  selectedGwIndex: 0,
+  user: null,
+  currentScarcity: 'limited',
+  currentStrategy: 'floor',
+  currentCompetition: CONFIG.OFFICIAL_COMPETITIONS[0],
 
-  generateRandomString(length = 32) {
-    const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const values = crypto.getRandomValues(new Uint8Array(length));
-    return Array.from(values, v => charset[v % charset.length]).join('');
-  },
+  async init() {
+    this.injectFavicon();
+    this.injectTacticalStyles();
+    this.ensureBannerElement();
+    this.populateCompetitionDropdown();
+    this.bindEvents();
 
-  async startOAuthFlow() {
-    if (localStorage.getItem('sorare_access_token')) {
-      if (window.App && App.loadUserGallery) {
-        App.loadUserGallery(true);
-        return;
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+
+    if (code) {
+      this.notify('🔐 Autenticazione Sorare in corso...');
+      const token = await SorareAPI.handleOAuthCallback(code);
+      if (token) {
+        await this.loadUserGallery(true);
       }
+      return;
     }
 
-    const state = this.generateRandomString(16);
-    localStorage.setItem('sorare_oauth_state', state);
+    if (localStorage.getItem('sorare_access_token')) {
+      await this.loadUserGallery(false);
+    } else {
+      this.renderEmptyState();
+    }
+  },
 
-    const params = new URLSearchParams({
-      client_id: CONFIG.CLIENT_ID,
-      redirect_uri: CONFIG.REDIRECT_URI,
-      response_type: 'code',
-      scope: CONFIG.SCOPES,
-      state: state
+  injectFavicon() {
+    if (document.querySelector('link[rel="icon"]')) return;
+    const link = document.createElement('link');
+    link.rel = 'icon';
+    link.href = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">⚽</text></svg>';
+    document.head.appendChild(link);
+  },
+
+  ensureBannerElement() {
+    let banner = document.getElementById('status-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'status-banner';
+      banner.className = 'status-banner';
+      const mainContainer = document.querySelector('main') || document.body;
+      mainContainer.insertBefore(banner, mainContainer.firstChild);
+    }
+  },
+
+  updateGalleryCounters(lineupsCount = 0) {
+    const total = this.cards.length;
+    const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
+
+    const mapById = {
+      'gallery-count': total,
+      'total-cards': total,
+      'cards-count': total,
+      'card-count': total,
+      'stat-total-cards': total,
+      'in-season-count': inSeasonTotal,
+      'stat-in-season': inSeasonTotal,
+      'lineups-count': lineupsCount,
+      'stat-lineups': lineupsCount,
+      'teams-count': lineupsCount
+    };
+
+    Object.entries(mapById).forEach(([id, val]) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(val);
     });
 
-    window.location.href = `${CONFIG.AUTH_ENDPOINT}?${params.toString()}`;
+    const statCards = document.querySelectorAll('.stat-card, .kpi-card, .metric-card, .summary-card, .stat-box, .stats-grid > div, .kpi-grid > div');
+    statCards.forEach((card, idx) => {
+      const valEl = card.querySelector('.stat-val, .stat-value, .kpi-value, .count, h2, h3, span:first-child, strong');
+      if (!valEl) return;
+      const labelTxt = card.textContent.toLowerCase();
+
+      if (labelTxt.includes('in-season') || labelTxt.includes('26/27') || labelTxt.includes('stagione')) {
+        valEl.textContent = String(inSeasonTotal);
+      } else if (labelTxt.includes('squadr') || labelTxt.includes('formazion') || labelTxt.includes('lineup') || labelTxt.includes('generat')) {
+        valEl.textContent = String(lineupsCount);
+      } else if (labelTxt.includes('cart') || labelTxt.includes('galleri') || idx === 0) {
+        valEl.textContent = String(total);
+      } else if (idx === 1) {
+        valEl.textContent = String(inSeasonTotal);
+      } else if (idx === 2) {
+        valEl.textContent = String(lineupsCount);
+      }
+    });
   },
 
-  async handleOAuthCallback(code) {
-    if (!code) {
-      const urlParams = new URLSearchParams(window.location.search);
-      code = urlParams.get('code');
-    }
-
-    if (!code) {
-      return localStorage.getItem('sorare_access_token') || null;
-    }
-
-    try {
-      const bodyParams = new URLSearchParams();
-      bodyParams.append('client_id', CONFIG.CLIENT_ID);
-      bodyParams.append('grant_type', 'authorization_code');
-      bodyParams.append('code', code);
-      bodyParams.append('redirect_uri', CONFIG.REDIRECT_URI);
-
-      const response = await fetch(CONFIG.TOKEN_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: bodyParams.toString()
-      });
-
-      if (!response.ok) {
-        const errTxt = await response.text();
-        throw new Error(`Errore dal Worker (${response.status}): ${errTxt}`);
+  injectTacticalStyles() {
+    if (document.getElementById('sorarehub-tactical-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'sorarehub-tactical-styles';
+    style.textContent = `
+      #status-banner {
+        display: none;
+        width: 100%;
+        max-width: 1200px;
+        margin: 12px auto;
+        padding: 11px 16px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1.4;
+        box-sizing: border-box;
+        transition: all 0.2s ease;
       }
-
-      const tokenData = await response.json();
-      if (tokenData.access_token) {
-        localStorage.setItem('sorare_access_token', tokenData.access_token);
-        const cleanUrl = window.location.origin + window.location.pathname;
-        window.history.replaceState({}, document.title, cleanUrl);
-        return tokenData.access_token;
-      } else {
-        throw new Error('Nessun access_token nella risposta del Worker');
+      #status-banner.success {
+        display: block;
+        background: rgba(212, 175, 55, 0.14);
+        border: 1px solid rgba(212, 175, 55, 0.55);
+        color: #f3d266;
       }
-    } catch (err) {
-      console.error('Errore OAuth:', err);
-      const cleanUrl = window.location.origin + window.location.pathname;
-      window.history.replaceState({}, document.title, cleanUrl);
-      if (window.App && App.notify) {
-        App.notify('❌ ' + err.message, true);
+      #status-banner.error {
+        display: block;
+        background: rgba(220, 53, 69, 0.16);
+        border: 1px solid rgba(220, 53, 69, 0.65);
+        color: #ff8a95;
       }
-      return null;
-    }
-  },
-
-  async fetchWithRetry(url, options, maxRetries = 3) {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const res = await fetch(url, options);
-      if (res.status !== 429) {
-        return res;
+      .player-info-trigger {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 19px;
+        height: 19px;
+        margin-left: 6px;
+        border-radius: 50%;
+        background: rgba(212, 175, 55, 0.16);
+        border: 1px solid rgba(212, 175, 55, 0.65);
+        color: #f3d266;
+        font-size: 11px;
+        font-weight: 800;
+        cursor: pointer;
+        vertical-align: middle;
+        position: relative;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        transition: all 0.15s ease;
       }
-      if (attempt < maxRetries) {
-        const waitMs = 2500 * (attempt + 1);
-        if (window.App && App.notify) {
-          App.notify(`⏳ Limite richieste Sorare (429): riprovo tra ${Math.round(waitMs / 1000)}s...`);
-        }
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-      } else {
-        return res;
+      .player-info-trigger:hover,
+      .player-info-trigger.active {
+        background: #d4af37;
+        color: #111111;
+        transform: scale(1.08);
       }
-    }
-  },
-
-  // Calcola le 3 finestre Gameweek ufficiali (Ven-Lun / Mar-Gio) senza query extra 422
-  buildGameweekWindows() {
-    const now = new Date();
-    const windows = [];
-    // Ancora alla mezzanotte odierna per raggruppare la finestra corrente (Nazionali / Infrasettimanale) e le 2 successive
-    const cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-
-    for (let i = 0; i < 3; i++) {
-      const start = new Date(cursor.getTime());
-      const end = new Date(start.getTime() + 4 * 24 * 3600 * 1000 - 1000);
-      const label = i === 0 ? 'GW Corrente (Attiva)' : (i === 1 ? 'GW Prossima (+1)' : 'GW Successiva (+2)');
-      windows.push({
-        index: i,
-        gameWeek: i + 1,
-        label: label,
-        startDate: start.toISOString(),
-        endDate: end.toISOString(),
-        dateRangeText: this.formatDateRange(start, end)
-      });
-      cursor.setTime(end.getTime() + 1000);
-    }
-
-    return windows;
-  },
-
-  formatDateRange(startStr, endStr) {
-    try {
-      const s = new Date(startStr);
-      const e = new Date(endStr);
-      const opts = { day: '2-digit', month: 'short' };
-      return `${s.toLocaleDateString('it-IT', opts)} - ${e.toLocaleDateString('it-IT', opts)}`;
-    } catch (_) {
-      return '';
-    }
-  },
-
-  async fetchCurrentUserGallery(forceRefresh = false) {
-    const token = localStorage.getItem('sorare_access_token');
-    if (!token) return null;
-
-    if (!forceRefresh) {
-      try {
-        const cachedRaw = localStorage.getItem(this.CACHE_KEY);
-        if (cachedRaw) {
-          const cached = JSON.parse(cachedRaw);
-          if (cached && cached.timestamp && (Date.now() - cached.timestamp) < this.CACHE_TTL_MS && Array.isArray(cached.cards) && cached.cards.length > 0) {
-            return {
-              user: cached.user,
-              gameweeks: cached.gameweeks,
-              cards: cached.cards
-            };
-          }
-        }
-      } catch (_) {}
-    }
-
-    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
-    const gameweeks = this.buildGameweekWindows();
-
-    // Usa il campo ufficiale "inSeasonUntil" su AnyCardInterface
-    const pagedQuery = `
-      query GetCurrentUserCards($after: String) {
-        currentUser {
-          slug
-          nickname
-          cards(first: 45, after: $after, rarities: [limited, rare, super_rare, unique]) {
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
-            nodes {
-              slug
-              name
-              rarityTyped
-              seasonYear
-              inSeasonUntil
-              power
-              anyPositions
-              pictureUrl
-              ... on Card {
-                player {
-                  displayName
-                  slug
-                  birthDate
-                  pictureUrl
-                  l5: averageScore(type: LAST_FIVE_SO5_AVERAGE_SCORE)
-                  l15: averageScore(type: LAST_FIFTEEN_SO5_AVERAGE_SCORE)
-                  activeInjuries {
-                    status
-                  }
-                  activeSuspensions {
-                    reason
-                  }
-                  so5Scores(last: 5) {
-                    score
-                    decisiveScore {
-                      totalScore
-                    }
-                    playerGameStats {
-                      minsPlayed
-                      goals
-                      goalAssist
-                      cleanSheet
-                      saves
-                    }
-                  }
-                  activeClub {
-                    name
-                    slug
-                    domesticLeague {
-                      slug
-                    }
-                    upcomingGames(first: 3) {
-                      date
-                      competition {
-                        slug
-                        displayName
-                      }
-                      homeTeam {
-                        ... on Club {
-                          slug
-                          name
-                        }
-                      }
-                      awayTeam {
-                        ... on Club {
-                          slug
-                          name
-                        }
-                      }
-                    }
-                  }
-                  activeNationalTeam {
-                    name
-                    slug
-                    upcomingGames(first: 2) {
-                      date
-                      competition {
-                        slug
-                        displayName
-                      }
-                      homeTeam {
-                        ... on NationalTeam {
-                          slug
-                          name
-                        }
-                      }
-                      awayTeam {
-                        ... on NationalTeam {
-                          slug
-                          name
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+      .tactical-tooltip-box {
+        display: none;
+        position: absolute;
+        left: 0;
+        top: calc(100% + 8px);
+        width: 285px;
+        max-width: 82vw;
+        background: #141519;
+        border: 1px solid rgba(212, 175, 55, 0.7);
+        border-radius: 10px;
+        padding: 11px 13px;
+        color: #ececec;
+        font-size: 12px;
+        font-weight: 400;
+        line-height: 1.48;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.88);
+        z-index: 9999;
+        text-align: left;
+        white-space: normal;
+        pointer-events: auto;
+      }
+      .player-info-trigger:hover .tactical-tooltip-box,
+      .player-info-trigger.active .tactical-tooltip-box {
+        display: block;
+      }
+      .tactical-tooltip-title {
+        display: block;
+        color: #f3d266;
+        font-weight: 700;
+        font-size: 11.5px;
+        margin-bottom: 5px;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+      }
+      .gw-selector-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(212, 175, 55, 0.12);
+        border: 1px solid rgba(212, 175, 55, 0.45);
+        border-radius: 8px;
+        padding: 5px 10px;
+        margin-top: 8px;
+        color: #f3d266;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .gw-selector-pill select {
+        background: #141519;
+        color: #f3d266;
+        border: 1px solid rgba(212, 175, 55, 0.4);
+        border-radius: 5px;
+        padding: 3px 6px;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
       }
     `;
+    document.head.appendChild(style);
+  },
 
-    let allCards = [];
-    let hasNext = true;
-    let cursor = null;
-    let userProfile = null;
-    let batchIndex = 0;
+  getCompetitionSelectEl() {
+    return (
+      document.getElementById('comp-select') ||
+      document.getElementById('competition-select') ||
+      document.getElementById('tournament-select') ||
+      document.querySelector('select')
+    );
+  },
 
-    while (hasNext && batchIndex < 20) {
-      batchIndex++;
+  getLineupsGridEl() {
+    return (
+      document.getElementById('lineups-grid') ||
+      document.getElementById('lineups-container') ||
+      document.getElementById('results-grid') ||
+      document.querySelector('.lineups-grid, .lineups-container, .results-grid')
+    );
+  },
 
-      const res = await this.fetchWithRetry(workerGraphqlEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          query: pagedQuery,
-          variables: { after: cursor }
-        })
-      }, 3);
-
-      if (!res || !res.ok) {
-        const errBody = res ? await res.text() : 'Nessuna risposta';
-        if (res && res.status === 401) {
-          localStorage.removeItem('sorare_access_token');
-        }
-        throw new Error(`Errore API Sorare (${res ? res.status : 'NET'}): ${errBody}`);
-      }
-
-      const json = await res.json();
-      if (json.errors && json.errors.length > 0) {
-        console.error('Errore GraphQL:', json.errors);
-        throw new Error(json.errors[0].message);
-      }
-
-      const currentUser = json.data?.currentUser;
-      if (!currentUser) break;
-
-      if (!userProfile) {
-        userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
-      }
-
-      const connection = currentUser.cards;
-      const nodes = connection?.nodes || [];
-      if (nodes.length === 0) break;
-
-      const proNodes = nodes.filter(n => String(n?.rarityTyped || '').toLowerCase() !== 'common');
-      allCards = allCards.concat(proNodes);
-
-      const loginBtnText = document.getElementById('login-btn-text');
-      if (loginBtnText) {
-        loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
-      }
-      if (window.App && App.notify) {
-        App.notify(`📥 Analisi Opta: ${allCards.length} carte Pro...`);
-      }
-
-      const pageInfo = connection?.pageInfo;
-      hasNext = Boolean(pageInfo?.hasNextPage) && Boolean(pageInfo?.endCursor);
-      cursor = pageInfo?.endCursor || null;
-
-      if (!hasNext || !cursor) break;
-
-      await new Promise(resolve => setTimeout(resolve, 450));
+  syncStateFromDOM() {
+    const compSelect = this.getCompetitionSelectEl();
+    if (compSelect && compSelect.value) {
+      const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === compSelect.value);
+      if (found) this.currentCompetition = found;
     }
 
-    const enriched = this.enrichCardsWithRealOptaData(allCards)
-      .filter(c => c.scarcity !== 'common');
+    const activeRarityBtn = document.querySelector('[data-scarcity].active, [data-rarity].active');
+    if (activeRarityBtn) {
+      const r = (activeRarityBtn.dataset.scarcity || activeRarityBtn.dataset.rarity || '').toLowerCase();
+      if (r) this.currentScarcity = r;
+    }
+
+    const activeStratBtn = document.querySelector('[data-strategy].active');
+    if (activeStratBtn) {
+      const s = (activeStratBtn.dataset.strategy || '').toLowerCase();
+      if (s) this.currentStrategy = s;
+    }
+  },
+
+  renderGwSelector() {
+    if (!this.gameweeks || this.gameweeks.length === 0) return;
+
+    let container = document.getElementById('gw-selector-container');
+    if (!container) {
+      const compSelect = this.getCompetitionSelectEl();
+      const targetParent = (compSelect && compSelect.parentElement) || document.getElementById('status-banner')?.parentElement;
+      if (!targetParent) return;
+      container = document.createElement('div');
+      container.id = 'gw-selector-container';
+      container.className = 'gw-selector-pill';
+      targetParent.appendChild(container);
+    }
+
+    const optionsHtml = this.gameweeks
+      .map((gw, idx) => `<option value="${idx}" ${idx === this.selectedGwIndex ? 'selected' : ''}>${gw.label} (${gw.dateRangeText})</option>`)
+      .join('');
+
+    container.innerHTML = `
+      <span>📅 Gameweek:</span>
+      <select id="gw-select">${optionsHtml}</select>
+    `;
+
+    const gwSelect = document.getElementById('gw-select');
+    if (gwSelect) {
+      gwSelect.addEventListener('change', (e) => {
+        this.selectedGwIndex = Number(e.target.value) || 0;
+        this.runOptimizer();
+      });
+    }
+  },
+
+  async loadUserGallery(forceRefresh = false) {
+    const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
+    const loginBtnText = document.getElementById('login-btn-text') || loginBtn;
+
+    if (loginBtn) loginBtn.disabled = true;
+    if (loginBtnText) loginBtnText.textContent = '⏳ Sincronizzazione GW & Opta...';
+    this.notify('⏳ Connessione a Sorare in corso: scarico carte Pro, Gameweek e statistiche Opta...');
 
     try {
-      localStorage.setItem(this.CACHE_KEY, JSON.stringify({
-        timestamp: Date.now(),
-        user: userProfile,
-        gameweeks: gameweeks,
-        cards: enriched
-      }));
-    } catch (_) {}
+      const data = await SorareAPI.fetchCurrentUserGallery(forceRefresh);
+      if (data && data.cards) {
+        this.user = data.user;
+        this.cards = data.cards;
+        this.gameweeks = data.gameweeks || [];
+        this.selectedGwIndex = 0;
 
-    return {
-      user: userProfile,
-      gameweeks: gameweeks,
-      cards: enriched
-    };
+        if (loginBtnText) {
+          loginBtnText.textContent = `✅ @${this.user?.nickname || 'Manager'} (${this.cards.length} carte Pro)`;
+        }
+        if (loginBtn) {
+          loginBtn.classList.add('connected');
+          loginBtn.disabled = false;
+        }
+
+        this.syncStateFromDOM();
+        this.renderGwSelector();
+        this.runOptimizer();
+      }
+    } catch (err) {
+      console.error('Errore fetch galleria:', err);
+      if (loginBtn) loginBtn.disabled = false;
+      if (loginBtnText) loginBtnText.textContent = 'Connetti Sorare';
+      this.notify('❌ Errore caricamento galleria: ' + err.message, true);
+    }
   },
 
-  enrichCardsWithRealOptaData(rawCards) {
-    const nowMs = Date.now();
+  populateCompetitionDropdown() {
+    const select = this.getCompetitionSelectEl();
+    if (!select) return;
 
-    return (rawCards || [])
-      .filter(c => c && (c.name || c.player?.displayName))
-      .map((card, index) => {
-        const player = card.player || {};
-        const playerName = player.displayName || card.name || 'Calciatore';
-        const playerSlug = player.slug || card.slug || `slug_${index}`;
-        const rawPos = (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
-        const pos = this.normalizePosition(rawPos);
+    select.innerHTML = CONFIG.OFFICIAL_COMPETITIONS.map(comp => {
+      const badge = comp.format === 'SO7' ? '[SO7 Classic]' : '[SO5 In-Season]';
+      return `<option value="${comp.id}">${badge} ${comp.name}</option>`;
+    }).join('');
+  },
 
-        const club = player.activeClub || {};
-        const clubName = club.name || 'Svincolato / N.D.';
-        const clubSlug = club.slug || 'no-club';
-        const leagueSlug = (club.domesticLeague?.slug || 'other').toLowerCase();
+  bindEvents() {
+    const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
+    if (loginBtn) {
+      loginBtn.addEventListener('click', () => SorareAPI.startOAuthFlow());
+    }
 
-        const natTeam = player.activeNationalTeam || {};
-        const natSlug = natTeam.slug || '';
-        const natName = natTeam.name || '';
-
-        const scheduleGames = [];
-
-        const clubGames = Array.isArray(club.upcomingGames) ? club.upcomingGames : [];
-        clubGames.forEach(g => {
-          if (!g || !g.date) return;
-          const isHome = g.homeTeam?.slug === clubSlug;
-          scheduleGames.push({
-            date: g.date,
-            timestamp: new Date(g.date).getTime(),
-            competitionSlug: String(g.competition?.slug || '').toLowerCase(),
-            competitionName: g.competition?.displayName || g.competition?.slug || 'Club',
-            isHome: isHome,
-            opponentName: isHome ? (g.awayTeam?.name || 'Avversario') : (g.homeTeam?.name || 'Avversario'),
-            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
-            isNationalTeam: false,
-            teamName: clubName
-          });
-        });
-
-        const natGames = Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : [];
-        natGames.forEach(g => {
-          if (!g || !g.date) return;
-          const isHome = g.homeTeam?.slug === natSlug;
-          const oppName = isHome ? (g.awayTeam?.name || 'Nazionale') : (g.homeTeam?.name || 'Nazionale');
-          scheduleGames.push({
-            date: g.date,
-            timestamp: new Date(g.date).getTime(),
-            competitionSlug: String(g.competition?.slug || 'international').toLowerCase(),
-            competitionName: g.competition?.displayName || 'Nazionale FIFA',
-            isHome: isHome,
-            opponentName: oppName,
-            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
-            isNationalTeam: true,
-            teamName: `${natName || 'Nazionale'} vs ${oppName}`
-          });
-        });
-
-        scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
-
-        const sYear = Number(card.seasonYear || 0);
-        // Controlla la scadenza ufficiale Sorare "inSeasonUntil" (se futura -> carta In-Season attiva)
-        const inSeasonUntilMs = card.inSeasonUntil ? new Date(card.inSeasonUntil).getTime() : 0;
-        const isInSeason = inSeasonUntilMs > 0 ? (inSeasonUntilMs > nowMs) : (sYear >= 2026);
-
-        const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0;
-        const u23Cutoff = new Date('2003-07-01').getTime();
-        const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
-
-        const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
-        const last5Window = allRecentScores.slice(0, 5);
-        const playedMatchesAll = allRecentScores.filter(s => {
-          if (!s) return false;
-          const sc = typeof s.score === 'number' ? s.score : 0;
-          const mins = typeof s.playerGameStats?.minsPlayed === 'number' ? s.playerGameStats.minsPlayed : 0;
-          return sc > 0 || mins > 0;
-        });
-
-        const apiL5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
-        const computedL5 = playedMatchesAll.length > 0
-          ? Number((playedMatchesAll.reduce((acc, m) => acc + (m.score || 0), 0) / playedMatchesAll.length).toFixed(1))
-          : 0;
-        const l5 = computedL5 > 0 ? computedL5 : apiL5;
-
-        const apiL15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0;
-        const l15 = apiL15 > 0 ? Math.max(apiL15, Number(((apiL15 + computedL5) / 2).toFixed(1))) : computedL5;
-
-        let playedInLast5Games = 0;
-        let starterCount = 0;
-        let totalMins = 0;
-        let sumAas = 0;
-        let sumDecisive = 0;
-        let maxRecentScore = 0;
-        let validScoreValues = [];
-
-        let totalGoals = 0;
-        let totalAssists = 0;
-        let totalCleanSheets = 0;
-        let totalSaves = 0;
-
-        last5Window.forEach(s => {
-          if (!s) return;
-          const sc = typeof s.score === 'number' ? s.score : 0;
-          const stats = s.playerGameStats || {};
-          const mins = typeof stats.minsPlayed === 'number' ? stats.minsPlayed : (sc > 0 ? 60 : 0);
-
-          if (mins > 0 || sc > 0) {
-            playedInLast5Games++;
-            totalMins += mins;
-            if (mins >= 55) starterCount++;
-            validScoreValues.push(sc);
-            if (sc > maxRecentScore) maxRecentScore = sc;
-
-            const dec = typeof s.decisiveScore?.totalScore === 'number' ? s.decisiveScore.totalScore : 0;
-            const aas = Math.max(0, Number((sc - dec).toFixed(1)));
-            sumAas += aas;
-            sumDecisive += dec;
-
-            totalGoals += stats.goals || 0;
-            totalAssists += stats.goalAssist || 0;
-            totalCleanSheets += stats.cleanSheet || 0;
-            totalSaves += stats.saves || 0;
-          }
-        });
-
-        const avgMins = playedInLast5Games > 0 ? Math.round(totalMins / playedInLast5Games) : 0;
-        const avgAas = playedInLast5Games > 0 ? Number((sumAas / playedInLast5Games).toFixed(1)) : 0;
-        const avgDecisive = playedInLast5Games > 0 ? Number((sumDecisive / playedInLast5Games).toFixed(1)) : 0;
-
-        let stdDev = 0;
-        if (validScoreValues.length > 1) {
-          const mean = validScoreValues.reduce((a, b) => a + b, 0) / validScoreValues.length;
-          const variance = validScoreValues.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / validScoreValues.length;
-          stdDev = Number(Math.sqrt(variance).toFixed(1));
+    const compSelect = this.getCompetitionSelectEl();
+    if (compSelect) {
+      compSelect.addEventListener('change', (e) => {
+        const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === e.target.value);
+        if (found) {
+          this.currentCompetition = found;
+          this.runOptimizer();
         }
-
-        const injuries = Array.isArray(player.activeInjuries) ? player.activeInjuries : [];
-        const suspensions = Array.isArray(player.activeSuspensions) ? player.activeSuspensions : [];
-        const isInjured = injuries.length > 0;
-        const isSuspended = suspensions.length > 0;
-
-        let baseFitnessTier = 'last_resort';
-        let baseUnavailableReason = '';
-
-        if (isInjured) {
-          baseUnavailableReason = 'Infortunato (segnalato su Sorare)';
-        } else if (isSuspended) {
-          baseUnavailableReason = 'Squalificato';
-        } else if (!club.slug && !natSlug) {
-          baseUnavailableReason = 'Senza club/nazionale attiva';
-        } else if (l5 <= 0 && playedInLast5Games === 0) {
-          baseUnavailableReason = 'Nessuna presenza nelle ultime 5 partite';
-        } else if (starterCount >= 3 || (playedInLast5Games >= 3 && avgMins >= 60)) {
-          baseFitnessTier = 'starter';
-        } else if (playedInLast5Games >= 1 && l5 > 0) {
-          baseFitnessTier = 'rotation';
-        } else {
-          baseUnavailableReason = 'Inattivo / fuori dalle rotazioni recenti';
-        }
-
-        const isSetPieceTaker = pos !== 'GK' && playedInLast5Games > 0 && (avgAas >= 26 || totalAssists >= 2);
-        const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedInLast5Games > 0 && (avgAas >= 22);
-        const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedInLast5Games > 0 && (avgAas >= 23);
-        const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && playedInLast5Games > 0 && ((totalGoals + totalAssists) >= 2 || avgDecisive >= 28);
-
-        const rawPower = parseFloat(card.power) || (isInSeason ? 1.05 : 1.00);
-        const totalBonusPct = Math.round((rawPower - 1) * 100);
-
-        return {
-          id: card.slug || `c_${index}`,
-          playerSlug: playerSlug,
-          name: playerName,
-          pictureUrl: card.pictureUrl || player.pictureUrl || null,
-          club: clubName,
-          clubSlug: clubSlug,
-          leagueSlug: leagueSlug,
-          scheduleGames: scheduleGames,
-          position: pos,
-          scarcity: (card.rarityTyped || 'limited').toLowerCase(),
-          seasonYear: sYear,
-          isInSeason: isInSeason,
-          isU23: isU23,
-          l5: l5,
-          l15: l15,
-          avgAas: avgAas,
-          avgDecisive: avgDecisive,
-          maxRecentScore: Math.round(maxRecentScore),
-          stdDev: stdDev,
-          playedCount: playedInLast5Games,
-          starterCount: starterCount,
-          avgMins: avgMins,
-          baseFitnessTier: baseFitnessTier,
-          baseUnavailableReason: baseUnavailableReason,
-          tacticalTraits: {
-            setPiece: isSetPieceTaker,
-            aerial: isAerialThreat,
-            ballWinner: isBallWinner,
-            clinical: isClinicalFinisher,
-            cleanSheets: totalCleanSheets,
-            goals: totalGoals,
-            assists: totalAssists,
-            saves: totalSaves
-          },
-          bonusPct: totalBonusPct,
-          powerMultiplier: 1 + (totalBonusPct / 100)
-        };
       });
+    }
+
+    document.querySelectorAll('[data-scarcity], [data-rarity]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const target = e.currentTarget;
+        const val = (target.dataset.scarcity || target.dataset.rarity || '').toLowerCase();
+        if (!val) return;
+        const parent = target.parentElement;
+        if (parent) {
+          parent.querySelectorAll('.active').forEach(b => b.classList.remove('active'));
+        }
+        target.classList.add('active');
+        this.currentScarcity = val;
+        this.runOptimizer();
+      });
+    });
+
+    document.querySelectorAll('[data-strategy]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const target = e.currentTarget;
+        const val = (target.dataset.strategy || '').toLowerCase();
+        if (!val) return;
+        const parent = target.parentElement;
+        if (parent) {
+          parent.querySelectorAll('.active').forEach(b => b.classList.remove('active'));
+        }
+        target.classList.add('active');
+        this.currentStrategy = val;
+        this.runOptimizer();
+      });
+    });
+
+    document.addEventListener('click', (e) => {
+      const trigger = e.target.closest('.player-info-trigger');
+      if (trigger) {
+        e.stopPropagation();
+        const wasActive = trigger.classList.contains('active');
+        document.querySelectorAll('.player-info-trigger.active').forEach(el => el.classList.remove('active'));
+        if (!wasActive) trigger.classList.add('active');
+        return;
+      }
+
+      if (!e.target.closest('.tactical-tooltip-box')) {
+        document.querySelectorAll('.player-info-trigger.active').forEach(el => el.classList.remove('active'));
+      }
+
+      const btn = e.target.closest('button');
+      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn') {
+        const txt = (btn.textContent || '').toLowerCase();
+        if (txt.includes('genera') || txt.includes('ottimizz') || txt.includes('calcola') || btn.id === 'generate-btn' || btn.id === 'optimize-btn') {
+          this.syncStateFromDOM();
+          this.runOptimizer();
+        }
+      }
+    });
   },
 
-  normalizePosition(rawPos) {
-    const p = String(rawPos || '').toUpperCase();
-    if (p.includes('GOAL') || p === 'GK') return 'GK';
-    if (p.includes('DEF') || p === 'DF') return 'DEF';
-    if (p.includes('MID') || p === 'MF') return 'MID';
-    return 'FWD';
+  runOptimizer() {
+    if (!this.cards || this.cards.length === 0) {
+      this.notify('⚠️ Nessuna carta sincronizzata: clicca prima su Connetti Sorare in alto a destra.', true);
+      this.renderEmptyState();
+      return;
+    }
+
+    if (!window.OptimizerEngine) {
+      this.notify('❌ Errore caricamento OptimizerEngine (ricarica con Cmd+Shift+R)', true);
+      return;
+    }
+
+    this.syncStateFromDOM();
+    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+    const lineups = OptimizerEngine.buildCascadePortfolio(
+      this.cards,
+      this.currentCompetition,
+      this.currentScarcity,
+      this.currentStrategy,
+      selectedGw
+    );
+
+    this.updateGalleryCounters(lineups.length);
+    this.renderLineups(lineups, selectedGw);
+  },
+
+  renderLineups(lineups, selectedGw) {
+    let grid = this.getLineupsGridEl();
+    if (!grid) {
+      grid = document.createElement('div');
+      grid.id = 'lineups-grid';
+      grid.className = 'lineups-grid';
+      const banner = document.getElementById('status-banner');
+      if (banner && banner.parentElement) {
+        banner.parentElement.appendChild(grid);
+      } else {
+        document.body.appendChild(grid);
+      }
+    }
+
+    const summary =
+      document.getElementById('portfolio-summary') ||
+      document.getElementById('results-summary') ||
+      document.querySelector('.portfolio-summary');
+
+    const gwInfoStr = selectedGw ? ` • ${selectedGw.label} (${selectedGw.dateRangeText})` : '';
+    const rarityCards = this.cards.filter(c => c.scarcity === this.currentScarcity.toLowerCase());
+    const inSeasonInRarity = rarityCards.filter(c => c.isInSeason).length;
+
+    if (!lineups || lineups.length === 0) {
+      const reasonMsg = `⚠️ 0 formazioni generate per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Hai ${rarityCards.length} carte ${this.currentScarcity.toUpperCase()} (${inSeasonInRarity} In-Season).`;
+      this.notify(reasonMsg, true);
+
+      if (summary) {
+        summary.innerHTML = reasonMsg;
+      }
+      grid.innerHTML = `
+        <div class="empty-state">
+          <p><strong>${reasonMsg}</strong></p>
+          <p>Verifica di avere almeno 1 GK, 1 DEF, 1 MID, 1 FWD e 1 EXTRA eleggibili per questo torneo.</p>
+        </div>
+      `;
+      return;
+    }
+
+    this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
+
+    if (summary) {
+      summary.innerHTML = `
+        <strong>${lineups.length} Formazioni Ottimizzate</strong> per <strong>${this.currentCompetition.name}</strong> (${this.currentScarcity.toUpperCase()})${gwInfoStr}
+      `;
+    }
+
+    grid.innerHTML = lineups.map(lineup => {
+      const formatBadge = lineup.format === 'SO7'
+        ? `<span class="badge-so7">SO7 • 7 Titolari (Classic)</span>`
+        : `<span class="badge-so5">SO5 • ${lineup.inSeasonCount}/5 In-Season</span>`;
+
+      const playersHtml = lineup.starters.map(p => {
+        const capBadge = p.isCaptain ? `<span class="cap-badge">C +50%</span>` : '';
+        const seasonBadge = p.isInSeason
+          ? `<span class="season-tag in-season">26/27</span>`
+          : `<span class="season-tag classic">CLASSIC</span>`;
+
+        const statusBadge = p.isLastResort
+          ? `<span class="status-tag last-resort" title="${this.escapeHtml(p.unavailableReason)}">⚠️ RISERVA</span>`
+          : (p.availabilityTier === 'rotation'
+            ? `<span class="status-tag xi-ok" style="opacity:0.85;">ROT</span>`
+            : `<span class="status-tag xi-ok">XI</span>`);
+
+        const isNat = p.activeMatch?.isNationalTeam === true;
+        const matchLine = isNat
+          ? `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`
+          : `${p.isHome === true ? '🏠' : (p.isHome === false ? '✈️' : '⚠️')} vs ${this.escapeHtml(p.opponentName)}`;
+
+        const safeInsight = this.escapeHtml(p.matchupInsight || '');
+        const safeName = this.escapeHtml(p.name);
+
+        return `
+          <div class="player-row ${p.isCaptain ? 'captain-row' : ''} ${p.isLastResort ? 'last-resort-row' : ''}">
+            <div class="pos-pill pos-${p.slotRole.toLowerCase()}">${p.slotRole}</div>
+            <div class="player-meta">
+              <div class="player-name">
+                ${safeName} ${capBadge} ${seasonBadge} ${statusBadge}
+                <span class="player-info-trigger" tabindex="0" aria-label="Analisi tattica ${safeName}">?
+                  <span class="tactical-tooltip-box">
+                    <span class="tactical-tooltip-title">Analisi Matchup • ${safeName}</span>
+                    ${safeInsight}
+                  </span>
+                </span>
+              </div>
+              <div class="player-sub">${this.escapeHtml(p.club)} • ${matchLine} • L15: ${p.l15} • L5: ${p.l5} • Bonus +${p.bonusPct}%</div>
+            </div>
+            <div class="player-score">${p.projectedScore}<span>pt</span></div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="lineup-card">
+          <div class="lineup-header">
+            <div>
+              <div class="lineup-rank">${lineup.rankLabel}</div>
+              <div class="lineup-comp">${this.currentCompetition.name}</div>
+            </div>
+            <div class="lineup-total">
+              <div class="total-val">${lineup.totalProjected}</div>
+              <div class="total-lbl">EV PROIETTATO</div>
+            </div>
+          </div>
+          <div class="lineup-badges">${formatBadge}</div>
+          <div class="lineup-players">${playersHtml}</div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  },
+
+  renderEmptyState() {
+    const grid = this.getLineupsGridEl();
+    if (grid) {
+      grid.innerHTML = `
+        <div class="empty-state">
+          <p>Connetti il tuo account <strong>Sorare</strong> in alto a destra per sincronizzare automaticamente tutte le tue carte e calcolare le formazioni ottimali per ogni torneo.</p>
+        </div>
+      `;
+    }
+  },
+
+  notify(msg, isError = false) {
+    this.ensureBannerElement();
+    const banner = document.getElementById('status-banner');
+    if (!banner) return;
+    banner.textContent = msg;
+    banner.className = isError ? 'status-banner error' : 'status-banner success';
+    banner.style.display = 'block';
   }
 };
 
-window.SorareAPI = SorareAPI;
+document.addEventListener('DOMContentLoaded', () => App.init());
+window.App = App;
