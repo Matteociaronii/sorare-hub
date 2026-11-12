@@ -1,5 +1,8 @@
-// SorareHub - Real GraphQL SO5 Gameweeks, Direct Player UpcomingGames (Club + National Team) & Opta Layer
+// SorareHub - Rate-Limit Safe GraphQL Layer (100 cards/page, Auto-Retry 429, 15-min Cache)
 const SorareAPI = {
+  CACHE_KEY: 'sorarehub_gallery_cache_v3',
+  CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
+
   generateRandomString(length = 32) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     const values = crypto.getRandomValues(new Uint8Array(length));
@@ -9,7 +12,7 @@ const SorareAPI = {
   async startOAuthFlow() {
     if (localStorage.getItem('sorare_access_token')) {
       if (window.App && App.loadUserGallery) {
-        App.loadUserGallery();
+        App.loadUserGallery(true);
         return;
       }
     }
@@ -77,6 +80,24 @@ const SorareAPI = {
     }
   },
 
+  async fetchWithRetry(url, options, maxRetries = 3) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const res = await fetch(url, options);
+      if (res.status !== 429) {
+        return res;
+      }
+      if (attempt < maxRetries) {
+        const waitMs = 2500 * (attempt + 1);
+        if (window.App && App.notify) {
+          App.notify(`⏳ Limite richieste Sorare (429): riprovo tra ${Math.round(waitMs / 1000)}s...`);
+        }
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+      } else {
+        return res;
+      }
+    }
+  },
+
   async fetchActiveGameweeks(workerGraphqlEndpoint, token) {
     const gwQuery = `
       query GetUpcomingGameweeks {
@@ -97,16 +118,16 @@ const SorareAPI = {
     `;
 
     try {
-      const res = await fetch(workerGraphqlEndpoint, {
+      const res = await this.fetchWithRetry(workerGraphqlEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ query: gwQuery })
-      });
+      }, 2);
 
-      if (!res.ok) return this.buildFallbackGameweeks();
+      if (!res || !res.ok) return this.buildFallbackGameweeks();
       const json = await res.json();
       const nodes = json.data?.football?.so5?.so5Fixtures?.nodes || [];
 
@@ -159,20 +180,39 @@ const SorareAPI = {
     }
   },
 
-  async fetchCurrentUserGallery() {
+  async fetchCurrentUserGallery(forceRefresh = false) {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
+
+    // Usa cache locale se fresca (< 15 min) per evitare chiamate ripetute e 429
+    if (!forceRefresh) {
+      try {
+        const cachedRaw = localStorage.getItem(this.CACHE_KEY);
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          if (cached && cached.timestamp && (Date.now() - cached.timestamp) < this.CACHE_TTL_MS && Array.isArray(cached.cards) && cached.cards.length > 0) {
+            return {
+              user: cached.user,
+              gameweeks: cached.gameweeks,
+              cards: cached.cards
+            };
+          }
+        }
+      } catch (_) {}
+    }
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
     const gameweeks = await this.fetchActiveGameweeks(workerGraphqlEndpoint, token);
 
-    // Interroga direttamente player.upcomingGames(first: 5) che include SIA Club SIA Nazionali
+    await new Promise(resolve => setTimeout(resolve, 400));
+
+    // Batch da 100 carte per ridurre a 3-4 il numero totale di richieste HTTP
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
           slug
           nickname
-          cards(first: 40, after: $after) {
+          cards(first: 100, after: $after) {
             pageInfo {
               hasNextPage
               endCursor
@@ -263,10 +303,10 @@ const SorareAPI = {
     let userProfile = null;
     let batchIndex = 0;
 
-    while (hasNext && batchIndex < 35) {
+    while (hasNext && batchIndex < 15) {
       batchIndex++;
 
-      const res = await fetch(workerGraphqlEndpoint, {
+      const res = await this.fetchWithRetry(workerGraphqlEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -276,14 +316,14 @@ const SorareAPI = {
           query: pagedQuery,
           variables: { after: cursor }
         })
-      });
+      }, 3);
 
-      if (!res.ok) {
-        const errBody = await res.text();
-        if (res.status === 401) {
+      if (!res || !res.ok) {
+        const errBody = res ? await res.text() : 'Nessuna risposta';
+        if (res && res.status === 401) {
           localStorage.removeItem('sorare_access_token');
         }
-        throw new Error(`Errore API Sorare (${res.status}): ${errBody}`);
+        throw new Error(`Errore API Sorare (${res ? res.status : 'NET'}): ${errBody}`);
       }
 
       const json = await res.json();
@@ -319,13 +359,24 @@ const SorareAPI = {
 
       if (!hasNext || !cursor) break;
 
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise(resolve => setTimeout(resolve, 650));
     }
+
+    const enriched = this.enrichCardsWithRealOptaData(allCards);
+
+    try {
+      localStorage.setItem(this.CACHE_KEY, JSON.stringify({
+        timestamp: Date.now(),
+        user: userProfile,
+        gameweeks: gameweeks,
+        cards: enriched
+      }));
+    } catch (_) {}
 
     return {
       user: userProfile,
       gameweeks: gameweeks,
-      cards: this.enrichCardsWithRealOptaData(allCards)
+      cards: enriched
     };
   },
 
@@ -344,7 +395,6 @@ const SorareAPI = {
         const clubSlug = club.slug || 'no-club';
         const leagueSlug = (club.domesticLeague?.slug || 'other').toLowerCase();
 
-        // Estrae tutte le prossime partite direttamente da player.upcomingGames (include Club + Nazionali)
         const scheduleGames = [];
         const rawUpcoming = Array.isArray(player.upcomingGames) ? player.upcomingGames : [];
 
@@ -355,7 +405,6 @@ const SorareAPI = {
           const homeName = g.homeTeam?.name || 'Casa';
           const awayName = g.awayTeam?.name || 'Trasferta';
 
-          // Se nessuna delle due squadre coincide col clubSlug, è una partita di Nazionale!
           const isClubMatch = clubSlug !== 'no-club' && (homeSlug === clubSlug || awaySlug === clubSlug);
           const isNationalTeam = !isClubMatch;
 
@@ -370,7 +419,6 @@ const SorareAPI = {
             opponentSlug = isHome ? awaySlug : homeSlug;
             teamName = clubName;
           } else {
-            // Partita con la Nazionale: identifica quale delle due è la nazionale del giocatore
             teamName = `${homeName} vs ${awayName}`;
             opponentName = awayName;
             isHome = true;
@@ -398,7 +446,6 @@ const SorareAPI = {
         const u23Cutoff = new Date('2003-07-01').getTime();
         const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
 
-        // Analisi reale partite SO5 (esclude i DNP come sul sito ufficiale Sorare)
         const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
         const last5Window = allRecentScores.slice(0, 5);
         const playedMatchesAll = allRecentScores.filter(s => {
