@@ -1,4 +1,4 @@
-// SorareHub - Predictive Opta Engine, Global Portfolio Solver & Tactical Matchup Analyzer
+// SorareHub - Fast Deterministic Opta Engine & Tactical Matchup Analyzer
 const OptimizerEngine = {
   CAPTAIN_MULTIPLIER: 1.50,
 
@@ -63,9 +63,9 @@ const OptimizerEngine = {
     ];
 
     let teamIdx = 0;
-    while (teamIdx < 15) {
+    while (teamIdx < 12) {
       const available = pool.filter(c => !usedCardIds.has(c.id));
-      const lineup = this.solveOptimalLineup(available, competition, strategy);
+      const lineup = this.solveFastLineup(available, competition, strategy);
       if (!lineup) break;
 
       const starters = lineup.starters.map(p => ({ ...p, isCaptain: false }));
@@ -95,18 +95,104 @@ const OptimizerEngine = {
     return lineups;
   },
 
-  hasDistinctPlayers(team) {
-    const seenCardIds = new Set();
-    const seenPlayerSlugs = new Set();
+  getPlayerKey(card) {
+    return String(card.playerSlug || card.name || card.id).toLowerCase().trim();
+  },
 
-    for (const p of team) {
-      if (seenCardIds.has(p.id)) return false;
-      const pKey = (p.playerSlug || p.name || p.id).toLowerCase().trim();
-      if (seenPlayerSlugs.has(pKey)) return false;
-      seenCardIds.add(p.id);
-      seenPlayerSlugs.add(pKey);
+  // Costruzione rapida O(N) senza cicli nidificati pesanti: zero blocchi UI
+  solveFastLineup(pool, competition, strategy) {
+    if (competition.format === 'SO7') {
+      return this.solveFastSO7(pool, strategy);
     }
-    return true;
+    return this.solveFastSO5(pool, competition.inSeasonRequired || 0);
+  },
+
+  solveFastSO5(pool, minInSeason) {
+    const pickBestTeam = (sourcePool) => {
+      const usedSlugs = new Set();
+      const pick = (pos) => {
+        const found = sourcePool.find(c => c.position === pos && !usedSlugs.has(this.getPlayerKey(c)));
+        if (found) usedSlugs.add(this.getPlayerKey(found));
+        return found;
+      };
+
+      const gk = pick('GK');
+      const def = pick('DEF');
+      const mid = pick('MID');
+      const fwd = pick('FWD');
+      if (!gk || !def || !mid || !fwd) return null;
+
+      const extra = sourcePool.find(c => c.position !== 'GK' && !usedSlugs.has(this.getPlayerKey(c)));
+      if (!extra) return null;
+
+      return [
+        { ...gk, slotRole: 'GK' },
+        { ...def, slotRole: 'DEF' },
+        { ...mid, slotRole: 'MID' },
+        { ...fwd, slotRole: 'FWD' },
+        { ...extra, slotRole: 'EXTRA' }
+      ];
+    };
+
+    // Tentativo 1: prende i migliori assoluti rispettando playerSlug univoci
+    let team = pickBestTeam(pool);
+    if (!team) return null;
+
+    if (team.filter(p => p.isInSeason).length >= minInSeason) {
+      return { starters: team };
+    }
+
+    // Tentativo 2: se mancano In-Season, dà priorità alle carte In-Season mantenendo i Classic solo dove mancano In-Season
+    const inSeasonFirstPool = [
+      ...pool.filter(c => c.isInSeason),
+      ...pool.filter(c => !c.isInSeason)
+    ];
+    team = pickBestTeam(inSeasonFirstPool);
+    if (team && team.filter(p => p.isInSeason).length >= minInSeason) {
+      return { starters: team };
+    }
+
+    return null;
+  },
+
+  solveFastSO7(pool, strategy) {
+    const usedSlugs = new Set();
+    const pick = (pos) => {
+      const found = pool.find(c => c.position === pos && !usedSlugs.has(this.getPlayerKey(c)));
+      if (found) usedSlugs.add(this.getPlayerKey(found));
+      return found;
+    };
+
+    const gk = pick('GK');
+    const d1 = pick('DEF');
+    const d2 = pick('DEF');
+    const m1 = pick('MID');
+    const m2 = pick('MID');
+    const fwd = pick('FWD');
+
+    if (!gk || !d1 || !d2 || !m1 || !m2 || !fwd) return null;
+
+    // Cerca il miglior EXTRA evitando duplicati playerSlug e conflitti contro il proprio GK
+    const extraCandidates = pool.filter(c => c.position !== 'GK' && !usedSlugs.has(this.getPlayerKey(c)));
+    if (extraCandidates.length === 0) return null;
+
+    let bestExtra = extraCandidates[0];
+    if (gk.clubSlug !== 'no-club') {
+      const safeExtra = extraCandidates.find(e => e.opponentSlug !== gk.clubSlug);
+      if (safeExtra) bestExtra = safeExtra;
+    }
+
+    return {
+      starters: [
+        { ...gk, slotRole: 'GK' },
+        { ...d1, slotRole: 'DEF' },
+        { ...d2, slotRole: 'DEF' },
+        { ...m1, slotRole: 'MID' },
+        { ...m2, slotRole: 'MID' },
+        { ...fwd, slotRole: 'FWD' },
+        { ...bestExtra, slotRole: 'EXTRA' }
+      ]
+    };
   },
 
   evaluatePlayer(card, strategy) {
@@ -219,158 +305,6 @@ const OptimizerEngine = {
 
     const deltaSign = matchupDeltaPct >= 0 ? `+${matchupDeltaPct}%` : `${matchupDeltaPct}%`;
     return `${venueTag} • ${minutesTag}. ${trendStr.charAt(0).toUpperCase() + trendStr.slice(1)}. Punti di forza: ${tacticalNotes.join(', ')} (indice matchup ${deltaSign}, bonus carta +${card.bonusPct}%).`;
-  },
-
-  solveOptimalLineup(pool, competition, strategy) {
-    if (competition.format === 'SO7') {
-      return this.solveOptimalSO7(pool, strategy);
-    }
-    return this.solveOptimalSO5(pool, competition.inSeasonRequired || 0, strategy);
-  },
-
-  solveOptimalSO5(pool, minInSeason, strategy) {
-    const gks = pool.filter(c => c.position === 'GK').slice(0, 5);
-    const defs = pool.filter(c => c.position === 'DEF').slice(0, 7);
-    const mids = pool.filter(c => c.position === 'MID').slice(0, 7);
-    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 7);
-    const extras = pool.filter(c => c.position !== 'GK').slice(0, 10);
-
-    if (!gks.length || !defs.length || !mids.length || !fwds.length || extras.length < 4) {
-      return null;
-    }
-
-    let bestTeam = null;
-    let bestScore = -1;
-
-    for (const gk of gks) {
-      for (const def of defs) {
-        if (def.playerSlug === gk.playerSlug) continue;
-        for (const mid of mids) {
-          if (mid.playerSlug === gk.playerSlug || mid.playerSlug === def.playerSlug) continue;
-          for (const fwd of fwds) {
-            if (fwd.playerSlug === gk.playerSlug || fwd.playerSlug === def.playerSlug || fwd.playerSlug === mid.playerSlug) continue;
-
-            for (const extra of extras) {
-              const team = [
-                { ...gk, slotRole: 'GK' },
-                { ...def, slotRole: 'DEF' },
-                { ...mid, slotRole: 'MID' },
-                { ...fwd, slotRole: 'FWD' },
-                { ...extra, slotRole: 'EXTRA' }
-              ];
-
-              if (!this.hasDistinctPlayers(team)) continue;
-
-              const inSeasonCount = team.filter(p => p.isInSeason).length;
-              if (inSeasonCount < minInSeason) continue;
-
-              const teamValue = this.scoreTeamCombination(team, strategy);
-              if (teamValue > bestScore) {
-                bestScore = teamValue;
-                bestTeam = team;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    return bestTeam ? { starters: bestTeam } : null;
-  },
-
-  // Ottimizzato per essere istantaneo (< 10ms) senza bloccare mai il browser
-  solveOptimalSO7(pool, strategy) {
-    const gks = pool.filter(c => c.position === 'GK').slice(0, 3);
-    const defs = pool.filter(c => c.position === 'DEF').slice(0, 5);
-    const mids = pool.filter(c => c.position === 'MID').slice(0, 5);
-    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 4);
-    const extras = pool.filter(c => c.position !== 'GK').slice(0, 8);
-
-    if (gks.length < 1 || defs.length < 2 || mids.length < 2 || fwds.length < 1) return null;
-
-    let bestTeam = null;
-    let bestScore = -1;
-
-    for (const gk of gks) {
-      for (let i = 0; i < defs.length; i++) {
-        for (let j = i + 1; j < defs.length; j++) {
-          const d1 = defs[i];
-          const d2 = defs[j];
-          if (d1.playerSlug === d2.playerSlug) continue;
-
-          for (let m = 0; m < mids.length; m++) {
-            for (let n = m + 1; n < mids.length; n++) {
-              const m1 = mids[m];
-              const m2 = mids[n];
-              if (m1.playerSlug === m2.playerSlug) continue;
-
-              for (const fwd of fwds) {
-                const usedSlugs = new Set([
-                  gk.playerSlug, d1.playerSlug, d2.playerSlug,
-                  m1.playerSlug, m2.playerSlug, fwd.playerSlug
-                ]);
-                if (usedSlugs.size < 6) continue;
-
-                const extra = extras.find(e => !usedSlugs.has(e.playerSlug));
-                if (!extra) continue;
-
-                const team = [
-                  { ...gk, slotRole: 'GK' },
-                  { ...d1, slotRole: 'DEF' },
-                  { ...d2, slotRole: 'DEF' },
-                  { ...m1, slotRole: 'MID' },
-                  { ...m2, slotRole: 'MID' },
-                  { ...fwd, slotRole: 'FWD' },
-                  { ...extra, slotRole: 'EXTRA' }
-                ];
-
-                if (!this.hasDistinctPlayers(team)) continue;
-
-                const teamValue = this.scoreTeamCombination(team, strategy);
-                if (teamValue > bestScore) {
-                  bestScore = teamValue;
-                  bestTeam = team;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    return bestTeam ? { starters: bestTeam } : null;
-  },
-
-  scoreTeamCombination(team, strategy) {
-    let sum = 0;
-    let maxIndividual = 0;
-    let lastResortPenalty = 0;
-
-    for (const p of team) {
-      sum += p.projectedScore;
-      if (p.projectedScore > maxIndividual) maxIndividual = p.projectedScore;
-      if (p.isLastResort) lastResortPenalty += 500;
-    }
-
-    let total = sum + (maxIndividual * (this.CAPTAIN_MULTIPLIER - 1));
-
-    const gk = team.find(p => p.slotRole === 'GK');
-    const defenders = team.filter(p => p.position === 'DEF');
-    const attackers = team.filter(p => p.position === 'FWD' || p.position === 'MID');
-
-    if (gk && gk.clubSlug !== 'no-club') {
-      const sameClubDef = defenders.some(d => d.clubSlug === gk.clubSlug);
-      if (sameClubDef && gk.isHome) {
-        total += strategy === 'ceiling' ? 4.5 : 2.5;
-      }
-
-      const facingOwnGk = attackers.some(a => a.opponentSlug && a.opponentSlug === gk.clubSlug);
-      if (facingOwnGk) {
-        total -= 4.0;
-      }
-    }
-
-    return total - lastResortPenalty;
   },
 
   isEligibleForCompetition(card, comp) {
