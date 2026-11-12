@@ -1,6 +1,6 @@
-// SorareHub - Complexity-Safe (<30k) & Rate-Limit Safe GraphQL Layer (Club + NationalTeam + Gameweeks)
+// SorareHub - Complexity-Safe (<23k / max 30k) & Rate-Limit Safe GraphQL Layer (Club + NationalTeam + Gameweeks)
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v5',
+  CACHE_KEY: 'sorarehub_gallery_cache_v6',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -204,13 +204,13 @@ const SorareAPI = {
 
     await new Promise(resolve => setTimeout(resolve, 350));
 
-    // cards(first: 65) + so5Scores(last: 6) -> complessità ~16.500 (ben al di sotto del limite max 30.000)
+    // cards(first: 45) + so5Scores(last: 5) -> complessità ~21.000 (sotto il tetto max 30.000)
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
           slug
           nickname
-          cards(first: 65, after: $after) {
+          cards(first: 45, after: $after) {
             pageInfo {
               hasNextPage
               endCursor
@@ -237,7 +237,7 @@ const SorareAPI = {
                   activeSuspensions {
                     reason
                   }
-                  so5Scores(last: 6) {
+                  so5Scores(last: 5) {
                     score
                     decisiveScore {
                       totalScore
@@ -313,7 +313,7 @@ const SorareAPI = {
     let userProfile = null;
     let batchIndex = 0;
 
-    while (hasNext && batchIndex < 20) {
+    while (hasNext && batchIndex < 25) {
       batchIndex++;
 
       const res = await this.fetchWithRetry(workerGraphqlEndpoint, {
@@ -369,7 +369,7 @@ const SorareAPI = {
 
       if (!hasNext || !cursor) break;
 
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 450));
     }
 
     const enriched = this.enrichCardsWithRealOptaData(allCards);
@@ -466,18 +466,14 @@ const SorareAPI = {
           return sc > 0 || mins > 0;
         });
 
-        const last5Played = playedMatchesAll.slice(0, 5);
         const apiL5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
-        const computedL5 = last5Played.length > 0
-          ? Number((last5Played.reduce((acc, m) => acc + (m.score || 0), 0) / last5Played.length).toFixed(1))
+        const computedL5 = playedMatchesAll.length > 0
+          ? Number((playedMatchesAll.reduce((acc, m) => acc + (m.score || 0), 0) / playedMatchesAll.length).toFixed(1))
           : 0;
         const l5 = computedL5 > 0 ? computedL5 : apiL5;
 
         const apiL15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0;
-        const computedL6 = playedMatchesAll.length > 0
-          ? Number((playedMatchesAll.reduce((acc, m) => acc + (m.score || 0), 0) / playedMatchesAll.length).toFixed(1))
-          : 0;
-        const l15 = apiL15 > 0 ? Math.max(apiL15, Number(((apiL15 + computedL6) / 2).toFixed(1))) : computedL6;
+        const l15 = apiL15 > 0 ? Math.max(apiL15, Number(((apiL15 + computedL5) / 2).toFixed(1))) : computedL5;
 
         let playedInLast5Games = 0;
         let starterCount = 0;
