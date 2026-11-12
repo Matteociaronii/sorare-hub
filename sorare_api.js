@@ -1,4 +1,4 @@
-// SorareHub - Real GraphQL Opta/SO5 & Fixture Layer
+// SorareHub - Real GraphQL Opta/SO5, UEFA & Fixture Layer
 const SorareAPI = {
   generateRandomString(length = 32) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -137,8 +137,14 @@ const SorareAPI = {
                       slug
                       displayName
                     }
+                    activeCompetitions {
+                      slug
+                    }
                     upcomingGames(first: 1) {
                       date
+                      competition {
+                        slug
+                      }
                       homeTeam {
                         ... on Club {
                           slug
@@ -233,7 +239,6 @@ const SorareAPI = {
   },
 
   enrichCardsWithRealOptaData(rawCards) {
-    const currentSeason = 2026;
     const now = Date.now();
     const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
 
@@ -249,11 +254,34 @@ const SorareAPI = {
         const club = player.activeClub || {};
         const clubName = club.name || 'Svincolato / N.D.';
         const clubSlug = club.slug || 'no-club';
-        const leagueSlug = club.domesticLeague?.slug || 'other';
+        const leagueSlug = (club.domesticLeague?.slug || 'other').toLowerCase();
 
-        const isInSeason = (card.seasonYear || 0) >= currentSeason;
-        const birthYear = player.birthDate ? new Date(player.birthDate).getFullYear() : 2000;
-        const isU23 = birthYear >= 2003;
+        // Rilevamento competizioni UEFA reali del club
+        const activeComps = Array.isArray(club.activeCompetitions)
+          ? club.activeCompetitions.map(ac => String(ac.slug || '').toLowerCase())
+          : [];
+
+        const upcomingList = Array.isArray(club.upcomingGames) ? club.upcomingGames : [];
+        const upcomingNode = upcomingList[0] || null;
+        const upcomingCompSlug = String(upcomingNode?.competition?.slug || '').toLowerCase();
+
+        const isUefaChampions =
+          activeComps.some(s => s.includes('champions-league')) ||
+          upcomingCompSlug.includes('champions-league');
+
+        const isUefaContender =
+          activeComps.some(s => s.includes('europa-league') || s.includes('conference-league')) ||
+          upcomingCompSlug.includes('europa-league') ||
+          upcomingCompSlug.includes('conference-league');
+
+        // Stagione In-Season (2026 per leghe europee 2026/27, >= 2026 o bonus stagionale attivo)
+        const sYear = Number(card.seasonYear || 0);
+        const isInSeason = sYear >= 2026;
+
+        // Under-23 per stagione 2026/27 (nati dal 1 luglio 2003 in poi)
+        const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0;
+        const u23Cutoff = new Date('2003-07-01').getTime();
+        const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
 
         // Medie reali L5 & L15
         const l5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
@@ -303,7 +331,6 @@ const SorareAPI = {
         const avgAas = playedCount > 0 ? Number((sumAas / playedCount).toFixed(1)) : 0;
         const avgDecisive = playedCount > 0 ? Number((sumDecisive / playedCount).toFixed(1)) : 0;
 
-        // Deviazione standard reale sulle ultime 5 partite
         let stdDev = 0;
         if (validScoreValues.length > 1) {
           const mean = validScoreValues.reduce((a, b) => a + b, 0) / validScoreValues.length;
@@ -311,15 +338,11 @@ const SorareAPI = {
           stdDev = Number(Math.sqrt(variance).toFixed(1));
         }
 
-        // Controllo infortuni / squalifiche reali
         const injuries = Array.isArray(player.activeInjuries) ? player.activeInjuries : [];
         const suspensions = Array.isArray(player.activeSuspensions) ? player.activeSuspensions : [];
         const isInjured = injuries.length > 0;
         const isSuspended = suspensions.length > 0;
 
-        // Controllo prossima partita della Gameweek (upcomingGames è una lista diretta di Game)
-        const upcomingList = Array.isArray(club.upcomingGames) ? club.upcomingGames : (club.upcomingGames?.nodes || []);
-        const upcomingNode = upcomingList[0] || null;
         let hasUpcomingGame = false;
         let isHome = null;
         let opponentName = 'Nessuna partita in GW';
@@ -343,7 +366,6 @@ const SorareAPI = {
           }
         }
 
-        // Classificazione reale titolarità
         let availabilityTier = 'last_resort';
         let unavailableReason = '';
 
@@ -365,7 +387,6 @@ const SorareAPI = {
           unavailableReason = 'Inattivo / fuori dalle rotazioni recenti';
         }
 
-        // Profilo tattico Opta reale derivato da AAS puro, Decisive Score, assist e ruolo
         const isSetPieceTaker = pos !== 'GK' && playedCount > 0 && (avgAas >= 26 || totalAssists >= 2);
         const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedCount > 0 && (avgAas >= 22);
         const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedCount > 0 && (avgAas >= 23);
@@ -382,9 +403,11 @@ const SorareAPI = {
           club: clubName,
           clubSlug: clubSlug,
           leagueSlug: leagueSlug,
+          isUefaChampions: isUefaChampions,
+          isUefaContender: isUefaContender,
           position: pos,
           scarcity: (card.rarityTyped || 'limited').toLowerCase(),
-          seasonYear: card.seasonYear || currentSeason,
+          seasonYear: sYear,
           isInSeason: isInSeason,
           isU23: isU23,
           l5: l5,
