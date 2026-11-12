@@ -1,4 +1,4 @@
-// SorareHub - Application Controller (Carbon & Gold Edition + Real GW Selector + National Team Display + Touch/Hover Tooltip)
+// SorareHub - Application Controller (Carbon & Gold Edition + Visible Status Banners + Real GW Selector + National Team Display)
 const App = {
   cards: [],
   gameweeks: [],
@@ -10,6 +10,7 @@ const App = {
 
   async init() {
     this.injectTacticalStyles();
+    this.ensureBannerElement();
     this.populateCompetitionDropdown();
     this.bindEvents();
 
@@ -20,15 +21,26 @@ const App = {
       this.notify('🔐 Autenticazione Sorare in corso...');
       const token = await SorareAPI.handleOAuthCallback(code);
       if (token) {
-        await this.loadUserGallery();
+        await this.loadUserGallery(true);
       }
       return;
     }
 
     if (localStorage.getItem('sorare_access_token')) {
-      await this.loadUserGallery();
+      await this.loadUserGallery(false);
     } else {
       this.renderEmptyState();
+    }
+  },
+
+  ensureBannerElement() {
+    let banner = document.getElementById('status-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'status-banner';
+      banner.className = 'status-banner';
+      const mainContainer = document.querySelector('main') || document.body;
+      mainContainer.insertBefore(banner, mainContainer.firstChild);
     }
   },
 
@@ -37,6 +49,31 @@ const App = {
     const style = document.createElement('style');
     style.id = 'sorarehub-tactical-styles';
     style.textContent = `
+      #status-banner {
+        display: none;
+        width: 100%;
+        max-width: 1200px;
+        margin: 12px auto;
+        padding: 11px 16px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1.4;
+        box-sizing: border-box;
+        transition: all 0.2s ease;
+      }
+      #status-banner.success {
+        display: block;
+        background: rgba(212, 175, 55, 0.14);
+        border: 1px solid rgba(212, 175, 55, 0.55);
+        color: #f3d266;
+      }
+      #status-banner.error {
+        display: block;
+        background: rgba(220, 53, 69, 0.16);
+        border: 1px solid rgba(220, 53, 69, 0.65);
+        color: #ff8a95;
+      }
       .player-info-trigger {
         display: inline-flex;
         align-items: center;
@@ -155,15 +192,16 @@ const App = {
     }
   },
 
-  async loadUserGallery() {
+  async loadUserGallery(forceRefresh = false) {
     const loginBtn = document.getElementById('login-btn');
     const loginBtnText = document.getElementById('login-btn-text');
 
     if (loginBtn) loginBtn.disabled = true;
     if (loginBtnText) loginBtnText.textContent = '⏳ Sincronizzazione GW & Opta...';
+    this.notify('⏳ Connessione a Sorare in corso: scarico Gameweek e statistiche Opta...');
 
     try {
-      const data = await SorareAPI.fetchCurrentUserGallery();
+      const data = await SorareAPI.fetchCurrentUserGallery(forceRefresh);
       if (data && data.cards) {
         this.user = data.user;
         this.cards = data.cards;
@@ -388,6 +426,7 @@ const App = {
   },
 
   notify(msg, isError = false) {
+    this.ensureBannerElement();
     const banner = document.getElementById('status-banner');
     if (!banner) return;
     banner.textContent = msg;
