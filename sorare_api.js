@@ -129,12 +129,11 @@ const SorareAPI = {
                       accuratePass
                       wonTackle
                       interceptionWon
-                      aerialWon
-                      totalScoringAtt
                       ontargetScoringAtt
                       bigChanceCreated
                       keyPass
                       penaltiesSaved
+                      saves
                     }
                   }
                   activeClub {
@@ -282,7 +281,6 @@ const SorareAPI = {
         let totalKeyPasses = 0;
         let totalBigChances = 0;
         let totalShotsOnTarget = 0;
-        let totalAerialWon = 0;
         let totalTacklesInterceptions = 0;
         let totalGoals = 0;
         let totalAssists = 0;
@@ -309,7 +307,6 @@ const SorareAPI = {
             totalKeyPasses += stats.keyPass || 0;
             totalBigChances += stats.bigChanceCreated || 0;
             totalShotsOnTarget += stats.ontargetScoringAtt || 0;
-            totalAerialWon += stats.aerialWon || 0;
             totalTacklesInterceptions += (stats.wonTackle || 0) + (stats.interceptionWon || 0);
             totalGoals += stats.goals || 0;
             totalAssists += stats.goalAssist || 0;
@@ -384,8 +381,8 @@ const SorareAPI = {
 
         // Rilevamento specialità tattiche Opta reali
         const isSetPieceTaker = pos !== 'GK' && playedCount > 0 && ((totalKeyPasses + totalBigChances) / playedCount >= 1.4);
-        const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedCount > 0 && (totalAerialWon / playedCount >= 2.2);
-        const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedCount > 0 && (totalTacklesInterceptions / playedCount >= 3.0);
+        const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedCount > 0 && (avgAas >= 24 && (pos === 'DEF' || totalShotsOnTarget / playedCount >= 0.8));
+        const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedCount > 0 && (totalTacklesInterceptions / playedCount >= 2.8);
         const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && playedCount > 0 && ((totalGoals + totalAssists) >= 2 || totalShotsOnTarget / playedCount >= 1.2);
 
         const rawPower = parseFloat(card.power) || (isInSeason ? 1.05 : 1.00);
