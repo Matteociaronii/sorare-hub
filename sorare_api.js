@@ -1,38 +1,20 @@
-// SorareHub - OAuth2 PKCE & Safe Cursor Pagination Layer
+// SorareHub - OAuth2 & Safe Cursor Pagination Layer
 const SorareAPI = {
-  generateRandomString(length = 64) {
-    const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  generateRandomString(length = 32) {
+    const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     const values = crypto.getRandomValues(new Uint8Array(length));
     return Array.from(values, v => charset[v % charset.length]).join('');
   },
 
-  async sha256(plain) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(plain);
-    return window.crypto.subtle.digest('SHA-256', data);
-  },
-
-  base64UrlEncode(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    bytes.forEach(b => binary += String.fromCharCode(b));
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  },
-
   async startOAuthFlow() {
     if (localStorage.getItem('sorare_access_token')) {
-      if (window.App && App.initUserGallery) {
-        App.initUserGallery();
+      if (window.App && App.loadUserGallery) {
+        App.loadUserGallery();
         return;
       }
     }
 
-    const verifier = this.generateRandomString(64);
-    const hashed = await this.sha256(verifier);
-    const challenge = this.base64UrlEncode(hashed);
     const state = this.generateRandomString(16);
-
-    localStorage.setItem('sorare_pkce_verifier', verifier);
     localStorage.setItem('sorare_oauth_state', state);
 
     const params = new URLSearchParams({
@@ -40,8 +22,6 @@ const SorareAPI = {
       redirect_uri: CONFIG.REDIRECT_URI,
       response_type: 'code',
       scope: CONFIG.SCOPES,
-      code_challenge: challenge,
-      code_challenge_method: 'S256',
       state: state
     });
 
@@ -53,12 +33,10 @@ const SorareAPI = {
       const urlParams = new URLSearchParams(window.location.search);
       code = urlParams.get('code');
     }
-    
+
     if (!code) {
       return localStorage.getItem('sorare_access_token') || null;
     }
-
-    const verifier = localStorage.getItem('sorare_pkce_verifier');
 
     try {
       const bodyParams = new URLSearchParams();
@@ -66,9 +44,6 @@ const SorareAPI = {
       bodyParams.append('grant_type', 'authorization_code');
       bodyParams.append('code', code);
       bodyParams.append('redirect_uri', CONFIG.REDIRECT_URI);
-      if (verifier) {
-        bodyParams.append('code_verifier', verifier);
-      }
 
       const response = await fetch(CONFIG.TOKEN_ENDPOINT, {
         method: 'POST',
@@ -84,13 +59,11 @@ const SorareAPI = {
       const tokenData = await response.json();
       if (tokenData.access_token) {
         localStorage.setItem('sorare_access_token', tokenData.access_token);
-        
         const cleanUrl = window.location.origin + window.location.pathname;
         window.history.replaceState({}, document.title, cleanUrl);
-
         return tokenData.access_token;
       } else {
-        throw new Error('Nessun access_token nella risposta');
+        throw new Error('Nessun access_token nella risposta del Worker');
       }
     } catch (err) {
       console.error('Errore OAuth:', err);
@@ -99,6 +72,7 @@ const SorareAPI = {
       if (window.App && App.notify) {
         App.notify('❌ ' + err.message, true);
       }
+      alert('Errore durante il login Sorare: ' + err.message);
       return null;
     }
   },
@@ -107,7 +81,7 @@ const SorareAPI = {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
-    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT}/graphql`;
+    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
 
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
@@ -172,6 +146,9 @@ const SorareAPI = {
 
       if (!res.ok) {
         const errBody = await res.text();
+        if (res.status === 401) {
+          localStorage.removeItem('sorare_access_token');
+        }
         throw new Error(`Errore API Sorare (${res.status}): ${errBody}`);
       }
 
@@ -194,6 +171,10 @@ const SorareAPI = {
 
       allCards = allCards.concat(nodes);
 
+      const loginBtnText = document.getElementById('login-btn-text');
+      if (loginBtnText) {
+        loginBtnText.textContent = `📥 Caricate ${allCards.length} carte...`;
+      }
       if (window.App && App.notify) {
         App.notify(`📥 Caricate ${allCards.length} carte...`);
       }
