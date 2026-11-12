@@ -1,6 +1,6 @@
-// SorareHub - Unified Player+Club+NationalTeam Schedule & 2026/27 In-Season GraphQL Layer
+// SorareHub - TeamInterface Club + NationalTeam Schedule & 2026/27 In-Season GraphQL Layer
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v14',
+  CACHE_KEY: 'sorarehub_gallery_cache_v15',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -97,7 +97,6 @@ const SorareAPI = {
     }
   },
 
-  // Raggruppa le partite future nelle 3 finestre Gameweek reali di Sorare (es. Gio-Dom / Lun-Mer / Ven-Lun)
   buildGameweekWindowsFromCards(cards) {
     const nowMs = Date.now() - 8 * 3600 * 1000;
     const allTimestamps = [];
@@ -119,7 +118,6 @@ const SorareAPI = {
 
       for (let i = 1; i < allTimestamps.length; i++) {
         const ts = allTimestamps[i];
-        // Separa due turni quando la finestra supera i 4 giorni (standard Sorare: Ven-Lun / Mar-Gio)
         if ((ts - clusterStart) > 4.2 * 24 * 3600 * 1000) {
           clusters.push({ start: clusterStart, end: clusterEnd });
           clusterStart = ts;
@@ -190,7 +188,7 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
 
-    // Interroga sia player.upcomingGames che activeClub / activeNationalTeam per catturare il 100% dei match
+    // upcomingGames è un campo di TeamInterface (activeClub e activeNationalTeam), non di Player
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -235,25 +233,6 @@ const SorareAPI = {
                       goalAssist
                       cleanSheet
                       saves
-                    }
-                  }
-                  upcomingGames(first: 4) {
-                    date
-                    competition {
-                      slug
-                      displayName
-                    }
-                    homeTeam {
-                      ... on TeamInterface {
-                        slug
-                        name
-                      }
-                    }
-                    awayTeam {
-                      ... on TeamInterface {
-                        slug
-                        name
-                      }
                     }
                   }
                   activeClub {
@@ -438,10 +417,9 @@ const SorareAPI = {
           if (seenGameKeys.has(dedupKey)) return;
           seenGameKeys.add(dedupKey);
 
-          const isClubMatch = homeSlug === clubSlug || awaySlug === clubSlug;
-          const isNatMatch = sourceType === 'nat' || (!isClubMatch && (homeSlug === natSlug || awaySlug === natSlug || sourceType === 'player'));
+          const isNatMatch = sourceType === 'nat';
 
-          if (isNatMatch && !isClubMatch) {
+          if (isNatMatch) {
             const isHome = natSlug ? (homeSlug === natSlug) : true;
             const myNatName = natName || (isHome ? homeName : awayName);
             const oppName = isHome ? awayName : homeName;
@@ -472,7 +450,6 @@ const SorareAPI = {
           }
         };
 
-        (Array.isArray(player.upcomingGames) ? player.upcomingGames : []).forEach(g => pushUniqueGame(g, 'player'));
         (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, 'club'));
         (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, 'nat'));
 
