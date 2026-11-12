@@ -1,325 +1,221 @@
-// SorareHub - Fast Deterministic Opta Engine & Tactical Matchup Analyzer
+// SorareHub - Zero-DNP Cascade Lineup Optimizer (All Competitions + National Team Break Safe)
 const OptimizerEngine = {
-  CAPTAIN_MULTIPLIER: 1.50,
+  buildCascadePortfolio(allCards, competition, scarcity, strategy, selectedGw = null) {
+    if (!Array.isArray(allCards) || allCards.length === 0 || !competition) return [];
 
-  LEAGUE_ALIASES: {
-    'premier-league-gb-eng': ['premier-league-gb-eng', 'premier-league'],
-    'laliga-es': ['laliga-es', 'primera-division-es', 'la-liga-es'],
-    'bundesliga-de': ['bundesliga-de', '1-bundesliga-de'],
-    'ligue-1-fr': ['ligue-1-fr', 'ligue-1'],
-    'championship-gb-eng': ['championship-gb-eng', 'efl-championship-gb-eng'],
-    'primeira-liga-pt': ['primeira-liga-pt', 'liga-portugal-pt', 'liga-nos-pt'],
-    'jupiler-pro-league-be': ['jupiler-pro-league-be', 'first-division-a-be'],
-    'eredivisie-nl': ['eredivisie-nl', 'eredivisie'],
-    'premiership-gb-sct': ['premiership-gb-sct', 'scottish-premiership-gb-sct'],
-    'mls-us': ['mls-us', 'major-league-soccer-us', 'major-league-soccer'],
-    'j1-league-jp': ['j1-league-jp', 'j1-league'],
-    'k-league-1-kr': ['k-league-1-kr', 'k-league-classic-kr'],
-    '2-bundesliga-de': ['2-bundesliga-de'],
-    'segunda-division-es': ['segunda-division-es', 'laliga2-es'],
-    'serie-b-it': ['serie-b-it', 'serie-b'],
-    'superliga-dk': ['superliga-dk', 'superligaen-dk'],
-    'eliteserien-no': ['eliteserien-no'],
-    'bundesliga-at': ['bundesliga-at', 'tipico-bundesliga-at'],
-    'super-league-ch': ['super-league-ch', 'raiffeisen-super-league-ch'],
-    'ekstraklasa-pl': ['ekstraklasa-pl']
-  },
+    const targetScarcity = String(scarcity || 'limited').toLowerCase();
+    const isSO7 = competition.format === 'SO7';
+    const slotsTemplate = isSO7
+      ? ['GK', 'DEF', 'DEF', 'MID', 'MID', 'FWD', 'EXTRA']
+      : ['GK', 'DEF', 'MID', 'FWD', 'EXTRA'];
+    const requiredInSeason = Number(competition.inSeasonRequired || 0);
 
-  buildCascadePortfolio(cards, competition, scarcity, strategy = 'floor') {
-    if (!cards || cards.length === 0) return [];
+    // 1. Filtra per rarità, età (U23) e lega di appartenenza della carta
+    const eligibleCards = allCards.filter(card => {
+      if (!card) return false;
+      if (card.scarcity !== targetScarcity) return false;
+      if (competition.u23Only && !card.isU23) return false;
 
-    let pool = cards
-      .filter(c => c.scarcity === scarcity.toLowerCase())
-      .filter(card => this.isEligibleForCompetition(card, competition));
+      if (Array.isArray(competition.leagues) && !competition.leagues.includes('ALL')) {
+        const cardLeague = String(card.leagueSlug || '').toLowerCase();
+        const matchesLeague = competition.leagues.some(l => cardLeague.includes(String(l).toLowerCase()));
+        if (!matchesLeague) return false;
+      }
 
-    if (pool.length === 0) return [];
-
-    pool = pool.map(card => {
-      const evalResult = this.evaluatePlayer(card, strategy);
-      return {
-        ...card,
-        projectedScore: evalResult.projectedScore,
-        baseExpectedScore: evalResult.projectedScore,
-        matchupInsight: evalResult.insight,
-        matchupScoreDelta: evalResult.matchupDelta
-      };
+      return true;
     });
 
-    const tierWeight = { starter: 3, rotation: 2, last_resort: 1 };
-    pool.sort((a, b) => {
-      const tDiff = (tierWeight[b.availabilityTier] || 0) - (tierWeight[a.availabilityTier] || 0);
-      if (tDiff !== 0) return tDiff;
-      return b.projectedScore - a.projectedScore;
-    });
+    if (eligibleCards.length < slotsTemplate.length) return [];
+
+    // 2. Valuta ogni carta sulla Gameweek selezionata con regola Zero-DNP
+    const evaluatedPool = eligibleCards.map(card => this.evaluateCardForGw(card, selectedGw, strategy));
 
     const lineups = [];
-    const usedCardIds = new Set();
-    const rankLabels = [
-      'Team A (Top Tier)',
-      'Team B (Secondary)',
-      'Team C (Contender)',
-      'Team D (Backup)',
-      'Team E (Longshot)'
-    ];
+    const usedPlayerSlugs = new Set();
+    const maxLineups = 5;
 
-    let teamIdx = 0;
-    while (teamIdx < 12) {
-      const available = pool.filter(c => !usedCardIds.has(c.id));
-      const lineup = this.solveFastLineup(available, competition, strategy);
-      if (!lineup) break;
+    for (let rank = 1; rank <= maxLineups; rank++) {
+      const available = evaluatedPool.filter(c => !usedPlayerSlugs.has(c.playerSlug));
+      if (available.length < slotsTemplate.length) break;
 
-      const starters = lineup.starters.map(p => ({ ...p, isCaptain: false }));
-      starters.sort((a, b) => b.projectedScore - a.projectedScore);
+      const picked = this.selectBestLineupForSlots(available, slotsTemplate, requiredInSeason);
+      if (!picked || picked.length < slotsTemplate.length) break;
 
-      starters[0].isCaptain = true;
-      starters[0].projectedScore = Math.round(starters[0].projectedScore * this.CAPTAIN_MULTIPLIER);
+      // Impedisci la generazione di formazioni interamente prive di partite nella GW
+      const activePlayersInLineup = picked.filter(p => Boolean(p.activeMatch)).length;
+      if (activePlayersInLineup === 0) break;
 
-      starters.forEach(p => usedCardIds.add(p.id));
+      picked.forEach(p => usedPlayerSlugs.add(p.playerSlug));
 
-      const totalProjected = starters.reduce((acc, p) => acc + p.projectedScore, 0);
-      const inSeasonCount = starters.filter(p => p.isInSeason).length;
-      const lastResortCount = starters.filter(p => p.isLastResort).length;
+      // Assegna il Capitano (+50%) esclusivamente a chi ha una partita reale nella GW
+      const candidatesForCaptain = picked.filter(p => Boolean(p.activeMatch));
+      const captainPool = candidatesForCaptain.length > 0 ? candidatesForCaptain : picked;
+      captainPool.sort((a, b) => b.projectedScore - a.projectedScore);
+      const captainId = captainPool[0]?.id;
 
-      lineups.push({
-        rankLabel: rankLabels[teamIdx] || `Team ${String.fromCharCode(65 + teamIdx)}`,
-        format: competition.format,
-        starters: starters,
-        totalProjected: totalProjected,
-        inSeasonCount: inSeasonCount,
-        lastResortCount: lastResortCount
+      const finalStarters = picked.map(p => {
+        const isCap = p.id === captainId && Boolean(p.activeMatch);
+        const finalScore = isCap ? Number((p.projectedScore * 1.5).toFixed(1)) : p.projectedScore;
+        return {
+          ...p,
+          isCaptain: isCap,
+          projectedScore: finalScore
+        };
       });
 
-      teamIdx++;
+      const totalProjected = Number(
+        finalStarters.reduce((acc, p) => acc + p.projectedScore, 0).toFixed(1)
+      );
+      const inSeasonCount = finalStarters.filter(p => p.isInSeason).length;
+
+      lineups.push({
+        rank: rank,
+        rankLabel: `Squadra #${rank}`,
+        format: isSO7 ? 'SO7' : 'SO5',
+        inSeasonCount: inSeasonCount,
+        activeMatchesCount: activePlayersInLineup,
+        totalProjected: totalProjected,
+        starters: finalStarters
+      });
     }
 
     return lineups;
   },
 
-  getPlayerKey(card) {
-    return String(card.playerSlug || card.name || card.id).toLowerCase().trim();
-  },
+  evaluateCardForGw(card, selectedGw, strategy) {
+    const games = Array.isArray(card.scheduleGames) ? card.scheduleGames : [];
+    let activeMatch = null;
 
-  // Costruzione rapida O(N) senza cicli nidificati pesanti: zero blocchi UI
-  solveFastLineup(pool, competition, strategy) {
-    if (competition.format === 'SO7') {
-      return this.solveFastSO7(pool, strategy);
-    }
-    return this.solveFastSO5(pool, competition.inSeasonRequired || 0);
-  },
-
-  solveFastSO5(pool, minInSeason) {
-    const pickBestTeam = (sourcePool) => {
-      const usedSlugs = new Set();
-      const pick = (pos) => {
-        const found = sourcePool.find(c => c.position === pos && !usedSlugs.has(this.getPlayerKey(c)));
-        if (found) usedSlugs.add(this.getPlayerKey(found));
-        return found;
-      };
-
-      const gk = pick('GK');
-      const def = pick('DEF');
-      const mid = pick('MID');
-      const fwd = pick('FWD');
-      if (!gk || !def || !mid || !fwd) return null;
-
-      const extra = sourcePool.find(c => c.position !== 'GK' && !usedSlugs.has(this.getPlayerKey(c)));
-      if (!extra) return null;
-
-      return [
-        { ...gk, slotRole: 'GK' },
-        { ...def, slotRole: 'DEF' },
-        { ...mid, slotRole: 'MID' },
-        { ...fwd, slotRole: 'FWD' },
-        { ...extra, slotRole: 'EXTRA' }
-      ];
-    };
-
-    // Tentativo 1: prende i migliori assoluti rispettando playerSlug univoci
-    let team = pickBestTeam(pool);
-    if (!team) return null;
-
-    if (team.filter(p => p.isInSeason).length >= minInSeason) {
-      return { starters: team };
+    if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
+      const gwStart = new Date(selectedGw.startDate).getTime();
+      const gwEnd = new Date(selectedGw.endDate).getTime();
+      activeMatch = games.find(g => g.timestamp >= gwStart && g.timestamp <= gwEnd) || null;
+    } else if (games.length > 0) {
+      const nowMs = Date.now() - 6 * 3600 * 1000;
+      activeMatch = games.find(g => g.timestamp >= nowMs) || games[0];
     }
 
-    // Tentativo 2: se mancano In-Season, dà priorità alle carte In-Season mantenendo i Classic solo dove mancano In-Season
-    const inSeasonFirstPool = [
-      ...pool.filter(c => c.isInSeason),
-      ...pool.filter(c => !c.isInSeason)
-    ];
-    team = pickBestTeam(inSeasonFirstPool);
-    if (team && team.filter(p => p.isInSeason).length >= minInSeason) {
-      return { starters: team };
-    }
-
-    return null;
-  },
-
-  solveFastSO7(pool, strategy) {
-    const usedSlugs = new Set();
-    const pick = (pos) => {
-      const found = pool.find(c => c.position === pos && !usedSlugs.has(this.getPlayerKey(c)));
-      if (found) usedSlugs.add(this.getPlayerKey(found));
-      return found;
-    };
-
-    const gk = pick('GK');
-    const d1 = pick('DEF');
-    const d2 = pick('DEF');
-    const m1 = pick('MID');
-    const m2 = pick('MID');
-    const fwd = pick('FWD');
-
-    if (!gk || !d1 || !d2 || !m1 || !m2 || !fwd) return null;
-
-    // Cerca il miglior EXTRA evitando duplicati playerSlug e conflitti contro il proprio GK
-    const extraCandidates = pool.filter(c => c.position !== 'GK' && !usedSlugs.has(this.getPlayerKey(c)));
-    if (extraCandidates.length === 0) return null;
-
-    let bestExtra = extraCandidates[0];
-    if (gk.clubSlug !== 'no-club') {
-      const safeExtra = extraCandidates.find(e => e.opponentSlug !== gk.clubSlug);
-      if (safeExtra) bestExtra = safeExtra;
-    }
-
-    return {
-      starters: [
-        { ...gk, slotRole: 'GK' },
-        { ...d1, slotRole: 'DEF' },
-        { ...d2, slotRole: 'DEF' },
-        { ...m1, slotRole: 'MID' },
-        { ...m2, slotRole: 'MID' },
-        { ...fwd, slotRole: 'FWD' },
-        { ...bestExtra, slotRole: 'EXTRA' }
-      ]
-    };
-  },
-
-  evaluatePlayer(card, strategy) {
-    if (card.isLastResort) {
-      const fallbackBase = card.l15 > 0 ? Math.max(2, Math.round(card.l15 * 0.06)) : 2;
+    // Regola Zero-DNP: se non ha partita in questa GW, punteggio proiettato = 0
+    if (!activeMatch) {
       return {
-        projectedScore: fallbackBase,
-        matchupDelta: 0,
-        insight: this.buildTacticalInsight(card, strategy, 0, fallbackBase)
+        ...card,
+        activeMatch: null,
+        isHome: null,
+        opponentName: 'Nessuna partita',
+        availabilityTier: 'dnp',
+        isLastResort: true,
+        unavailableReason: card.baseUnavailableReason || 'Nessuna partita nella GW selezionata',
+        projectedScore: 0,
+        selectionPriority: 0,
+        matchupInsight: `${card.name} non ha partite programmate in questa Gameweek (0 pt attesi).`
       };
     }
 
-    const l15 = card.l15 || card.l5 || 40;
-    const l5 = card.l5 || l15;
-    const aas = card.avgAas > 0 ? card.avgAas : l15 * 0.55;
-    const dec = card.avgDecisive > 0 ? card.avgDecisive : Math.max(0, l5 - aas);
-    const peak = card.maxRecentScore > 0 ? card.maxRecentScore : l5;
-
-    let rawEv = 0;
-    if (strategy === 'ceiling') {
-      rawEv = (l5 * 0.42) + (peak * 0.28) + ((aas + dec * 1.15) * 0.30);
-      if (card.stdDev >= 14) rawEv += 2.5;
-    } else {
-      rawEv = (l15 * 0.50) + (l5 * 0.25) + ((aas * 1.35) * 0.25);
-      if (card.stdDev > 0 && card.stdDev <= 10) rawEv += 2.0;
+    // Se ha una partita reale nella GW ma è segnalato infortunato/squalificato
+    if (card.baseUnavailableReason && (card.baseUnavailableReason.includes('Infortunato') || card.baseUnavailableReason.includes('Squalificato'))) {
+      return {
+        ...card,
+        activeMatch: activeMatch,
+        isHome: activeMatch.isHome,
+        opponentName: activeMatch.opponentName,
+        availabilityTier: 'dnp',
+        isLastResort: true,
+        unavailableReason: card.baseUnavailableReason,
+        projectedScore: 0,
+        selectionPriority: 0,
+        matchupInsight: `${card.name}: ${card.baseUnavailableReason}.`
+      };
     }
 
-    let minutesFactor = 1.0;
-    if (card.availabilityTier === 'starter') {
-      minutesFactor = card.avgMins >= 80 ? 1.03 : 0.98;
-    } else if (card.availabilityTier === 'rotation') {
-      const ratio = Math.min(0.85, Math.max(0.45, (card.avgMins || 40) / 85));
-      minutesFactor = ratio;
-    }
+    const baseL15 = card.l15 > 0 ? card.l15 : (card.l5 > 0 ? card.l5 : 35);
+    const baseL5 = card.l5 > 0 ? card.l5 : baseL15;
+    const isCeiling = String(strategy || '').toLowerCase() === 'ceiling';
 
-    let matchupMod = 1.0;
-    if (card.isHome === true) {
-      matchupMod += (card.position === 'GK' || card.position === 'DEF') ? 0.06 : 0.04;
-    } else if (card.isHome === false) {
-      matchupMod -= 0.02;
-    }
+    let rawExpected = isCeiling
+      ? (baseL5 * 0.55) + (baseL15 * 0.25) + ((card.maxRecentScore || baseL5) * 0.20)
+      : (baseL15 * 0.55) + (baseL5 * 0.35) + ((card.avgAas || 15) * 0.25);
 
-    const traits = card.tacticalTraits || {};
-    if (traits.setPiece) matchupMod += strategy === 'floor' ? 0.05 : 0.04;
-    if (traits.aerial && (card.position === 'DEF' || card.position === 'FWD')) matchupMod += 0.035;
-    if (traits.ballWinner && (card.position === 'DEF' || card.position === 'MID')) matchupMod += strategy === 'floor' ? 0.04 : 0.02;
-    if (traits.clinical && strategy === 'ceiling') matchupMod += 0.05;
-    if ((card.position === 'GK' || card.position === 'DEF') && traits.cleanSheets >= 2 && card.isHome) matchupMod += 0.04;
+    if (activeMatch.isHome === true) rawExpected *= 1.04;
+    if (card.baseFitnessTier === 'rotation') rawExpected *= 0.85;
 
-    const cardMultiplier = card.powerMultiplier || 1.0;
-    const finalProjected = Math.max(5, Math.round(rawEv * minutesFactor * matchupMod * cardMultiplier));
-    const matchupDeltaPct = Math.round((matchupMod - 1) * 100);
+    const projectedScore = Number(Math.max(15, rawExpected * (card.powerMultiplier || 1)).toFixed(1));
+    const priorityTier = card.baseFitnessTier === 'starter' ? 2 : 1;
+
+    const matchLabel = activeMatch.isNationalTeam
+      ? `${activeMatch.teamName} (${activeMatch.competitionName})`
+      : `${activeMatch.isHome ? 'In casa' : 'In trasferta'} contro ${activeMatch.opponentName}`;
+
+    const insight = `${matchLabel}. Media L15: ${card.l15}, L5: ${card.l5}, minuti medi: ${card.avgMins}'. Strategia ${isCeiling ? 'Ceiling (picchi decisivi)' : 'Floor (regolarità AA)'}.`;
 
     return {
-      projectedScore: finalProjected,
-      matchupDelta: matchupDeltaPct,
-      insight: this.buildTacticalInsight(card, strategy, matchupDeltaPct, finalProjected)
+      ...card,
+      activeMatch: activeMatch,
+      isHome: activeMatch.isHome,
+      opponentName: activeMatch.opponentName,
+      availabilityTier: card.baseFitnessTier === 'starter' ? 'starter' : 'rotation',
+      isLastResort: false,
+      unavailableReason: '',
+      projectedScore: projectedScore,
+      selectionPriority: priorityTier,
+      matchupInsight: insight
     };
   },
 
-  buildTacticalInsight(card, strategy, matchupDeltaPct, projectedScore) {
-    if (card.isLastResort) {
-      return `⚠️ ULTIMA SPIAGGIA • ${card.unavailableReason}. Inserito solo per completare la formazione per assenza di altri titolari disponibili nel ruolo (L15 storico: ${card.l15 || 0}).`;
+  selectBestLineupForSlots(pool, slotsTemplate, requiredInSeason) {
+    const selected = [];
+    const usedIds = new Set();
+
+    // Ordina sempre dando precedenza assoluta a:
+    // 1) Chi ha una partita reale nella GW (selectionPriority > 0)
+    // 2) Chi è titolare fisso (selectionPriority === 2) rispetto a rotazione (1) e DNP (0)
+    // 3) Punteggio proiettato più alto
+    const sortCandidates = (list, preferInSeason) => {
+      return [...list].sort((a, b) => {
+        const aHasGame = a.selectionPriority > 0 ? 1 : 0;
+        const bHasGame = b.selectionPriority > 0 ? 1 : 0;
+        if (bHasGame !== aHasGame) return bHasGame - aHasGame;
+
+        if (preferInSeason && a.isInSeason !== b.isInSeason) {
+          return (b.isInSeason ? 1 : 0) - (a.isInSeason ? 1 : 0);
+        }
+
+        if (b.selectionPriority !== a.selectionPriority) {
+          return b.selectionPriority - a.selectionPriority;
+        }
+
+        return b.projectedScore - a.projectedScore;
+      });
+    };
+
+    for (let i = 0; i < slotsTemplate.length; i++) {
+      const slotRole = slotsTemplate[i];
+      const currentInSeason = selected.filter(s => s.isInSeason).length;
+      const remainingSlots = slotsTemplate.length - i;
+      const needInSeasonNow = (requiredInSeason - currentInSeason) >= remainingSlots;
+
+      const roleCandidates = pool.filter(c => {
+        if (usedIds.has(c.id)) return false;
+        if (slotRole === 'EXTRA') return c.position !== 'GK';
+        return c.position === slotRole;
+      });
+
+      if (roleCandidates.length === 0) return null;
+
+      const sorted = sortCandidates(roleCandidates, needInSeasonNow || requiredInSeason > 0);
+      const chosen = sorted[0];
+      if (!chosen) return null;
+
+      usedIds.add(chosen.id);
+      selected.push({
+        ...chosen,
+        slotRole: slotRole
+      });
     }
 
-    const venueTag = card.isHome === true
-      ? `🏠 Casa vs ${card.opponentName}`
-      : (card.isHome === false ? `✈️ Trasferta vs ${card.opponentName}` : `⚽ vs ${card.opponentName}`);
+    const finalInSeasonCount = selected.filter(s => s.isInSeason).length;
+    if (finalInSeasonCount < requiredInSeason) return null;
 
-    const minutesTag = card.availabilityTier === 'starter'
-      ? `Titolare (${card.starterCount}/5 gare da 60'+, media ${card.avgMins}')`
-      : `Rotazione/Subentrante (${card.playedCount}/5 presenze, media ${card.avgMins}')`;
-
-    const trendDiff = Number((card.l5 - card.l15).toFixed(1));
-    const trendStr = trendDiff >= 3
-      ? `forma in netta crescita (L5 ${card.l5} vs L15 ${card.l15})`
-      : (trendDiff <= -3
-        ? `leggero calo recente (L5 ${card.l5} vs L15 ${card.l15})`
-        : `rendimento stabile (L5 ${card.l5} • L15 ${card.l15})`);
-
-    const traits = card.tacticalTraits || {};
-    const tacticalNotes = [];
-
-    if (card.position === 'GK') {
-      if (card.isHome) tacticalNotes.push('fattore campo favorevole per Clean Sheet');
-      if (traits.cleanSheets >= 2) tacticalNotes.push(`${traits.cleanSheets} reti inviolate nelle ultime 5`);
-      if (card.avgAas > 0) tacticalNotes.push(`volume parate/uscite AAS: ${card.avgAas} pt`);
-    } else if (card.position === 'DEF') {
-      if (traits.aerial) tacticalNotes.push('dominanza aerea sui piazzati offensivi/difensivi');
-      if (traits.ballWinner) tacticalNotes.push('alto volume di contrasti e intercetti Opta');
-      if (traits.setPiece) tacticalNotes.push('batte punizioni/corner con alto potenziale assist');
-      if (card.isHome) tacticalNotes.push('vantaggio casalingo in ottica Clean Sheet');
-    } else if (card.position === 'MID') {
-      if (traits.setPiece) tacticalNotes.push('tiratore di piazzati e passaggi chiave (floor alto)');
-      if (traits.ballWinner) tacticalNotes.push('recuperi palla costanti in mediana');
-      if (traits.clinical) tacticalNotes.push(`incisivo in zona gol (${traits.goals}G/${traits.assists}A recenti)`);
-      if (card.avgAas > 0) tacticalNotes.push(`AAS medio: ${card.avgAas} pt`);
-    } else {
-      if (traits.clinical) tacticalNotes.push(`finalizzatore caldo (${traits.goals}G/${traits.assists}A nelle ultime 5)`);
-      if (traits.aerial) tacticalNotes.push('pericoloso nel gioco aereo in area avversaria');
-      if (traits.setPiece) tacticalNotes.push('coinvolto nei piazzati e rifiniture');
-      if (card.maxRecentScore >= 75) tacticalNotes.push(`picco recente fino a ${card.maxRecentScore} pt`);
-    }
-
-    if (tacticalNotes.length === 0) {
-      tacticalNotes.push(strategy === 'ceiling'
-        ? `upside su azioni decisive (DS medio: ${card.avgDecisive} pt)`
-        : `base Opta regolare (AAS medio: ${card.avgAas} pt)`);
-    }
-
-    const deltaSign = matchupDeltaPct >= 0 ? `+${matchupDeltaPct}%` : `${matchupDeltaPct}%`;
-    return `${venueTag} • ${minutesTag}. ${trendStr.charAt(0).toUpperCase() + trendStr.slice(1)}. Punti di forza: ${tacticalNotes.join(', ')} (indice matchup ${deltaSign}, bonus carta +${card.bonusPct}%).`;
-  },
-
-  isEligibleForCompetition(card, comp) {
-    if (comp.u23Only && !card.isU23) return false;
-    if (comp.isUefaChampions) return card.isUefaChampions === true;
-    if (comp.isUefaContender) return card.isUefaContender === true;
-    if (comp.leagues.includes('ALL')) return true;
-
-    const cardLeague = String(card.leagueSlug || '').toLowerCase();
-    return comp.leagues.some(targetSlug => {
-      const normalizedTarget = String(targetSlug || '').toLowerCase();
-      if (normalizedTarget === cardLeague) return true;
-      const aliases = this.LEAGUE_ALIASES[normalizedTarget] || [];
-      return aliases.includes(cardLeague);
-    });
+    return selected;
   }
 };
 
