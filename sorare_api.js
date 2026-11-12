@@ -1,6 +1,6 @@
-// SorareHub - Pro-Only (No Commons), 422-Proof GW Lookup & Complexity-Safe GraphQL Layer
+// SorareHub - Official inSeason Field, Pro-Only (No Commons), Complexity-Safe GraphQL Layer
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v9',
+  CACHE_KEY: 'sorarehub_gallery_cache_v10',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -136,7 +136,6 @@ const SorareAPI = {
         .filter(n => n && n.startDate && n.endDate && new Date(n.endDate).getTime() >= nowMs)
         .sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
 
-      // Deduplica eventuali fixture multiple della stessa Gameweek
       const uniqueByGw = [];
       const seenGw = new Set();
       for (const n of validFuture) {
@@ -214,6 +213,7 @@ const SorareAPI = {
 
     await new Promise(resolve => setTimeout(resolve, 350));
 
+    // Legge il campo booleano ufficiale "inSeason" direttamente da Card!
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -229,6 +229,7 @@ const SorareAPI = {
               name
               rarityTyped
               seasonYear
+              inSeason
               power
               anyPositions
               pictureUrl
@@ -460,7 +461,8 @@ const SorareAPI = {
         scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
 
         const sYear = Number(card.seasonYear || 0);
-        const isInSeason = sYear >= 2026;
+        // Usa il booleano ufficiale Sorare "inSeason" se presente, altrimenti fallback su seasonYear >= 2025
+        const isInSeason = typeof card.inSeason === 'boolean' ? card.inSeason : (sYear >= 2025);
 
         const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0;
         const u23Cutoff = new Date('2003-07-01').getTime();
