@@ -1,4 +1,4 @@
-// SorareHub - Application Controller (Carbon & Gold Edition + Gallery Counter Sync + Visible Banners + Real GW Selector)
+// SorareHub - Universal DOM-Compatible Controller (Carbon & Gold Edition + Gallery Counters + GW Selector + Touch/Hover Tooltip)
 const App = {
   cards: [],
   gameweeks: [],
@@ -53,6 +53,7 @@ const App = {
     }
   },
 
+  // Aggiorna tutti i contatori della galleria nell'HTML originale (totale e per singola rarità)
   updateGalleryCounters() {
     const total = this.cards.length;
     const counts = {
@@ -62,17 +63,32 @@ const App = {
       unique: this.cards.filter(c => c.scarcity === 'unique').length
     };
 
-    // Aggiorna tutti i possibili ID/classi contatore presenti nel DOM originale
-    const counterIds = ['gallery-count', 'total-cards', 'cards-count', 'card-count'];
-    counterIds.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) {
-        el.textContent = `${total} (L:${counts.limited} • R:${counts.rare} • SR:${counts.super_rare} • U:${counts.unique})`;
-      }
-    });
+    const setElText = (selectors, value) => {
+      selectors.forEach(sel => {
+        document.querySelectorAll(sel).forEach(el => {
+          el.textContent = value;
+        });
+      });
+    };
 
-    document.querySelectorAll('[data-gallery-count], .gallery-count, .cards-counter').forEach(el => {
-      el.textContent = `${total}`;
+    setElText([
+      '#gallery-count', '#total-cards', '#cards-count', '#card-count',
+      '#stat-total-cards', '#total-gallery-cards', '[data-gallery-count]',
+      '.gallery-count', '.cards-counter', '.stat-value[data-stat="total"]'
+    ], String(total));
+
+    setElText(['#count-limited', '#stat-limited', '[data-count="limited"]'], String(counts.limited));
+    setElText(['#count-rare', '#stat-rare', '[data-count="rare"]'], String(counts.rare));
+    setElText(['#count-super-rare', '#stat-super-rare', '[data-count="super_rare"]'], String(counts.super_rare));
+    setElText(['#count-unique', '#stat-unique', '[data-count="unique"]'], String(counts.unique));
+
+    // Aggiorna anche eventuali badge numerici dentro i tab delle rarità se presenti
+    document.querySelectorAll('[data-scarcity], [data-rarity]').forEach(btn => {
+      const rar = (btn.dataset.scarcity || btn.dataset.rarity || '').toLowerCase();
+      if (counts[rar] !== undefined) {
+        const badge = btn.querySelector('.count, .badge, span[data-count]');
+        if (badge) badge.textContent = String(counts[rar]);
+      }
     });
   },
 
@@ -193,17 +209,27 @@ const App = {
     document.head.appendChild(style);
   },
 
+  getCompetitionSelectEl() {
+    return (
+      document.getElementById('comp-select') ||
+      document.getElementById('competition-select') ||
+      document.getElementById('tournament-select') ||
+      document.querySelector('select[name="competition"]')
+    );
+  },
+
   renderGwSelector() {
     if (!this.gameweeks || this.gameweeks.length === 0) return;
 
     let container = document.getElementById('gw-selector-container');
     if (!container) {
-      const compSelect = document.getElementById('comp-select');
-      if (!compSelect || !compSelect.parentElement) return;
+      const compSelect = this.getCompetitionSelectEl();
+      const targetParent = (compSelect && compSelect.parentElement) || document.getElementById('status-banner')?.parentElement;
+      if (!targetParent) return;
       container = document.createElement('div');
       container.id = 'gw-selector-container';
       container.className = 'gw-selector-pill';
-      compSelect.parentElement.appendChild(container);
+      targetParent.appendChild(container);
     }
 
     const optionsHtml = this.gameweeks
@@ -225,8 +251,8 @@ const App = {
   },
 
   async loadUserGallery(forceRefresh = false) {
-    const loginBtn = document.getElementById('login-btn');
-    const loginBtnText = document.getElementById('login-btn-text');
+    const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
+    const loginBtnText = document.getElementById('login-btn-text') || loginBtn;
 
     if (loginBtn) loginBtn.disabled = true;
     if (loginBtnText) loginBtnText.textContent = '⏳ Sincronizzazione GW & Opta...';
@@ -250,10 +276,17 @@ const App = {
           loginBtn.disabled = false;
         }
 
+        // Sincronizza competizione selezionata dal dropdown prima di generare
+        const compSelect = this.getCompetitionSelectEl();
+        if (compSelect && compSelect.value) {
+          const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === compSelect.value);
+          if (found) this.currentCompetition = found;
+        }
+
         this.renderGwSelector();
         const activeGw = this.gameweeks[this.selectedGwIndex];
         const gwBadge = activeGw ? ` • ${activeGw.label} (${activeGw.dateRangeText})` : '';
-        this.notify(`✅ Sincronizzate ${this.cards.length} carte Pro (escluse Common)${gwBadge}`);
+        this.notify(`✅ Sincronizzate ${this.cards.length} carte Pro${gwBadge}`);
         this.runOptimizer();
       }
     } catch (err) {
@@ -265,7 +298,7 @@ const App = {
   },
 
   populateCompetitionDropdown() {
-    const select = document.getElementById('comp-select');
+    const select = this.getCompetitionSelectEl();
     if (!select) return;
 
     select.innerHTML = CONFIG.OFFICIAL_COMPETITIONS.map(comp => {
@@ -275,12 +308,12 @@ const App = {
   },
 
   bindEvents() {
-    const loginBtn = document.getElementById('login-btn');
+    const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
     if (loginBtn) {
       loginBtn.addEventListener('click', () => SorareAPI.startOAuthFlow());
     }
 
-    const compSelect = document.getElementById('comp-select');
+    const compSelect = this.getCompetitionSelectEl();
     if (compSelect) {
       compSelect.addEventListener('change', (e) => {
         const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === e.target.value);
@@ -291,27 +324,51 @@ const App = {
       });
     }
 
-    document.querySelectorAll('#scarcity-tabs .tab-btn').forEach(btn => {
+    // Supporta sia #scarcity-tabs sia [data-scarcity] / [data-rarity] ovunque nel DOM
+    document.querySelectorAll('[data-scarcity], [data-rarity]').forEach(btn => {
       btn.addEventListener('click', (e) => {
-        document.querySelectorAll('#scarcity-tabs .tab-btn').forEach(b => b.classList.remove('active'));
-        e.currentTarget.classList.add('active');
-        this.currentScarcity = e.currentTarget.dataset.scarcity;
+        const target = e.currentTarget;
+        const val = (target.dataset.scarcity || target.dataset.rarity || '').toLowerCase();
+        if (!val) return;
+        const parent = target.parentElement;
+        if (parent) {
+          parent.querySelectorAll('.active').forEach(b => b.classList.remove('active'));
+        }
+        target.classList.add('active');
+        this.currentScarcity = val;
         this.runOptimizer();
       });
     });
 
-    document.querySelectorAll('#strategy-tabs .tab-btn').forEach(btn => {
+    // Supporta sia #strategy-tabs sia [data-strategy] ovunque nel DOM
+    document.querySelectorAll('[data-strategy]').forEach(btn => {
       btn.addEventListener('click', (e) => {
-        document.querySelectorAll('#strategy-tabs .tab-btn').forEach(b => b.classList.remove('active'));
-        e.currentTarget.classList.add('active');
-        this.currentStrategy = e.currentTarget.dataset.strategy;
+        const target = e.currentTarget;
+        const val = (target.dataset.strategy || '').toLowerCase();
+        if (!val) return;
+        const parent = target.parentElement;
+        if (parent) {
+          parent.querySelectorAll('.active').forEach(b => b.classList.remove('active'));
+        }
+        target.classList.add('active');
+        this.currentStrategy = val;
         this.runOptimizer();
       });
     });
 
-    const genBtn = document.getElementById('generate-btn');
+    const genBtn =
+      document.getElementById('generate-btn') ||
+      document.getElementById('optimize-btn') ||
+      document.querySelector('[data-action="generate"]');
     if (genBtn) {
-      genBtn.addEventListener('click', () => this.runOptimizer());
+      genBtn.addEventListener('click', () => {
+        const sel = this.getCompetitionSelectEl();
+        if (sel && sel.value) {
+          const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === sel.value);
+          if (found) this.currentCompetition = found;
+        }
+        this.runOptimizer();
+      });
     }
 
     document.addEventListener('click', (e) => {
@@ -335,6 +392,11 @@ const App = {
       return;
     }
 
+    if (!window.OptimizerEngine) {
+      this.notify('❌ Errore caricamento OptimizerEngine (ricarica con Cmd+Shift+R)', true);
+      return;
+    }
+
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
     const lineups = OptimizerEngine.buildCascadePortfolio(
       this.cards,
@@ -348,8 +410,14 @@ const App = {
   },
 
   renderLineups(lineups, selectedGw) {
-    const grid = document.getElementById('lineups-grid');
-    const summary = document.getElementById('portfolio-summary');
+    const grid =
+      document.getElementById('lineups-grid') ||
+      document.getElementById('lineups-container') ||
+      document.getElementById('results-grid');
+    const summary =
+      document.getElementById('portfolio-summary') ||
+      document.getElementById('results-summary');
+
     const gwInfoStr = selectedGw ? ` • <strong>${selectedGw.label}</strong> (${selectedGw.dateRangeText})` : '';
     const rarityCardsCount = this.cards.filter(c => c.scarcity === this.currentScarcity.toLowerCase()).length;
 
@@ -451,7 +519,10 @@ const App = {
   },
 
   renderEmptyState() {
-    const grid = document.getElementById('lineups-grid');
+    const grid =
+      document.getElementById('lineups-grid') ||
+      document.getElementById('lineups-container') ||
+      document.getElementById('results-grid');
     if (grid) {
       grid.innerHTML = `
         <div class="empty-state">
