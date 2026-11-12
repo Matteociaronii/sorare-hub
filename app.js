@@ -1,4 +1,4 @@
-// SorareHub - Universal DOM-Agnostic Controller (Carbon & Gold Edition + All 3 Counters + Universal Generate Button)
+// SorareHub - Application Controller (Official inSeason Sync + Clean Summary + All 3 Counters + Instant Lineup Cards)
 const App = {
   cards: [],
   gameweeks: [],
@@ -53,20 +53,10 @@ const App = {
     }
   },
 
-  // Aggiorna tutti e 3 i contatori KPI presenti nella dashboard originale
-  updateGalleryCounters(lineupsCount = null) {
+  updateGalleryCounters(lineupsCount = 0) {
     const total = this.cards.length;
     const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
-    const startersTotal = this.cards.filter(c => c.baseFitnessTier === 'starter').length;
 
-    const countsByRarity = {
-      limited: this.cards.filter(c => c.scarcity === 'limited').length,
-      rare: this.cards.filter(c => c.scarcity === 'rare').length,
-      super_rare: this.cards.filter(c => c.scarcity === 'super_rare').length,
-      unique: this.cards.filter(c => c.scarcity === 'unique').length
-    };
-
-    // 1. Aggiorna ID espliciti noti
     const mapById = {
       'gallery-count': total,
       'total-cards': total,
@@ -75,14 +65,9 @@ const App = {
       'stat-total-cards': total,
       'in-season-count': inSeasonTotal,
       'stat-in-season': inSeasonTotal,
-      'starters-count': startersTotal,
-      'stat-starters': startersTotal,
-      'lineups-count': lineupsCount !== null ? lineupsCount : startersTotal,
-      'stat-lineups': lineupsCount !== null ? lineupsCount : startersTotal,
-      'count-limited': countsByRarity.limited,
-      'count-rare': countsByRarity.rare,
-      'count-super-rare': countsByRarity.super_rare,
-      'count-unique': countsByRarity.unique
+      'lineups-count': lineupsCount,
+      'stat-lineups': lineupsCount,
+      'teams-count': lineupsCount
     };
 
     Object.entries(mapById).forEach(([id, val]) => {
@@ -90,23 +75,23 @@ const App = {
       if (el) el.textContent = String(val);
     });
 
-    // 2. Aggiorna automaticamente le card statistiche della dashboard (es. le 3 KPI card) leggendo la loro etichetta
-    const statCards = document.querySelectorAll('.stat-card, .kpi-card, .metric-card, .summary-card, .stat-box');
+    // Aggiorna i 3 contatori KPI nella dashboard in base alla loro etichetta o posizione
+    const statCards = document.querySelectorAll('.stat-card, .kpi-card, .metric-card, .summary-card, .stat-box, .stats-grid > div, .kpi-grid > div');
     statCards.forEach((card, idx) => {
-      const valEl = card.querySelector('.stat-val, .stat-value, .kpi-value, .count, h2, h3, strong');
+      const valEl = card.querySelector('.stat-val, .stat-value, .kpi-value, .count, h2, h3, span:first-child, strong');
       if (!valEl) return;
       const labelTxt = card.textContent.toLowerCase();
 
       if (labelTxt.includes('in-season') || labelTxt.includes('26/27') || labelTxt.includes('stagione')) {
         valEl.textContent = String(inSeasonTotal);
-      } else if (labelTxt.includes('titolar') || labelTxt.includes('pront') || labelTxt.includes('formazion') || labelTxt.includes('lineup')) {
-        valEl.textContent = String(lineupsCount !== null ? lineupsCount : startersTotal);
+      } else if (labelTxt.includes('squadr') || labelTxt.includes('formazion') || labelTxt.includes('lineup') || labelTxt.includes('generat')) {
+        valEl.textContent = String(lineupsCount);
       } else if (labelTxt.includes('cart') || labelTxt.includes('galleri') || idx === 0) {
         valEl.textContent = String(total);
       } else if (idx === 1) {
         valEl.textContent = String(inSeasonTotal);
       } else if (idx === 2) {
-        valEl.textContent = String(lineupsCount !== null ? lineupsCount : startersTotal);
+        valEl.textContent = String(lineupsCount);
       }
     });
   },
@@ -237,22 +222,28 @@ const App = {
     );
   },
 
+  getLineupsGridEl() {
+    return (
+      document.getElementById('lineups-grid') ||
+      document.getElementById('lineups-container') ||
+      document.getElementById('results-grid') ||
+      document.querySelector('.lineups-grid, .lineups-container, .results-grid')
+    );
+  },
+
   syncStateFromDOM() {
-    // Sincronizza la competizione dal <select>
     const compSelect = this.getCompetitionSelectEl();
     if (compSelect && compSelect.value) {
       const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === compSelect.value);
       if (found) this.currentCompetition = found;
     }
 
-    // Sincronizza la rarità attiva dai tab
     const activeRarityBtn = document.querySelector('[data-scarcity].active, [data-rarity].active');
     if (activeRarityBtn) {
       const r = (activeRarityBtn.dataset.scarcity || activeRarityBtn.dataset.rarity || '').toLowerCase();
       if (r) this.currentScarcity = r;
     }
 
-    // Sincronizza la strategia attiva dai tab
     const activeStratBtn = document.querySelector('[data-strategy].active');
     if (activeStratBtn) {
       const s = (activeStratBtn.dataset.strategy || '').toLowerCase();
@@ -308,8 +299,6 @@ const App = {
         this.gameweeks = data.gameweeks || [];
         this.selectedGwIndex = 0;
 
-        this.updateGalleryCounters();
-
         if (loginBtnText) {
           loginBtnText.textContent = `✅ @${this.user?.nickname || 'Manager'} (${this.cards.length} carte Pro)`;
         }
@@ -320,9 +309,6 @@ const App = {
 
         this.syncStateFromDOM();
         this.renderGwSelector();
-        const activeGw = this.gameweeks[this.selectedGwIndex];
-        const gwBadge = activeGw ? ` • ${activeGw.label} (${activeGw.dateRangeText})` : '';
-        this.notify(`✅ Sincronizzate ${this.cards.length} carte Pro${gwBadge}`);
         this.runOptimizer();
       }
     } catch (err) {
@@ -390,7 +376,6 @@ const App = {
       });
     });
 
-    // Listener universale per qualsiasi pulsante Genera / Ottimizza nel DOM
     document.addEventListener('click', (e) => {
       const trigger = e.target.closest('.player-info-trigger');
       if (trigger) {
@@ -443,11 +428,19 @@ const App = {
   },
 
   renderLineups(lineups, selectedGw) {
-    const grid =
-      document.getElementById('lineups-grid') ||
-      document.getElementById('lineups-container') ||
-      document.getElementById('results-grid') ||
-      document.querySelector('.lineups-grid');
+    let grid = this.getLineupsGridEl();
+    if (!grid) {
+      // Se l'HTML originale ha un altro ID, crea comunque il contenitore subito sotto il banner
+      grid = document.createElement('div');
+      grid.id = 'lineups-grid';
+      grid.className = 'lineups-grid';
+      const banner = document.getElementById('status-banner');
+      if (banner && banner.parentElement) {
+        banner.parentElement.appendChild(grid);
+      } else {
+        document.body.appendChild(grid);
+      }
+    }
 
     const summary =
       document.getElementById('portfolio-summary') ||
@@ -459,98 +452,91 @@ const App = {
     const inSeasonInRarity = rarityCards.filter(c => c.isInSeason).length;
 
     if (!lineups || lineups.length === 0) {
-      const reasonMsg = `⚠️ 0 formazioni generate per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Hai ${rarityCards.length} carte ${this.currentScarcity.toUpperCase()} (${inSeasonInRarity} In-Season 26/27).`;
+      const reasonMsg = `⚠️ 0 formazioni generate per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Hai ${rarityCards.length} carte ${this.currentScarcity.toUpperCase()} (${inSeasonInRarity} In-Season).`;
       this.notify(reasonMsg, true);
 
       if (summary) {
         summary.innerHTML = reasonMsg;
       }
-      if (grid) {
-        grid.innerHTML = `
-          <div class="empty-state">
-            <p><strong>${reasonMsg}</strong></p>
-            <p>Verifica di avere almeno 1 GK, 1 DEF, 1 MID, 1 FWD e 1 EXTRA eleggibili (con il requisito In-Season richiesto dal torneo).</p>
-          </div>
-        `;
-      }
+      grid.innerHTML = `
+        <div class="empty-state">
+          <p><strong>${reasonMsg}</strong></p>
+          <p>Verifica di avere almeno 1 GK, 1 DEF, 1 MID, 1 FWD e 1 EXTRA eleggibili per questo torneo.</p>
+        </div>
+      `;
       return;
     }
 
-    const totalPortfolioPoints = lineups.reduce((acc, l) => acc + l.totalProjected, 0);
-    this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} • Totale: ${totalPortfolioPoints} pt`);
+    this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
 
     if (summary) {
       summary.innerHTML = `
-        Galleria: <strong>${this.cards.length} carte Pro</strong> (${rarityCards.length} ${this.currentScarcity.toUpperCase()}) •
-        <strong>${lineups.length} Formazioni Ottimizzate</strong> per <strong>${this.currentCompetition.name}</strong>${gwInfoStr} •
-        Proiezione Totale: <strong>${totalPortfolioPoints} pt</strong>
+        <strong>${lineups.length} Formazioni Ottimizzate</strong> per <strong>${this.currentCompetition.name}</strong> (${this.currentScarcity.toUpperCase()})${gwInfoStr}
       `;
     }
 
-    if (grid) {
-      grid.innerHTML = lineups.map(lineup => {
-        const formatBadge = lineup.format === 'SO7'
-          ? `<span class="badge-so7">SO7 • 7 Titolari (Classic)</span>`
-          : `<span class="badge-so5">SO5 • ${lineup.inSeasonCount}/5 In-Season</span>`;
+    grid.innerHTML = lineups.map(lineup => {
+      const formatBadge = lineup.format === 'SO7'
+        ? `<span class="badge-so7">SO7 • 7 Titolari (Classic)</span>`
+        : `<span class="badge-so5">SO5 • ${lineup.inSeasonCount}/5 In-Season</span>`;
 
-        const playersHtml = lineup.starters.map(p => {
-          const capBadge = p.isCaptain ? `<span class="cap-badge">C +50%</span>` : '';
-          const seasonBadge = p.isInSeason
-            ? `<span class="season-tag in-season">26/27</span>`
-            : `<span class="season-tag classic">CLASSIC</span>`;
+      const playersHtml = lineup.starters.map(p => {
+        const capBadge = p.isCaptain ? `<span class="cap-badge">C +50%</span>` : '';
+        const seasonBadge = p.isInSeason
+          ? `<span class="season-tag in-season">26/27</span>`
+          : `<span class="season-tag classic">CLASSIC</span>`;
 
-          const statusBadge = p.isLastResort
-            ? `<span class="status-tag last-resort" title="${this.escapeHtml(p.unavailableReason)}">⚠️ RISERVA</span>`
-            : (p.availabilityTier === 'rotation'
-              ? `<span class="status-tag xi-ok" style="opacity:0.85;">ROT</span>`
-              : `<span class="status-tag xi-ok">XI</span>`);
+        const statusBadge = p.isLastResort
+          ? `<span class="status-tag last-resort" title="${this.escapeHtml(p.unavailableReason)}">⚠️ RISERVA</span>`
+          : (p.availabilityTier === 'rotation'
+            ? `<span class="status-tag xi-ok" style="opacity:0.85;">ROT</span>`
+            : `<span class="status-tag xi-ok">XI</span>`);
 
-          const isNat = p.activeMatch?.isNationalTeam === true;
-          const matchLine = isNat
-            ? `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`
-            : `${p.isHome === true ? '🏠' : (p.isHome === false ? '✈️' : '⚠️')} vs ${this.escapeHtml(p.opponentName)}`;
+        const isNat = p.activeMatch?.isNationalTeam === true;
+        const matchLine = isNat
+          ? `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`
+          : `${p.isHome === true ? '🏠' : (p.isHome === false ? '✈️' : '⚠️')} vs ${this.escapeHtml(p.opponentName)}`;
 
-          const safeInsight = this.escapeHtml(p.matchupInsight || '');
-          const safeName = this.escapeHtml(p.name);
-
-          return `
-            <div class="player-row ${p.isCaptain ? 'captain-row' : ''} ${p.isLastResort ? 'last-resort-row' : ''}">
-              <div class="pos-pill pos-${p.slotRole.toLowerCase()}">${p.slotRole}</div>
-              <div class="player-meta">
-                <div class="player-name">
-                  ${safeName} ${capBadge} ${seasonBadge} ${statusBadge}
-                  <span class="player-info-trigger" tabindex="0" aria-label="Analisi tattica ${safeName}">?
-                    <span class="tactical-tooltip-box">
-                      <span class="tactical-tooltip-title">Analisi Matchup • ${safeName}</span>
-                      ${safeInsight}
-                    </span>
-                  </span>
-                </div>
-                <div class="player-sub">${this.escapeHtml(p.club)} • ${matchLine} • L15: ${p.l15} • L5: ${p.l5} • Bonus +${p.bonusPct}%</div>
-              </div>
-              <div class="player-score">${p.projectedScore}<span>pt</span></div>
-            </div>
-          `;
-        }).join('');
+        const safeInsight = this.escapeHtml(p.matchupInsight || '');
+        const safeName = this.escapeHtml(p.name);
 
         return `
-          <div class="lineup-card">
-            <div class="lineup-header">
-              <div>
-                <div class="lineup-rank">${lineup.rankLabel}</div>
-                <div class="lineup-comp">${this.currentCompetition.name}</div>
+          <div class="player-row ${p.isCaptain ? 'captain-row' : ''} ${p.isLastResort ? 'last-resort-row' : ''}">
+            <div class="pos-pill pos-${p.slotRole.toLowerCase()}">${p.slotRole}</div>
+            <div class="player-meta">
+              <div class="player-name">
+                ${safeName} ${capBadge} ${seasonBadge} ${statusBadge}
+                <span class="player-info-trigger" tabindex="0" aria-label="Analisi tattica ${safeName}">?
+                  <span class="tactical-tooltip-box">
+                    <span class="tactical-tooltip-title">Analisi Matchup • ${safeName}</span>
+                    ${safeInsight}
+                  </span>
+                </span>
               </div>
-              <div class="lineup-total">
-                <div class="total-val">${lineup.totalProjected}</div>
-                <div class="total-lbl">EV PROIETTATO</div>
-              </div>
+              <div class="player-sub">${this.escapeHtml(p.club)} • ${matchLine} • L15: ${p.l15} • L5: ${p.l5} • Bonus +${p.bonusPct}%</div>
             </div>
-            <div class="lineup-badges">${formatBadge}</div>
-            <div class="lineup-players">${playersHtml}</div>
+            <div class="player-score">${p.projectedScore}<span>pt</span></div>
           </div>
         `;
       }).join('');
-    }
+
+      return `
+        <div class="lineup-card">
+          <div class="lineup-header">
+            <div>
+              <div class="lineup-rank">${lineup.rankLabel}</div>
+              <div class="lineup-comp">${this.currentCompetition.name}</div>
+            </div>
+            <div class="lineup-total">
+              <div class="total-val">${lineup.totalProjected}</div>
+              <div class="total-lbl">EV PROIETTATO</div>
+            </div>
+          </div>
+          <div class="lineup-badges">${formatBadge}</div>
+          <div class="lineup-players">${playersHtml}</div>
+        </div>
+      `;
+    }).join('');
   },
 
   escapeHtml(str) {
@@ -562,11 +548,7 @@ const App = {
   },
 
   renderEmptyState() {
-    const grid =
-      document.getElementById('lineups-grid') ||
-      document.getElementById('lineups-container') ||
-      document.getElementById('results-grid') ||
-      document.querySelector('.lineups-grid');
+    const grid = this.getLineupsGridEl();
     if (grid) {
       grid.innerHTML = `
         <div class="empty-state">
