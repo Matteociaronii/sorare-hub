@@ -1,6 +1,6 @@
 // SorareHub - Pro-Only (No Commons), Complexity-Safe (<23k) & Rate-Limit Safe GraphQL Layer
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v7',
+  CACHE_KEY: 'sorarehub_gallery_cache_v8',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -204,13 +204,13 @@ const SorareAPI = {
 
     await new Promise(resolve => setTimeout(resolve, 350));
 
-    // Esclude le carte Common direttamente nella query Sorare: scarica solo Limited, Rare, Super Rare e Unique
+    // Enum Rarity in Sorare GraphQL richiede valori in minuscolo: [limited, rare, super_rare, unique]
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
           slug
           nickname
-          cards(first: 45, after: $after, rarities: [LIMITED, RARE, SUPER_RARE, UNIQUE]) {
+          cards(first: 45, after: $after, rarities: [limited, rare, super_rare, unique]) {
             pageInfo {
               hasNextPage
               endCursor
@@ -353,7 +353,8 @@ const SorareAPI = {
       const nodes = connection?.nodes || [];
       if (nodes.length === 0) break;
 
-      allCards = allCards.concat(nodes);
+      const proNodes = nodes.filter(n => String(n?.rarityTyped || '').toLowerCase() !== 'common');
+      allCards = allCards.concat(proNodes);
 
       const loginBtnText = document.getElementById('login-btn-text');
       if (loginBtnText) {
