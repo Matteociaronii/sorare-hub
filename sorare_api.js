@@ -1,6 +1,6 @@
-// SorareHub - Accurate 2026/27 In-Season Detection + Dynamic Real Match Gameweek Grouping
+// SorareHub - TeamInterface National Team + Club Schedule & 2026/27 In-Season Detection
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v12',
+  CACHE_KEY: 'sorarehub_gallery_cache_v13',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -56,7 +56,7 @@ const SorareAPI = {
 
       if (!response.ok) {
         const errTxt = await response.text();
-        throw new Error(`Errore dal Worker (${response.status}): ${errTxt}`);
+        throw new Error(`Errore dal Worker (${response.status}):${errTxt}`);
       }
 
       const tokenData = await response.json();
@@ -97,7 +97,6 @@ const SorareAPI = {
     }
   },
 
-  // Costruisce le 3 finestre Gameweek raggruppando le date reali delle prossime partite dei tuoi giocatori
   buildGameweekWindowsFromCards(cards) {
     const nowMs = Date.now() - 6 * 3600 * 1000;
     const allTimestamps = [];
@@ -119,7 +118,6 @@ const SorareAPI = {
 
       for (let i = 1; i < allTimestamps.length; i++) {
         const ts = allTimestamps[i];
-        // Se tra una partita e la successiva passano più di 48 ore, inizia una nuova Gameweek
         if (ts - currentClusterEnd > 48 * 3600 * 1000 && ts - currentClusterStart > 3.5 * 24 * 3600 * 1000) {
           clusters.push({ start: currentClusterStart, end: currentClusterEnd });
           currentClusterStart = ts;
@@ -145,7 +143,6 @@ const SorareAPI = {
       });
     }
 
-    // Fallback se non ci sono partite future
     const start = new Date();
     const end = new Date(start.getTime() + 5 * 24 * 3600 * 1000);
     return [{
@@ -163,7 +160,7 @@ const SorareAPI = {
       const s = new Date(startStr);
       const e = new Date(endStr);
       const opts = { day: '2-digit', month: 'short' };
-      return `${s.toLocaleDateString('it-IT', opts)} - ${e.toLocaleDateString('it-IT', opts)}`;
+      return `${s.toLocaleDateString('it-IT', opts)} -${e.toLocaleDateString('it-IT', opts)}`;
     } catch (_) {
       return '';
     }
@@ -191,6 +188,7 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
 
+    // Usa ... on TeamInterface per catturare sia Club che NationalTeam senza nodi vuoti
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -250,13 +248,13 @@ const SorareAPI = {
                         displayName
                       }
                       homeTeam {
-                        ... on Club {
+                        ... on TeamInterface {
                           slug
                           name
                         }
                       }
                       awayTeam {
-                        ... on Club {
+                        ... on TeamInterface {
                           slug
                           name
                         }
@@ -266,20 +264,20 @@ const SorareAPI = {
                   activeNationalTeam {
                     name
                     slug
-                    upcomingGames(first: 2) {
+                    upcomingGames(first: 3) {
                       date
                       competition {
                         slug
                         displayName
                       }
                       homeTeam {
-                        ... on NationalTeam {
+                        ... on TeamInterface {
                           slug
                           name
                         }
                       }
                       awayTeam {
-                        ... on NationalTeam {
+                        ... on TeamInterface {
                           slug
                           name
                         }
@@ -320,32 +318,7 @@ const SorareAPI = {
         if (res && res.status === 401) {
           localStorage.removeItem('sorare_access_token');
         }
-        throw new Error(`Errore API Sorare (${res ? res.status : 'NET'}): ${errBody}`);
-      }
-
-      const json = await res.json();
-      if (json.errors && json.errors.length > 0) {
-        console.error('Errore GraphQL:', json.errors);
-        throw new Error(json.errors[0].message);
-      }
-
-      const currentUser = json.data?.currentUser;
-      if (!currentUser) break;
-
-      if (!userProfile) {
-        userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
-      }
-
-      const connection = currentUser.cards;
-      const nodes = connection?.nodes || [];
-      if (nodes.length === 0) break;
-
-      const proNodes = nodes.filter(n => String(n?.rarityTyped || '').toLowerCase() !== 'common');
-      allCards = allCards.concat(proNodes);
-
-      const loginBtnText = document.getElementById('login-btn-text');
-      if (loginBtnText) {
-        loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
+        throw new Error(`Errore API Sorare (${res ? res.status : 'NET'}): ${errBody}`); }  const json = await res.json(); if (json.errors && json.errors.length > 0) { console.error('Errore GraphQL:', json.errors); throw new Error(json.errors[0].message); }  const currentUser = json.data?.currentUser; if (!currentUser) break;  if (!userProfile) { userProfile = { slug: currentUser.slug, nickname: currentUser.nickname }; }  const connection = currentUser.cards; const nodes = connection?.nodes \vert{}\vert{} []; if (nodes.length === 0) break;  const proNodes = nodes.filter(n => String(n?.rarityTyped \vert{}\vert{} '').toLowerCase() !== 'common'); allCards = allCards.concat(proNodes);  const loginBtnText = document.getElementById('login-btn-text'); if (loginBtnText) { loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
       }
       if (window.App && App.notify) {
         App.notify(`📥 Analisi Opta: ${allCards.length} carte Pro...`);
@@ -389,175 +362,7 @@ const SorareAPI = {
       .map((card, index) => {
         const player = card.player || {};
         const playerName = player.displayName || card.name || 'Calciatore';
-        const playerSlug = player.slug || card.slug || `slug_${index}`;
-        const rawPos = (card.anyPositions && card.anyPositions[0]) || 'FORWARD';
-        const pos = this.normalizePosition(rawPos);
-
-        const club = player.activeClub || {};
-        const clubName = club.name || 'Svincolato / N.D.';
-        const clubSlug = club.slug || 'no-club';
-        const leagueSlug = (club.domesticLeague?.slug || 'other').toLowerCase();
-
-        const natTeam = player.activeNationalTeam || {};
-        const natSlug = natTeam.slug || '';
-        const natName = natTeam.name || '';
-
-        const scheduleGames = [];
-
-        const clubGames = Array.isArray(club.upcomingGames) ? club.upcomingGames : [];
-        clubGames.forEach(g => {
-          if (!g || !g.date) return;
-          const isHome = g.homeTeam?.slug === clubSlug;
-          scheduleGames.push({
-            date: g.date,
-            timestamp: new Date(g.date).getTime(),
-            competitionSlug: String(g.competition?.slug || '').toLowerCase(),
-            competitionName: g.competition?.displayName || g.competition?.slug || 'Club',
-            isHome: isHome,
-            opponentName: isHome ? (g.awayTeam?.name || 'Avversario') : (g.homeTeam?.name || 'Avversario'),
-            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
-            isNationalTeam: false,
-            teamName: clubName
-          });
-        });
-
-        const natGames = Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : [];
-        natGames.forEach(g => {
-          if (!g || !g.date) return;
-          const isHome = g.homeTeam?.slug === natSlug;
-          const oppName = isHome ? (g.awayTeam?.name || 'Nazionale') : (g.homeTeam?.name || 'Nazionale');
-          scheduleGames.push({
-            date: g.date,
-            timestamp: new Date(g.date).getTime(),
-            competitionSlug: String(g.competition?.slug || 'international').toLowerCase(),
-            competitionName: g.competition?.displayName || 'Nazionale FIFA',
-            isHome: isHome,
-            opponentName: oppName,
-            opponentSlug: isHome ? (g.awayTeam?.slug || '') : (g.homeTeam?.slug || ''),
-            isNationalTeam: true,
-            teamName: `${natName || 'Nazionale'} vs ${oppName}`
-          });
-        });
-
-        scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
-
-        // Parsing robusto dell'anno e della scadenza In-Season (2026/27 -> seasonYear = 2026 o slug contiene -2026-)
-        const rawSeasonStr = String(card.seasonYear || '');
-        const parsedYearMatch = rawSeasonStr.match(/20\d{2}/);
-        const sYear = parsedYearMatch ? Number(parsedYearMatch[0]) : 0;
-        const slugHasCurrentSeason = String(card.slug || '').includes('-2026-');
-        const inSeasonUntilMs = card.inSeasonUntil ? new Date(card.inSeasonUntil).getTime() : 0;
-
-        const isInSeason =
-          (inSeasonUntilMs > nowMs) ||
-          (sYear >= 2026) ||
-          slugHasCurrentSeason;
-
-        const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0;
-        const u23Cutoff = new Date('2003-07-01').getTime();
-        const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
-
-        const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
-        const last5Window = allRecentScores.slice(0, 5);
-        const playedMatchesAll = allRecentScores.filter(s => {
-          if (!s) return false;
-          const sc = typeof s.score === 'number' ? s.score : 0;
-          const mins = typeof s.playerGameStats?.minsPlayed === 'number' ? s.playerGameStats.minsPlayed : 0;
-          return sc > 0 || mins > 0;
-        });
-
-        const apiL5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
-        const computedL5 = playedMatchesAll.length > 0
-          ? Number((playedMatchesAll.reduce((acc, m) => acc + (m.score || 0), 0) / playedMatchesAll.length).toFixed(1))
-          : 0;
-        const l5 = computedL5 > 0 ? computedL5 : apiL5;
-
-        const apiL15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0;
-        const l15 = apiL15 > 0 ? Math.max(apiL15, Number(((apiL15 + computedL5) / 2).toFixed(1))) : computedL5;
-
-        let playedInLast5Games = 0;
-        let starterCount = 0;
-        let totalMins = 0;
-        let sumAas = 0;
-        let sumDecisive = 0;
-        let maxRecentScore = 0;
-        let validScoreValues = [];
-
-        let totalGoals = 0;
-        let totalAssists = 0;
-        let totalCleanSheets = 0;
-        let totalSaves = 0;
-
-        last5Window.forEach(s => {
-          if (!s) return;
-          const sc = typeof s.score === 'number' ? s.score : 0;
-          const stats = s.playerGameStats || {};
-          const mins = typeof stats.minsPlayed === 'number' ? stats.minsPlayed : (sc > 0 ? 60 : 0);
-
-          if (mins > 0 || sc > 0) {
-            playedInLast5Games++;
-            totalMins += mins;
-            if (mins >= 55) starterCount++;
-            validScoreValues.push(sc);
-            if (sc > maxRecentScore) maxRecentScore = sc;
-
-            const dec = typeof s.decisiveScore?.totalScore === 'number' ? s.decisiveScore.totalScore : 0;
-            const aas = Math.max(0, Number((sc - dec).toFixed(1)));
-            sumAas += aas;
-            sumDecisive += dec;
-
-            totalGoals += stats.goals || 0;
-            totalAssists += stats.goalAssist || 0;
-            totalCleanSheets += stats.cleanSheet || 0;
-            totalSaves += stats.saves || 0;
-          }
-        });
-
-        const avgMins = playedInLast5Games > 0 ? Math.round(totalMins / playedInLast5Games) : 0;
-        const avgAas = playedInLast5Games > 0 ? Number((sumAas / playedInLast5Games).toFixed(1)) : 0;
-        const avgDecisive = playedInLast5Games > 0 ? Number((sumDecisive / playedInLast5Games).toFixed(1)) : 0;
-
-        let stdDev = 0;
-        if (validScoreValues.length > 1) {
-          const mean = validScoreValues.reduce((a, b) => a + b, 0) / validScoreValues.length;
-          const variance = validScoreValues.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / validScoreValues.length;
-          stdDev = Number(Math.sqrt(variance).toFixed(1));
-        }
-
-        const injuries = Array.isArray(player.activeInjuries) ? player.activeInjuries : [];
-        const suspensions = Array.isArray(player.activeSuspensions) ? player.activeSuspensions : [];
-        const isInjured = injuries.length > 0;
-        const isSuspended = suspensions.length > 0;
-
-        let baseFitnessTier = 'last_resort';
-        let baseUnavailableReason = '';
-
-        if (isInjured) {
-          baseUnavailableReason = 'Infortunato (segnalato su Sorare)';
-        } else if (isSuspended) {
-          baseUnavailableReason = 'Squalificato';
-        } else if (!club.slug && !natSlug) {
-          baseUnavailableReason = 'Senza club/nazionale attiva';
-        } else if (l5 <= 0 && playedInLast5Games === 0) {
-          baseUnavailableReason = 'Nessuna presenza nelle ultime 5 partite';
-        } else if (starterCount >= 3 || (playedInLast5Games >= 3 && avgMins >= 60)) {
-          baseFitnessTier = 'starter';
-        } else if (playedInLast5Games >= 1 && l5 > 0) {
-          baseFitnessTier = 'rotation';
-        } else {
-          baseUnavailableReason = 'Inattivo / fuori dalle rotazioni recenti';
-        }
-
-        const isSetPieceTaker = pos !== 'GK' && playedInLast5Games > 0 && (avgAas >= 26 || totalAssists >= 2);
-        const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedInLast5Games > 0 && (avgAas >= 22);
-        const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedInLast5Games > 0 && (avgAas >= 23);
-        const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && playedInLast5Games > 0 && ((totalGoals + totalAssists) >= 2 || avgDecisive >= 28);
-
-        const rawPower = parseFloat(card.power) || (isInSeason ? 1.05 : 1.00);
-        const totalBonusPct = Math.round((rawPower - 1) * 100);
-
-        return {
-          id: card.slug || `c_${index}`,
+        const playerSlug = player.slug || card.slug || `slug_${index}`; const rawPos = (card.anyPositions && card.anyPositions[0]) \vert{}\vert{} 'FORWARD'; const pos = this.normalizePosition(rawPos);  const club = player.activeClub \vert{}\vert{} {}; const clubName = club.name \vert{}\vert{} 'Svincolato / N.D.'; const clubSlug = club.slug \vert{}\vert{} 'no-club'; const leagueSlug = (club.domesticLeague?.slug \vert{}\vert{} 'other').toLowerCase();  const natTeam = player.activeNationalTeam \vert{}\vert{} {}; const natSlug = natTeam.slug \vert{}\vert{} ''; const natName = natTeam.name \vert{}\vert{} '';  const scheduleGames = [];  const clubGames = Array.isArray(club.upcomingGames) ? club.upcomingGames : []; clubGames.forEach(g => { if (!g \vert{}\vert{} !g.date) return; const isHome = g.homeTeam?.slug === clubSlug; scheduleGames.push({ date: g.date, timestamp: new Date(g.date).getTime(), competitionSlug: String(g.competition?.slug \vert{}\vert{} '').toLowerCase(), competitionName: g.competition?.displayName \vert{}\vert{} g.competition?.slug \vert{}\vert{} 'Club', isHome: isHome, opponentName: isHome ? (g.awayTeam?.name \vert{}\vert{} 'Avversario') : (g.homeTeam?.name \vert{}\vert{} 'Avversario'), opponentSlug: isHome ? (g.awayTeam?.slug \vert{}\vert{} '') : (g.homeTeam?.slug \vert{}\vert{} ''), isNationalTeam: false, teamName: clubName }); });  const natGames = Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []; natGames.forEach(g => { if (!g \vert{}\vert{} !g.date) return; const isHome = g.homeTeam?.slug === natSlug; const oppName = isHome ? (g.awayTeam?.name \vert{}\vert{} 'Avversario Nazionale') : (g.homeTeam?.name \vert{}\vert{} 'Avversario Nazionale'); scheduleGames.push({ date: g.date, timestamp: new Date(g.date).getTime(), competitionSlug: String(g.competition?.slug \vert{}\vert{} 'international').toLowerCase(), competitionName: g.competition?.displayName \vert{}\vert{} 'Nazionale', isHome: isHome, opponentName: oppName, opponentSlug: isHome ? (g.awayTeam?.slug \vert{}\vert{} '') : (g.homeTeam?.slug \vert{}\vert{} ''), isNationalTeam: true, teamName: `${natName || 'Nazionale'} vs ${oppName}` }); });  scheduleGames.sort((a, b) => a.timestamp - b.timestamp);  const rawSeasonStr = String(card.seasonYear \vert{}\vert{} ''); const parsedYearMatch = rawSeasonStr.match(/20\d{2}/); const sYear = parsedYearMatch ? Number(parsedYearMatch[0]) : 0; const slugHasCurrentSeason = String(card.slug \vert{}\vert{} '').includes('-2026-'); const inSeasonUntilMs = card.inSeasonUntil ? new Date(card.inSeasonUntil).getTime() : 0;  const isInSeason = (inSeasonUntilMs > nowMs) \vert{}\vert{} (sYear >= 2026) \vert{}\vert{} slugHasCurrentSeason;  const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0; const u23Cutoff = new Date('2003-07-01').getTime(); const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;  const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : []; const last5Window = allRecentScores.slice(0, 5); const playedMatchesAll = allRecentScores.filter(s => { if (!s) return false; const sc = typeof s.score === 'number' ? s.score : 0; const mins = typeof s.playerGameStats?.minsPlayed === 'number' ? s.playerGameStats.minsPlayed : 0; return sc > 0 \vert{}\vert{} mins > 0; });  const apiL5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0; const computedL5 = playedMatchesAll.length > 0 ? Number((playedMatchesAll.reduce((acc, m) => acc + (m.score \vert{}\vert{} 0), 0) / playedMatchesAll.length).toFixed(1)) : 0; const l5 = computedL5 > 0 ? computedL5 : apiL5;  const apiL15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0; const l15 = apiL15 > 0 ? Math.max(apiL15, Number(((apiL15 + computedL5) / 2).toFixed(1))) : computedL5;  let playedInLast5Games = 0; let starterCount = 0; let totalMins = 0; let sumAas = 0; let sumDecisive = 0; let maxRecentScore = 0; let validScoreValues = [];  let totalGoals = 0; let totalAssists = 0; let totalCleanSheets = 0; let totalSaves = 0;  last5Window.forEach(s => { if (!s) return; const sc = typeof s.score === 'number' ? s.score : 0; const stats = s.playerGameStats \vert{}\vert{} {}; const mins = typeof stats.minsPlayed === 'number' ? stats.minsPlayed : (sc > 0 ? 60 : 0);  if (mins > 0 \vert{}\vert{} sc > 0) { playedInLast5Games++; totalMins += mins; if (mins >= 55) starterCount++; validScoreValues.push(sc); if (sc > maxRecentScore) maxRecentScore = sc;  const dec = typeof s.decisiveScore?.totalScore === 'number' ? s.decisiveScore.totalScore : 0; const aas = Math.max(0, Number((sc - dec).toFixed(1))); sumAas += aas; sumDecisive += dec;  totalGoals += stats.goals \vert{}\vert{} 0; totalAssists += stats.goalAssist \vert{}\vert{} 0; totalCleanSheets += stats.cleanSheet \vert{}\vert{} 0; totalSaves += stats.saves \vert{}\vert{} 0; } });  const avgMins = playedInLast5Games > 0 ? Math.round(totalMins / playedInLast5Games) : 0; const avgAas = playedInLast5Games > 0 ? Number((sumAas / playedInLast5Games).toFixed(1)) : 0; const avgDecisive = playedInLast5Games > 0 ? Number((sumDecisive / playedInLast5Games).toFixed(1)) : 0;  let stdDev = 0; if (validScoreValues.length > 1) { const mean = validScoreValues.reduce((a, b) => a + b, 0) / validScoreValues.length; const variance = validScoreValues.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / validScoreValues.length; stdDev = Number(Math.sqrt(variance).toFixed(1)); }  const injuries = Array.isArray(player.activeInjuries) ? player.activeInjuries : []; const suspensions = Array.isArray(player.activeSuspensions) ? player.activeSuspensions : []; const isInjured = injuries.length > 0; const isSuspended = suspensions.length > 0;  let baseFitnessTier = 'last_resort'; let baseUnavailableReason = '';  if (isInjured) { baseUnavailableReason = 'Infortunato (segnalato su Sorare)'; } else if (isSuspended) { baseUnavailableReason = 'Squalificato'; } else if (!club.slug && !natSlug) { baseUnavailableReason = 'Senza club/nazionale attiva'; } else if (l5 <= 0 && playedInLast5Games === 0) { baseUnavailableReason = 'Nessuna presenza nelle ultime 5 partite'; } else if (starterCount >= 3 \vert{}\vert{} (playedInLast5Games >= 3 && avgMins >= 60)) { baseFitnessTier = 'starter'; } else if (playedInLast5Games >= 1 && l5 > 0) { baseFitnessTier = 'rotation'; } else { baseUnavailableReason = 'Inattivo / fuori dalle rotazioni recenti'; }  const isSetPieceTaker = pos !== 'GK' && playedInLast5Games > 0 && (avgAas >= 26 \vert{}\vert{} totalAssists >= 2); const isAerialThreat = (pos === 'DEF' \vert{}\vert{} pos === 'FWD') && playedInLast5Games > 0 && (avgAas >= 22); const isBallWinner = (pos === 'DEF' \vert{}\vert{} pos === 'MID') && playedInLast5Games > 0 && (avgAas >= 23); const isClinicalFinisher = (pos === 'FWD' \vert{}\vert{} pos === 'MID') && playedInLast5Games > 0 && ((totalGoals + totalAssists) >= 2 \vert{}\vert{} avgDecisive >= 28);  const rawPower = parseFloat(card.power) \vert{}\vert{} (isInSeason ? 1.05 : 1.00); const totalBonusPct = Math.round((rawPower - 1) * 100);  return { id: card.slug \vert{}\vert{} `c_${index}`,
           playerSlug: playerSlug,
           name: playerName,
           pictureUrl: card.pictureUrl || player.pictureUrl || null,
