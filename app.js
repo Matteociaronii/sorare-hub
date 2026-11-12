@@ -1,4 +1,4 @@
-// SorareHub - Self-Healing Application Controller (Auto-Fallback Lineup Generation + Full DOM Sync)
+// SorareHub - Horizontal Lineup Layout + Ordered Slots (GK -> DC -> CC -> ATT -> EXTRA) + Accurate 3 KPI Counters
 const App = {
   cards: [],
   gameweeks: [],
@@ -81,22 +81,23 @@ const App = {
       if (el) el.textContent = String(val);
     });
 
-    const statCards = document.querySelectorAll('.stat-card, .kpi-card, .metric-card, .summary-card, .stat-box, .stats-grid > div, .kpi-grid > div');
-    statCards.forEach((card, idx) => {
-      const valEl = card.querySelector('.stat-val, .stat-value, .kpi-value, .count, h2, h3, span:first-child, strong');
-      if (!valEl) return;
-      const labelTxt = card.textContent.toLowerCase();
+    // Aggiorna tutti i box numerici delle KPI card dell'HTML originale
+    const kpiNodes = document.querySelectorAll('.stat-card, .kpi-card, .metric-card, .summary-card, .stat-box, .stats-row > div, .stats-grid > div');
+    kpiNodes.forEach((box, idx) => {
+      const numEl = box.querySelector('.stat-val, .stat-value, .kpi-value, .number, .count, h2, h3, strong, span');
+      if (!numEl) return;
+      const txt = box.textContent.toLowerCase();
 
-      if (labelTxt.includes('in-season') || labelTxt.includes('26/27') || labelTxt.includes('stagione')) {
-        valEl.textContent = String(inSeasonTotal);
-      } else if (labelTxt.includes('squadr') || labelTxt.includes('formazion') || labelTxt.includes('lineup') || labelTxt.includes('generat')) {
-        valEl.textContent = String(lineupsCount);
-      } else if (labelTxt.includes('cart') || labelTxt.includes('galleri') || idx === 0) {
-        valEl.textContent = String(total);
+      if (txt.includes('in-season') || txt.includes('26/27') || txt.includes('stagion')) {
+        numEl.textContent = String(inSeasonTotal);
+      } else if (txt.includes('squadr') || txt.includes('formazion') || txt.includes('lineup') || txt.includes('generat')) {
+        numEl.textContent = String(lineupsCount);
+      } else if (txt.includes('cart') || txt.includes('galleri') || idx === 0) {
+        numEl.textContent = String(total);
       } else if (idx === 1) {
-        valEl.textContent = String(inSeasonTotal);
+        numEl.textContent = String(inSeasonTotal);
       } else if (idx === 2) {
-        valEl.textContent = String(lineupsCount);
+        numEl.textContent = String(lineupsCount);
       }
     });
   },
@@ -109,7 +110,7 @@ const App = {
       #status-banner {
         display: none;
         width: 100%;
-        max-width: 1200px;
+        max-width: 1400px;
         margin: 12px auto;
         padding: 11px 16px;
         border-radius: 10px;
@@ -130,56 +131,85 @@ const App = {
         border: 1px solid rgba(220, 53, 69, 0.65);
         color: #ff8a95;
       }
-      #sorarehub-fallback-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-        gap: 18px;
-        width: 100%;
-        max-width: 1200px;
-        margin: 18px auto;
-        padding: 0 12px;
-        box-sizing: border-box;
+      /* Griglia Orizzontale per le Formazioni */
+      #lineups-grid, #sorarehub-horizontal-grid, .lineups-grid {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        gap: 20px !important;
+        width: 100% !important;
+        max-width: 1400px !important;
+        margin: 18px auto !important;
+        padding: 8px 14px 20px 14px !important;
+        box-sizing: border-box !important;
+        align-items: stretch !important;
       }
-      .sh-card {
-        background: #141519;
-        border: 1px solid rgba(212, 175, 55, 0.35);
-        border-radius: 12px;
-        padding: 16px;
-        color: #f0f0f0;
+      .sh-lineup-card, .lineup-card {
+        flex: 0 0 365px !important;
+        min-width: 350px !important;
+        max-width: 390px !important;
+        background: #141519 !important;
+        border: 1px solid rgba(212, 175, 55, 0.42) !important;
+        border-radius: 14px !important;
+        padding: 16px !important;
+        color: #f0f0f0 !important;
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55) !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: space-between !important;
       }
       .sh-card-head {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        border-bottom: 1px solid rgba(255,255,255,0.08);
+        border-bottom: 1px solid rgba(255,255,255,0.09);
         padding-bottom: 10px;
         margin-bottom: 10px;
       }
-      .sh-rank { color: #f3d266; font-weight: 800; font-size: 15px; }
-      .sh-comp { color: #9aa0a6; font-size: 12px; }
-      .sh-score { color: #f3d266; font-weight: 800; font-size: 20px; text-align: right; }
+      .sh-rank { color: #f3d266; font-weight: 800; font-size: 16px; }
+      .sh-comp { color: #9aa0a6; font-size: 12px; margin-top: 2px; }
+      .sh-score { color: #f3d266; font-weight: 800; font-size: 21px; text-align: right; }
       .sh-row {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 8px 0;
-        border-bottom: 1px solid rgba(255,255,255,0.05);
+        padding: 9px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
       }
       .sh-row:last-child { border-bottom: none; }
       .sh-pos {
-        min-width: 42px;
+        min-width: 48px;
         text-align: center;
-        padding: 3px 6px;
+        padding: 4px 6px;
         border-radius: 6px;
         font-size: 11px;
         font-weight: 800;
+        letter-spacing: 0.4px;
         background: rgba(212, 175, 55, 0.18);
         color: #f3d266;
+        border: 1px solid rgba(212, 175, 55, 0.35);
       }
+      .sh-pos.pos-gk { background: rgba(255, 193, 7, 0.2); color: #ffd54f; }
+      .sh-pos.pos-dc { background: rgba(76, 175, 80, 0.2); color: #81c784; }
+      .sh-pos.pos-cc { background: rgba(33, 150, 243, 0.2); color: #64b5f6; }
+      .sh-pos.pos-att { background: rgba(244, 67, 54, 0.2); color: #e57373; }
+      .sh-pos.pos-extra { background: rgba(171, 71, 188, 0.2); color: #ce93d8; }
       .sh-meta { flex: 1; min-width: 0; }
-      .sh-name { font-weight: 700; font-size: 13.5px; color: #fff; }
-      .sh-sub { font-size: 11.5px; color: #9aa0a6; margin-top: 2px; }
-      .sh-pts { font-weight: 800; font-size: 14px; color: #f3d266; }
+      .sh-name { font-weight: 700; font-size: 13.5px; color: #fff; line-height: 1.3; }
+      .sh-sub { font-size: 11.5px; color: #b0b6be; margin-top: 3px; line-height: 1.35; }
+      .sh-pts { font-weight: 800; font-size: 14.5px; color: #f3d266; white-space: nowrap; }
+      .sh-season-badge {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 5px;
+        border-radius: 4px;
+        margin-left: 4px;
+        vertical-align: middle;
+      }
+      .sh-season-badge.in-season { background: rgba(212, 175, 55, 0.25); color: #f3d266; border: 1px solid rgba(212, 175, 55, 0.5); }
+      .sh-season-badge.classic { background: rgba(255, 255, 255, 0.08); color: #9aa0a6; }
       .player-info-trigger {
         display: inline-flex;
         align-items: center;
@@ -201,8 +231,8 @@ const App = {
         position: absolute;
         left: 0;
         top: calc(100% + 6px);
-        width: 270px;
-        max-width: 80vw;
+        width: 265px;
+        max-width: 78vw;
         background: #0e0f12;
         border: 1px solid #d4af37;
         border-radius: 8px;
@@ -419,6 +449,37 @@ const App = {
     });
   },
 
+  // Ordina rigorosamente gli slot in GK -> DC -> CC -> ATT -> EXTRA
+  sortStartersByCanonicalOrder(starters) {
+    const orderWeight = {
+      'GK': 1,
+      'DEF': 2,
+      'DC': 2,
+      'MID': 3,
+      'CC': 3,
+      'FWD': 4,
+      'ATT': 4,
+      'EXTRA': 5
+    };
+    const labelMap = {
+      'GK': 'GK',
+      'DEF': 'DC',
+      'DC': 'DC',
+      'MID': 'CC',
+      'CC': 'CC',
+      'FWD': 'ATT',
+      'ATT': 'ATT',
+      'EXTRA': 'EXTRA'
+    };
+
+    return [...(starters || [])]
+      .sort((a, b) => (orderWeight[a.slotRole] || 9) - (orderWeight[b.slotRole] || 9))
+      .map(p => ({
+        ...p,
+        displayRole: labelMap[p.slotRole] || p.slotRole
+      }));
+  },
+
   runOptimizer() {
     if (!this.cards || this.cards.length === 0) {
       this.notify('⚠️ Nessuna carta sincronizzata: clicca su Connetti Sorare.', true);
@@ -428,12 +489,10 @@ const App = {
     this.syncStateFromDOM();
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
 
-    // 1. Prova con il torneo selezionato esatto
     let lineups = window.OptimizerEngine
       ? OptimizerEngine.buildCascadePortfolio(this.cards, this.currentCompetition, this.currentScarcity, this.currentStrategy, selectedGw)
       : [];
 
-    // 2. Auto-fallback: se il torneo SO5 richiede In-Season ma non ce ne sono abbastanza, calcola comunque la formazione Classic/SO5 migliore
     if ((!lineups || lineups.length === 0) && window.OptimizerEngine && this.currentCompetition.inSeasonRequired > 0) {
       const relaxedComp = { ...this.currentCompetition, inSeasonRequired: 0 };
       lineups = OptimizerEngine.buildCascadePortfolio(this.cards, relaxedComp, this.currentScarcity, this.currentStrategy, selectedGw);
@@ -452,10 +511,10 @@ const App = {
 
     let targetGrid = existingGrid;
     if (!targetGrid) {
-      targetGrid = document.getElementById('sorarehub-fallback-grid');
+      targetGrid = document.getElementById('sorarehub-horizontal-grid');
       if (!targetGrid) {
         targetGrid = document.createElement('div');
-        targetGrid.id = 'sorarehub-fallback-grid';
+        targetGrid.id = 'sorarehub-horizontal-grid';
         const mainEl = document.querySelector('main') || document.body;
         mainEl.appendChild(targetGrid);
       }
@@ -463,30 +522,44 @@ const App = {
 
     const gwInfoStr = selectedGw ? ` • ${selectedGw.label} (${selectedGw.dateRangeText})` : '';
     const rarityCards = this.cards.filter(c => c.scarcity === this.currentScarcity.toLowerCase());
+    const inSeasonInRarity = rarityCards.filter(c => c.isInSeason).length;
 
     if (!lineups || lineups.length === 0) {
-      const msg = `⚠️ 0 formazioni generabili per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Hai ${rarityCards.length} carte ${this.currentScarcity.toUpperCase()}.`;
+      const msg = `⚠️ 0 formazioni generabili per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Hai ${rarityCards.length} carte ${this.currentScarcity.toUpperCase()} (${inSeasonInRarity} In-Season).`;
       this.notify(msg, true);
-      targetGrid.innerHTML = `<div class="sh-card"><p>${msg}</p></div>`;
+      targetGrid.innerHTML = `<div class="sh-lineup-card"><p>${msg}</p></div>`;
       return;
     }
 
-    this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
+    this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} • In-Season: ${inSeasonInRarity}`);
 
     targetGrid.innerHTML = lineups.map(lineup => {
-      const playersHtml = lineup.starters.map(p => {
+      const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
+
+      const playersHtml = orderedStarters.map(p => {
         const capBadge = p.isCaptain ? ' <strong>[C +50%]</strong>' : '';
+        const seasonTag = p.isInSeason
+          ? '<span class="sh-season-badge in-season">26/27</span>'
+          : '<span class="sh-season-badge classic">CLASSIC</span>';
+
         const isNat = p.activeMatch?.isNationalTeam === true;
-        const matchLine = isNat
-          ? `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`
-          : `${p.isHome === true ? '🏠' : (p.isHome === false ? '✈️' : '⚠️')} vs ${this.escapeHtml(p.opponentName)}`;
+        const hasRealMatch = Boolean(p.activeMatch);
+
+        let matchLine = '⏸️ Nessuna partita in GW';
+        if (isNat) {
+          matchLine = `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`;
+        } else if (hasRealMatch) {
+          matchLine = `${p.isHome === true ? '🏠' : '✈️'} vs ${this.escapeHtml(p.opponentName)}`;
+        }
+
+        const roleCls = `pos-${p.displayRole.toLowerCase()}`;
 
         return `
           <div class="sh-row">
-            <div class="sh-pos">${p.slotRole}</div>
+            <div class="sh-pos ${roleCls}">${p.displayRole}</div>
             <div class="sh-meta">
               <div class="sh-name">
-                ${this.escapeHtml(p.name)}${capBadge}
+                ${this.escapeHtml(p.name)}${capBadge}${seasonTag}
                 <span class="player-info-trigger" tabindex="0">?
                   <span class="tactical-tooltip-box">${this.escapeHtml(p.matchupInsight || '')}</span>
                 </span>
@@ -499,15 +572,17 @@ const App = {
       }).join('');
 
       return `
-        <div class="sh-card">
-          <div class="sh-card-head">
-            <div>
-              <div class="sh-rank">${lineup.rankLabel}</div>
-              <div class="sh-comp">${this.currentCompetition.name} (${lineup.format})</div>
+        <div class="sh-lineup-card">
+          <div>
+            <div class="sh-card-head">
+              <div>
+                <div class="sh-rank">${lineup.rankLabel}</div>
+                <div class="sh-comp">${this.currentCompetition.name} (${lineup.format})</div>
+              </div>
+              <div class="sh-score">${lineup.totalProjected} pt</div>
             </div>
-            <div class="sh-score">${lineup.totalProjected} pt</div>
+            <div>${playersHtml}</div>
           </div>
-          <div>${playersHtml}</div>
         </div>
       `;
     }).join('');
@@ -522,9 +597,9 @@ const App = {
   },
 
   renderEmptyState() {
-    const grid = document.getElementById('lineups-grid') || document.getElementById('sorarehub-fallback-grid');
+    const grid = document.getElementById('lineups-grid') || document.getElementById('sorarehub-horizontal-grid');
     if (grid) {
-      grid.innerHTML = `<div class="sh-card"><p>Connetti il tuo account <strong>Sorare</strong> in alto a destra per sincronizzare le tue carte.</p></div>`;
+      grid.innerHTML = `<div class="sh-lineup-card"><p>Connetti il tuo account <strong>Sorare</strong> in alto a destra per sincronizzare le tue carte.</p></div>`;
     }
   },
 
