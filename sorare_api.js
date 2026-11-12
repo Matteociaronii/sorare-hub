@@ -121,9 +121,6 @@ const SorareAPI = {
                     decisiveScore {
                       totalScore
                     }
-                    allAroundScore {
-                      totalScore
-                    }
                     playerGameStats {
                       minsPlayed
                       goals
@@ -304,8 +301,8 @@ const SorareAPI = {
             validScoreValues.push(sc);
             if (sc > maxRecentScore) maxRecentScore = sc;
 
-            const aas = typeof s.allAroundScore?.totalScore === 'number' ? s.allAroundScore.totalScore : 0;
             const dec = typeof s.decisiveScore?.totalScore === 'number' ? s.decisiveScore.totalScore : 0;
+            const aas = Math.max(0, Number((sc - dec).toFixed(1)));
             sumAas += aas;
             sumDecisive += dec;
 
