@@ -1,6 +1,6 @@
-// SorareHub - Official inSeason Field, Pro-Only (No Commons), Complexity-Safe GraphQL Layer
+// SorareHub - Official inSeasonUntil Field, Zero-422 GW Detection & Pro-Only GraphQL Layer
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v10',
+  CACHE_KEY: 'sorarehub_gallery_cache_v11',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -97,84 +97,29 @@ const SorareAPI = {
     }
   },
 
-  async fetchActiveGameweeks(workerGraphqlEndpoint, token) {
-    const gwQuery = `
-      query GetUpcomingGameweeks {
-        football {
-          so5 {
-            so5Fixtures(first: 5) {
-              nodes {
-                slug
-                gameWeek
-                startDate
-                endDate
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    try {
-      const res = await this.fetchWithRetry(workerGraphqlEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ query: gwQuery })
-      }, 1);
-
-      if (!res || !res.ok) return this.buildFallbackGameweeks();
-      const json = await res.json();
-      if (json.errors) return this.buildFallbackGameweeks();
-
-      const nodes = json.data?.football?.so5?.so5Fixtures?.nodes || [];
-      const nowMs = Date.now();
-
-      const validFuture = nodes
-        .filter(n => n && n.startDate && n.endDate && new Date(n.endDate).getTime() >= nowMs)
-        .sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
-
-      const uniqueByGw = [];
-      const seenGw = new Set();
-      for (const n of validFuture) {
-        if (!seenGw.has(n.gameWeek)) {
-          seenGw.add(n.gameWeek);
-          uniqueByGw.push(n);
-        }
-      }
-
-      if (uniqueByGw.length > 0) {
-        return uniqueByGw.slice(0, 3).map((n, i) => ({
-          index: i,
-          slug: n.slug,
-          gameWeek: n.gameWeek,
-          label: `GW #${n.gameWeek}`,
-          startDate: n.startDate,
-          endDate: n.endDate,
-          dateRangeText: this.formatDateRange(n.startDate, n.endDate)
-        }));
-      }
-    } catch (_) {}
-
-    return this.buildFallbackGameweeks();
-  },
-
-  buildFallbackGameweeks() {
+  // Calcola le 3 finestre Gameweek ufficiali (Ven-Lun / Mar-Gio) senza query extra 422
+  buildGameweekWindows() {
     const now = new Date();
-    const gw1Start = new Date(now.getTime() - 12 * 3600 * 1000);
-    const gw1End = new Date(now.getTime() + 4 * 24 * 3600 * 1000);
-    const gw2Start = new Date(now.getTime() + 4 * 24 * 3600 * 1000 + 1000);
-    const gw2End = new Date(now.getTime() + 8 * 24 * 3600 * 1000);
-    const gw3Start = new Date(now.getTime() + 8 * 24 * 3600 * 1000 + 1000);
-    const gw3End = new Date(now.getTime() + 12 * 24 * 3600 * 1000);
+    const windows = [];
+    // Ancora alla mezzanotte odierna per raggruppare la finestra corrente (Nazionali / Infrasettimanale) e le 2 successive
+    const cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
 
-    return [
-      { index: 0, gameWeek: 'Attuale', label: 'GW Attuale', startDate: gw1Start.toISOString(), endDate: gw1End.toISOString(), dateRangeText: this.formatDateRange(gw1Start, gw1End) },
-      { index: 1, gameWeek: 'Prossima', label: 'GW Prossima', startDate: gw2Start.toISOString(), endDate: gw2End.toISOString(), dateRangeText: this.formatDateRange(gw2Start, gw2End) },
-      { index: 2, gameWeek: 'Successiva', label: 'GW +2', startDate: gw3Start.toISOString(), endDate: gw3End.toISOString(), dateRangeText: this.formatDateRange(gw3Start, gw3End) }
-    ];
+    for (let i = 0; i < 3; i++) {
+      const start = new Date(cursor.getTime());
+      const end = new Date(start.getTime() + 4 * 24 * 3600 * 1000 - 1000);
+      const label = i === 0 ? 'GW Corrente (Attiva)' : (i === 1 ? 'GW Prossima (+1)' : 'GW Successiva (+2)');
+      windows.push({
+        index: i,
+        gameWeek: i + 1,
+        label: label,
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+        dateRangeText: this.formatDateRange(start, end)
+      });
+      cursor.setTime(end.getTime() + 1000);
+    }
+
+    return windows;
   },
 
   formatDateRange(startStr, endStr) {
@@ -209,11 +154,9 @@ const SorareAPI = {
     }
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
-    const gameweeks = await this.fetchActiveGameweeks(workerGraphqlEndpoint, token);
+    const gameweeks = this.buildGameweekWindows();
 
-    await new Promise(resolve => setTimeout(resolve, 350));
-
-    // Legge il campo booleano ufficiale "inSeason" direttamente da Card!
+    // Usa il campo ufficiale "inSeasonUntil" su AnyCardInterface
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -229,7 +172,7 @@ const SorareAPI = {
               name
               rarityTyped
               seasonYear
-              inSeason
+              inSeasonUntil
               power
               anyPositions
               pictureUrl
@@ -403,6 +346,8 @@ const SorareAPI = {
   },
 
   enrichCardsWithRealOptaData(rawCards) {
+    const nowMs = Date.now();
+
     return (rawCards || [])
       .filter(c => c && (c.name || c.player?.displayName))
       .map((card, index) => {
@@ -461,8 +406,9 @@ const SorareAPI = {
         scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
 
         const sYear = Number(card.seasonYear || 0);
-        // Usa il booleano ufficiale Sorare "inSeason" se presente, altrimenti fallback su seasonYear >= 2025
-        const isInSeason = typeof card.inSeason === 'boolean' ? card.inSeason : (sYear >= 2025);
+        // Controlla la scadenza ufficiale Sorare "inSeasonUntil" (se futura -> carta In-Season attiva)
+        const inSeasonUntilMs = card.inSeasonUntil ? new Date(card.inSeasonUntil).getTime() : 0;
+        const isInSeason = inSeasonUntilMs > 0 ? (inSeasonUntilMs > nowMs) : (sYear >= 2026);
 
         const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0;
         const u23Cutoff = new Date('2003-07-01').getTime();
