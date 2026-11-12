@@ -1,6 +1,6 @@
-// SorareHub - Official inSeasonUntil Field, Zero-422 GW Detection & Pro-Only GraphQL Layer
+// SorareHub - Accurate 2026/27 In-Season Detection + Dynamic Real Match Gameweek Grouping
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v11',
+  CACHE_KEY: 'sorarehub_gallery_cache_v12',
   CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
 
   generateRandomString(length = 32) {
@@ -97,29 +97,65 @@ const SorareAPI = {
     }
   },
 
-  // Calcola le 3 finestre Gameweek ufficiali (Ven-Lun / Mar-Gio) senza query extra 422
-  buildGameweekWindows() {
-    const now = new Date();
-    const windows = [];
-    // Ancora alla mezzanotte odierna per raggruppare la finestra corrente (Nazionali / Infrasettimanale) e le 2 successive
-    const cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  // Costruisce le 3 finestre Gameweek raggruppando le date reali delle prossime partite dei tuoi giocatori
+  buildGameweekWindowsFromCards(cards) {
+    const nowMs = Date.now() - 6 * 3600 * 1000;
+    const allTimestamps = [];
 
-    for (let i = 0; i < 3; i++) {
-      const start = new Date(cursor.getTime());
-      const end = new Date(start.getTime() + 4 * 24 * 3600 * 1000 - 1000);
-      const label = i === 0 ? 'GW Corrente (Attiva)' : (i === 1 ? 'GW Prossima (+1)' : 'GW Successiva (+2)');
-      windows.push({
-        index: i,
-        gameWeek: i + 1,
-        label: label,
-        startDate: start.toISOString(),
-        endDate: end.toISOString(),
-        dateRangeText: this.formatDateRange(start, end)
+    (cards || []).forEach(c => {
+      (c.scheduleGames || []).forEach(g => {
+        if (g.timestamp && g.timestamp >= nowMs) {
+          allTimestamps.push(g.timestamp);
+        }
       });
-      cursor.setTime(end.getTime() + 1000);
+    });
+
+    allTimestamps.sort((a, b) => a - b);
+
+    if (allTimestamps.length > 0) {
+      const clusters = [];
+      let currentClusterStart = allTimestamps[0];
+      let currentClusterEnd = allTimestamps[0];
+
+      for (let i = 1; i < allTimestamps.length; i++) {
+        const ts = allTimestamps[i];
+        // Se tra una partita e la successiva passano più di 48 ore, inizia una nuova Gameweek
+        if (ts - currentClusterEnd > 48 * 3600 * 1000 && ts - currentClusterStart > 3.5 * 24 * 3600 * 1000) {
+          clusters.push({ start: currentClusterStart, end: currentClusterEnd });
+          currentClusterStart = ts;
+          currentClusterEnd = ts;
+        } else {
+          currentClusterEnd = ts;
+        }
+      }
+      clusters.push({ start: currentClusterStart, end: currentClusterEnd });
+
+      return clusters.slice(0, 3).map((cl, idx) => {
+        const startIso = new Date(cl.start - 6 * 3600 * 1000).toISOString();
+        const endIso = new Date(cl.end + 12 * 3600 * 1000).toISOString();
+        const label = idx === 0 ? 'Prossima GW (Attiva)' : (idx === 1 ? 'GW +1' : 'GW +2');
+        return {
+          index: idx,
+          gameWeek: idx + 1,
+          label: label,
+          startDate: startIso,
+          endDate: endIso,
+          dateRangeText: this.formatDateRange(startIso, endIso)
+        };
+      });
     }
 
-    return windows;
+    // Fallback se non ci sono partite future
+    const start = new Date();
+    const end = new Date(start.getTime() + 5 * 24 * 3600 * 1000);
+    return [{
+      index: 0,
+      gameWeek: 1,
+      label: 'GW Attuale',
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      dateRangeText: this.formatDateRange(start, end)
+    }];
   },
 
   formatDateRange(startStr, endStr) {
@@ -154,9 +190,7 @@ const SorareAPI = {
     }
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
-    const gameweeks = this.buildGameweekWindows();
 
-    // Usa il campo ufficiale "inSeasonUntil" su AnyCardInterface
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -329,6 +363,8 @@ const SorareAPI = {
     const enriched = this.enrichCardsWithRealOptaData(allCards)
       .filter(c => c.scarcity !== 'common');
 
+    const gameweeks = this.buildGameweekWindowsFromCards(enriched);
+
     try {
       localStorage.setItem(this.CACHE_KEY, JSON.stringify({
         timestamp: Date.now(),
@@ -405,10 +441,17 @@ const SorareAPI = {
 
         scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
 
-        const sYear = Number(card.seasonYear || 0);
-        // Controlla la scadenza ufficiale Sorare "inSeasonUntil" (se futura -> carta In-Season attiva)
+        // Parsing robusto dell'anno e della scadenza In-Season (2026/27 -> seasonYear = 2026 o slug contiene -2026-)
+        const rawSeasonStr = String(card.seasonYear || '');
+        const parsedYearMatch = rawSeasonStr.match(/20\d{2}/);
+        const sYear = parsedYearMatch ? Number(parsedYearMatch[0]) : 0;
+        const slugHasCurrentSeason = String(card.slug || '').includes('-2026-');
         const inSeasonUntilMs = card.inSeasonUntil ? new Date(card.inSeasonUntil).getTime() : 0;
-        const isInSeason = inSeasonUntilMs > 0 ? (inSeasonUntilMs > nowMs) : (sYear >= 2026);
+
+        const isInSeason =
+          (inSeasonUntilMs > nowMs) ||
+          (sYear >= 2026) ||
+          slugHasCurrentSeason;
 
         const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0;
         const u23Cutoff = new Date('2003-07-01').getTime();
