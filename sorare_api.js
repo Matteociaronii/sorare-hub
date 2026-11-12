@@ -126,14 +126,8 @@ const SorareAPI = {
                       goals
                       goalAssist
                       cleanSheet
-                      accuratePass
-                      wonTackle
-                      interceptionWon
-                      ontargetScoringAtt
-                      bigChanceCreated
-                      keyPass
-                      penaltiesSaved
                       saves
+                      penaltiesSaved
                     }
                   }
                   activeClub {
@@ -277,14 +271,10 @@ const SorareAPI = {
         let maxRecentScore = 0;
         let validScoreValues = [];
 
-        // Metriche Opta reali aggregate
-        let totalKeyPasses = 0;
-        let totalBigChances = 0;
-        let totalShotsOnTarget = 0;
-        let totalTacklesInterceptions = 0;
         let totalGoals = 0;
         let totalAssists = 0;
         let totalCleanSheets = 0;
+        let totalSaves = 0;
 
         recentScores.forEach(s => {
           if (!s) return;
@@ -304,13 +294,10 @@ const SorareAPI = {
             sumAas += aas;
             sumDecisive += dec;
 
-            totalKeyPasses += stats.keyPass || 0;
-            totalBigChances += stats.bigChanceCreated || 0;
-            totalShotsOnTarget += stats.ontargetScoringAtt || 0;
-            totalTacklesInterceptions += (stats.wonTackle || 0) + (stats.interceptionWon || 0);
             totalGoals += stats.goals || 0;
             totalAssists += stats.goalAssist || 0;
             totalCleanSheets += stats.cleanSheet || 0;
+            totalSaves += stats.saves || 0;
           }
         });
 
@@ -379,11 +366,11 @@ const SorareAPI = {
           unavailableReason = 'Inattivo / fuori dalle rotazioni recenti';
         }
 
-        // Rilevamento specialità tattiche Opta reali
-        const isSetPieceTaker = pos !== 'GK' && playedCount > 0 && ((totalKeyPasses + totalBigChances) / playedCount >= 1.4);
-        const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedCount > 0 && (avgAas >= 24 && (pos === 'DEF' || totalShotsOnTarget / playedCount >= 0.8));
-        const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedCount > 0 && (totalTacklesInterceptions / playedCount >= 2.8);
-        const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && playedCount > 0 && ((totalGoals + totalAssists) >= 2 || totalShotsOnTarget / playedCount >= 1.2);
+        // Profilo tattico Opta reale derivato da AAS puro, Decisive Score, assist e ruolo
+        const isSetPieceTaker = pos !== 'GK' && playedCount > 0 && (avgAas >= 26 || totalAssists >= 2);
+        const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedCount > 0 && (avgAas >= 22);
+        const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedCount > 0 && (avgAas >= 23);
+        const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && playedCount > 0 && ((totalGoals + totalAssists) >= 2 || avgDecisive >= 28);
 
         const rawPower = parseFloat(card.power) || (isInSeason ? 1.05 : 1.00);
         const totalBonusPct = Math.round((rawPower - 1) * 100);
@@ -426,7 +413,8 @@ const SorareAPI = {
             clinical: isClinicalFinisher,
             cleanSheets: totalCleanSheets,
             goals: totalGoals,
-            assists: totalAssists
+            assists: totalAssists,
+            saves: totalSaves
           },
           bonusPct: totalBonusPct,
           powerMultiplier: 1 + (totalBonusPct / 100)
