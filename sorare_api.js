@@ -124,7 +124,7 @@ const SorareAPI = {
                     playerGameStats {
                       minsPlayed
                       goals
-                      assists
+                      goalAssist
                       cleanSheet
                       accuratePass
                       wonTackle
@@ -312,7 +312,7 @@ const SorareAPI = {
             totalAerialWon += stats.aerialWon || 0;
             totalTacklesInterceptions += (stats.wonTackle || 0) + (stats.interceptionWon || 0);
             totalGoals += stats.goals || 0;
-            totalAssists += stats.assists || 0;
+            totalAssists += stats.goalAssist || 0;
             totalCleanSheets += stats.cleanSheet || 0;
           }
         });
@@ -321,7 +321,7 @@ const SorareAPI = {
         const avgAas = playedCount > 0 ? Number((sumAas / playedCount).toFixed(1)) : 0;
         const avgDecisive = playedCount > 0 ? Number((sumDecisive / playedCount).toFixed(1)) : 0;
 
-        // Deviazione standard reale sulle ultime 5 partite (misura costanza vs esplosività)
+        // Deviazione standard reale sulle ultime 5 partite
         let stdDev = 0;
         if (validScoreValues.length > 1) {
           const mean = validScoreValues.reduce((a, b) => a + b, 0) / validScoreValues.length;
@@ -360,8 +360,7 @@ const SorareAPI = {
           }
         }
 
-        // Classificazione reale titolarità:
-        // 'starter' = Titolare reale | 'rotation' = Subentrante / Ballottaggio | 'last_resort' = Ultima spiaggia
+        // Classificazione reale titolarità
         let availabilityTier = 'last_resort';
         let unavailableReason = '';
 
