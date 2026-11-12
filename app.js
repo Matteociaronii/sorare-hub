@@ -1,4 +1,4 @@
-// SorareHub - Strict In-Season Enforcement + National Team Match Display + Horizontal Ordered Lineups
+// SorareHub - Application Controller (Exact 4-Box KPI Updater + Official GW Selector + Horizontal Ordered Lineups)
 const App = {
   cards: [],
   gameweeks: [],
@@ -59,11 +59,34 @@ const App = {
     }
   },
 
+  // Aggiorna con precisione tutti e 4 i riquadri KPI visibili nello screenshot ("CARTE IN GALLERIA", "CARTE IN-SEASON", "CONFIRMED XI / TITOLARI", "SQUADRE GENERATE")
   updateGalleryCounters(lineupsCount = 0) {
     const total = this.cards.length;
     const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
+    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
 
-    const mapById = {
+    // Calcola quanti titolari hanno una partita reale nella GW selezionata
+    let confirmedXiCount = 0;
+    const seenSlugs = new Set();
+    this.cards.forEach(c => {
+      if (seenSlugs.has(c.playerSlug)) return;
+      const games = Array.isArray(c.scheduleGames) ? c.scheduleGames : [];
+      let hasGwGame = false;
+      if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
+        const s = new Date(selectedGw.startDate).getTime();
+        const e = new Date(selectedGw.endDate).getTime();
+        hasGwGame = games.some(g => g.timestamp >= s && g.timestamp <= e);
+      } else {
+        hasGwGame = games.length > 0;
+      }
+      if (hasGwGame && c.baseFitnessTier !== 'last_resort') {
+        seenSlugs.add(c.playerSlug);
+        confirmedXiCount++;
+      }
+    });
+
+    // 1) Aggiorna tramite ID noti se presenti
+    const idMap = {
       'gallery-count': total,
       'total-cards': total,
       'cards-count': total,
@@ -71,32 +94,41 @@ const App = {
       'stat-total-cards': total,
       'in-season-count': inSeasonTotal,
       'stat-in-season': inSeasonTotal,
+      'confirmed-xi-count': confirmedXiCount,
+      'titolari-count': confirmedXiCount,
+      'stat-xi': confirmedXiCount,
       'lineups-count': lineupsCount,
       'stat-lineups': lineupsCount,
       'teams-count': lineupsCount
     };
 
-    Object.entries(mapById).forEach(([id, val]) => {
+    Object.entries(idMap).forEach(([id, val]) => {
       const el = document.getElementById(id);
       if (el) el.textContent = String(val);
     });
 
-    const kpiNodes = document.querySelectorAll('.stat-card, .kpi-card, .metric-card, .summary-card, .stat-box, .stats-row > div, .stats-grid > div');
-    kpiNodes.forEach((box, idx) => {
-      const numEl = box.querySelector('.stat-val, .stat-value, .kpi-value, .number, .count, h2, h3, strong, span');
-      if (!numEl) return;
-      const txt = box.textContent.toLowerCase();
+    // 2) Cerca nel DOM i 4 box cercando le scritte esatte dello screenshot:
+    // "CARTE IN GALLERIA", "CARTE IN-SEASON", "CONFIRMED XI", "SQUADRE GENERATE"
+    const allElements = document.querySelectorAll('div, section, article, li');
+    allElements.forEach(el => {
+      // Consideriamo solo i contenitori compatti (card KPI) che hanno tra 2 e 5 elementi figli
+      if (el.children.length < 2 || el.children.length > 6) return;
+      const firstChildText = (el.children[0]?.textContent || '').trim().toUpperCase();
+      const valueChild = el.children[1];
+      const subChild = el.children[2];
+      if (!valueChild) return;
 
-      if (txt.includes('in-season') || txt.includes('26/27') || txt.includes('stagion')) {
-        numEl.textContent = String(inSeasonTotal);
-      } else if (txt.includes('squadr') || txt.includes('formazion') || txt.includes('lineup') || txt.includes('generat')) {
-        numEl.textContent = String(lineupsCount);
-      } else if (txt.includes('cart') || txt.includes('galleri') || idx === 0) {
-        numEl.textContent = String(total);
-      } else if (idx === 1) {
-        numEl.textContent = String(inSeasonTotal);
-      } else if (idx === 2) {
-        numEl.textContent = String(lineupsCount);
+      if (firstChildText.includes('CARTE IN GALLERIA')) {
+        valueChild.textContent = String(total);
+        if (subChild && this.user?.nickname) {
+          subChild.textContent = `Connesso • @${this.user.nickname}`;
+        }
+      } else if (firstChildText.includes('CARTE IN-SEASON')) {
+        valueChild.textContent = String(inSeasonTotal);
+      } else if (firstChildText.includes('CONFIRMED XI') || firstChildText.includes('TITOLARI')) {
+        valueChild.textContent = String(confirmedXiCount);
+      } else if (firstChildText.includes('SQUADRE GENERATE')) {
+        valueChild.textContent = String(lineupsCount);
       }
     });
   },
@@ -314,11 +346,11 @@ const App = {
     }
 
     const optionsHtml = this.gameweeks
-      .map((gw, idx) => `<option value="${idx}" ${idx === this.selectedGwIndex ? 'selected' : ''}>${gw.label} (${gw.dateRangeText})</option>`)
+      .map((gw, idx) => `<option value="${idx}" ${idx === this.selectedGwIndex ? 'selected' : ''}>${gw.label} • ${gw.dateRangeText}</option>`)
       .join('');
 
     container.innerHTML = `
-      <span>📅 Gameweek:</span>
+      <span>📅 Calendario Sorare:</span>
       <select id="gw-select">${optionsHtml}</select>
     `;
 
@@ -486,7 +518,6 @@ const App = {
     this.syncStateFromDOM();
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
 
-    // Rispetta rigorosamente il requisito In-Season del torneo (niente formazioni solo Classic su tornei SO5 In-Season!)
     const lineups = window.OptimizerEngine
       ? OptimizerEngine.buildCascadePortfolio(this.cards, this.currentCompetition, this.currentScarcity, this.currentStrategy, selectedGw)
       : [];
@@ -506,6 +537,7 @@ const App = {
     if (!targetGrid) {
       targetGrid = document.getElementById('sorarehub-horizontal-grid');
       if (!targetGrid) {
+        targetGrid = document.getElementById('sorarehub-horizontal-grid');
         targetGrid = document.createElement('div');
         targetGrid.id = 'sorarehub-horizontal-grid';
         const mainEl = document.querySelector('main') || document.body;
@@ -518,16 +550,18 @@ const App = {
     const inSeasonInRarity = rarityCards.filter(c => c.isInSeason).length;
 
     if (!lineups || lineups.length === 0) {
-      const reqText = this.currentCompetition.inSeasonRequired > 0
-        ? `richiede almeno ${this.currentCompetition.inSeasonRequired}/5 carte In-Season 26/27 (hai ${inSeasonInRarity} In-Season in ${this.currentScarcity.toUpperCase()})`
-        : `nessuna rosa completa disponibile in ${this.currentScarcity.toUpperCase()}`;
-      const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — ${reqText}.`;
+      const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Ruoli non coperti in questa lega/rarità.`;
       this.notify(msg, true);
       targetGrid.innerHTML = `<div class="sh-lineup-card"><p>${msg}</p></div>`;
       return;
     }
 
-    this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} • In-Season: ${inSeasonInRarity}`);
+    const hasActiveGames = lineups.some(l => l.activeMatchesCount > 0);
+    const statusNote = hasActiveGames
+      ? `✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`
+      : `ℹ️ ${this.currentCompetition.name} in sosta in ${selectedGw?.label || 'questa GW'}: mostrate le ${lineups.length} migliori formazioni di club (Nazionali escluse dai campionati).`;
+
+    this.notify(statusNote);
 
     targetGrid.innerHTML = lineups.map(lineup => {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
@@ -538,18 +572,12 @@ const App = {
           ? '<span class="sh-season-badge in-season">26/27</span>'
           : '<span class="sh-season-badge classic">CLASSIC</span>';
 
-        // Recupera anche eventuale partita della Nazionale presente su scheduleGames se activeMatch non era valorizzato
-        const fallbackNatMatch = !p.activeMatch
-          ? (p.scheduleGames || []).find(g => g.isNationalTeam)
-          : null;
-        const effectiveMatch = p.activeMatch || fallbackNatMatch || null;
-
-        const isNat = effectiveMatch?.isNationalTeam === true;
-        let matchLine = '⏸️ Nessuna partita in GW';
+        const isNat = p.activeMatch?.isNationalTeam === true;
+        let matchLine = '⏸️ Sosta Club in questa GW';
         if (isNat) {
-          matchLine = `🌍 ${this.escapeHtml(effectiveMatch.teamName)} (${this.escapeHtml(effectiveMatch.competitionName)})`;
-        } else if (effectiveMatch) {
-          matchLine = `${effectiveMatch.isHome === true ? '🏠' : '✈️'} vs ${this.escapeHtml(effectiveMatch.opponentName)}`;
+          matchLine = `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`;
+        } else if (p.activeMatch) {
+          matchLine = `${p.activeMatch.isHome === true ? '🏠' : '✈️'} vs ${this.escapeHtml(p.activeMatch.opponentName)}`;
         }
 
         const roleCls = `pos-${p.displayRole.toLowerCase()}`;
@@ -577,7 +605,7 @@ const App = {
             <div class="sh-card-head">
               <div>
                 <div class="sh-rank">${lineup.rankLabel}</div>
-                <div class="sh-comp">${this.currentCompetition.name} (${lineup.format})</div>
+                <div class="sh-comp">${this.currentCompetition.name} (${lineup.format} • ${lineup.inSeasonCount} In-Season)</div>
               </div>
               <div class="sh-score">${lineup.totalProjected} pt</div>
             </div>
