@@ -1,4 +1,4 @@
-// SorareHub - Universal DOM-Compatible Controller (Carbon & Gold Edition + Gallery Counters + GW Selector + Touch/Hover Tooltip)
+// SorareHub - Universal DOM-Agnostic Controller (Carbon & Gold Edition + All 3 Counters + Universal Generate Button)
 const App = {
   cards: [],
   gameweeks: [],
@@ -53,41 +53,60 @@ const App = {
     }
   },
 
-  // Aggiorna tutti i contatori della galleria nell'HTML originale (totale e per singola rarità)
-  updateGalleryCounters() {
+  // Aggiorna tutti e 3 i contatori KPI presenti nella dashboard originale
+  updateGalleryCounters(lineupsCount = null) {
     const total = this.cards.length;
-    const counts = {
+    const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
+    const startersTotal = this.cards.filter(c => c.baseFitnessTier === 'starter').length;
+
+    const countsByRarity = {
       limited: this.cards.filter(c => c.scarcity === 'limited').length,
       rare: this.cards.filter(c => c.scarcity === 'rare').length,
       super_rare: this.cards.filter(c => c.scarcity === 'super_rare').length,
       unique: this.cards.filter(c => c.scarcity === 'unique').length
     };
 
-    const setElText = (selectors, value) => {
-      selectors.forEach(sel => {
-        document.querySelectorAll(sel).forEach(el => {
-          el.textContent = value;
-        });
-      });
+    // 1. Aggiorna ID espliciti noti
+    const mapById = {
+      'gallery-count': total,
+      'total-cards': total,
+      'cards-count': total,
+      'card-count': total,
+      'stat-total-cards': total,
+      'in-season-count': inSeasonTotal,
+      'stat-in-season': inSeasonTotal,
+      'starters-count': startersTotal,
+      'stat-starters': startersTotal,
+      'lineups-count': lineupsCount !== null ? lineupsCount : startersTotal,
+      'stat-lineups': lineupsCount !== null ? lineupsCount : startersTotal,
+      'count-limited': countsByRarity.limited,
+      'count-rare': countsByRarity.rare,
+      'count-super-rare': countsByRarity.super_rare,
+      'count-unique': countsByRarity.unique
     };
 
-    setElText([
-      '#gallery-count', '#total-cards', '#cards-count', '#card-count',
-      '#stat-total-cards', '#total-gallery-cards', '[data-gallery-count]',
-      '.gallery-count', '.cards-counter', '.stat-value[data-stat="total"]'
-    ], String(total));
+    Object.entries(mapById).forEach(([id, val]) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String(val);
+    });
 
-    setElText(['#count-limited', '#stat-limited', '[data-count="limited"]'], String(counts.limited));
-    setElText(['#count-rare', '#stat-rare', '[data-count="rare"]'], String(counts.rare));
-    setElText(['#count-super-rare', '#stat-super-rare', '[data-count="super_rare"]'], String(counts.super_rare));
-    setElText(['#count-unique', '#stat-unique', '[data-count="unique"]'], String(counts.unique));
+    // 2. Aggiorna automaticamente le card statistiche della dashboard (es. le 3 KPI card) leggendo la loro etichetta
+    const statCards = document.querySelectorAll('.stat-card, .kpi-card, .metric-card, .summary-card, .stat-box');
+    statCards.forEach((card, idx) => {
+      const valEl = card.querySelector('.stat-val, .stat-value, .kpi-value, .count, h2, h3, strong');
+      if (!valEl) return;
+      const labelTxt = card.textContent.toLowerCase();
 
-    // Aggiorna anche eventuali badge numerici dentro i tab delle rarità se presenti
-    document.querySelectorAll('[data-scarcity], [data-rarity]').forEach(btn => {
-      const rar = (btn.dataset.scarcity || btn.dataset.rarity || '').toLowerCase();
-      if (counts[rar] !== undefined) {
-        const badge = btn.querySelector('.count, .badge, span[data-count]');
-        if (badge) badge.textContent = String(counts[rar]);
+      if (labelTxt.includes('in-season') || labelTxt.includes('26/27') || labelTxt.includes('stagione')) {
+        valEl.textContent = String(inSeasonTotal);
+      } else if (labelTxt.includes('titolar') || labelTxt.includes('pront') || labelTxt.includes('formazion') || labelTxt.includes('lineup')) {
+        valEl.textContent = String(lineupsCount !== null ? lineupsCount : startersTotal);
+      } else if (labelTxt.includes('cart') || labelTxt.includes('galleri') || idx === 0) {
+        valEl.textContent = String(total);
+      } else if (idx === 1) {
+        valEl.textContent = String(inSeasonTotal);
+      } else if (idx === 2) {
+        valEl.textContent = String(lineupsCount !== null ? lineupsCount : startersTotal);
       }
     });
   },
@@ -214,8 +233,31 @@ const App = {
       document.getElementById('comp-select') ||
       document.getElementById('competition-select') ||
       document.getElementById('tournament-select') ||
-      document.querySelector('select[name="competition"]')
+      document.querySelector('select')
     );
+  },
+
+  syncStateFromDOM() {
+    // Sincronizza la competizione dal <select>
+    const compSelect = this.getCompetitionSelectEl();
+    if (compSelect && compSelect.value) {
+      const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === compSelect.value);
+      if (found) this.currentCompetition = found;
+    }
+
+    // Sincronizza la rarità attiva dai tab
+    const activeRarityBtn = document.querySelector('[data-scarcity].active, [data-rarity].active');
+    if (activeRarityBtn) {
+      const r = (activeRarityBtn.dataset.scarcity || activeRarityBtn.dataset.rarity || '').toLowerCase();
+      if (r) this.currentScarcity = r;
+    }
+
+    // Sincronizza la strategia attiva dai tab
+    const activeStratBtn = document.querySelector('[data-strategy].active');
+    if (activeStratBtn) {
+      const s = (activeStratBtn.dataset.strategy || '').toLowerCase();
+      if (s) this.currentStrategy = s;
+    }
   },
 
   renderGwSelector() {
@@ -276,13 +318,7 @@ const App = {
           loginBtn.disabled = false;
         }
 
-        // Sincronizza competizione selezionata dal dropdown prima di generare
-        const compSelect = this.getCompetitionSelectEl();
-        if (compSelect && compSelect.value) {
-          const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === compSelect.value);
-          if (found) this.currentCompetition = found;
-        }
-
+        this.syncStateFromDOM();
         this.renderGwSelector();
         const activeGw = this.gameweeks[this.selectedGwIndex];
         const gwBadge = activeGw ? ` • ${activeGw.label} (${activeGw.dateRangeText})` : '';
@@ -324,7 +360,6 @@ const App = {
       });
     }
 
-    // Supporta sia #scarcity-tabs sia [data-scarcity] / [data-rarity] ovunque nel DOM
     document.querySelectorAll('[data-scarcity], [data-rarity]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const target = e.currentTarget;
@@ -340,7 +375,6 @@ const App = {
       });
     });
 
-    // Supporta sia #strategy-tabs sia [data-strategy] ovunque nel DOM
     document.querySelectorAll('[data-strategy]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const target = e.currentTarget;
@@ -356,21 +390,7 @@ const App = {
       });
     });
 
-    const genBtn =
-      document.getElementById('generate-btn') ||
-      document.getElementById('optimize-btn') ||
-      document.querySelector('[data-action="generate"]');
-    if (genBtn) {
-      genBtn.addEventListener('click', () => {
-        const sel = this.getCompetitionSelectEl();
-        if (sel && sel.value) {
-          const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === sel.value);
-          if (found) this.currentCompetition = found;
-        }
-        this.runOptimizer();
-      });
-    }
-
+    // Listener universale per qualsiasi pulsante Genera / Ottimizza nel DOM
     document.addEventListener('click', (e) => {
       const trigger = e.target.closest('.player-info-trigger');
       if (trigger) {
@@ -380,14 +400,25 @@ const App = {
         if (!wasActive) trigger.classList.add('active');
         return;
       }
+
       if (!e.target.closest('.tactical-tooltip-box')) {
         document.querySelectorAll('.player-info-trigger.active').forEach(el => el.classList.remove('active'));
+      }
+
+      const btn = e.target.closest('button');
+      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn') {
+        const txt = (btn.textContent || '').toLowerCase();
+        if (txt.includes('genera') || txt.includes('ottimizz') || txt.includes('calcola') || btn.id === 'generate-btn' || btn.id === 'optimize-btn') {
+          this.syncStateFromDOM();
+          this.runOptimizer();
+        }
       }
     });
   },
 
   runOptimizer() {
     if (!this.cards || this.cards.length === 0) {
+      this.notify('⚠️ Nessuna carta sincronizzata: clicca prima su Connetti Sorare in alto a destra.', true);
       this.renderEmptyState();
       return;
     }
@@ -397,6 +428,7 @@ const App = {
       return;
     }
 
+    this.syncStateFromDOM();
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
     const lineups = OptimizerEngine.buildCascadePortfolio(
       this.cards,
@@ -406,6 +438,7 @@ const App = {
       selectedGw
     );
 
+    this.updateGalleryCounters(lineups.length);
     this.renderLineups(lineups, selectedGw);
   },
 
@@ -413,22 +446,30 @@ const App = {
     const grid =
       document.getElementById('lineups-grid') ||
       document.getElementById('lineups-container') ||
-      document.getElementById('results-grid');
+      document.getElementById('results-grid') ||
+      document.querySelector('.lineups-grid');
+
     const summary =
       document.getElementById('portfolio-summary') ||
-      document.getElementById('results-summary');
+      document.getElementById('results-summary') ||
+      document.querySelector('.portfolio-summary');
 
-    const gwInfoStr = selectedGw ? ` • <strong>${selectedGw.label}</strong> (${selectedGw.dateRangeText})` : '';
-    const rarityCardsCount = this.cards.filter(c => c.scarcity === this.currentScarcity.toLowerCase()).length;
+    const gwInfoStr = selectedGw ? ` • ${selectedGw.label} (${selectedGw.dateRangeText})` : '';
+    const rarityCards = this.cards.filter(c => c.scarcity === this.currentScarcity.toLowerCase());
+    const inSeasonInRarity = rarityCards.filter(c => c.isInSeason).length;
 
     if (!lineups || lineups.length === 0) {
+      const reasonMsg = `⚠️ 0 formazioni generate per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — Hai ${rarityCards.length} carte ${this.currentScarcity.toUpperCase()} (${inSeasonInRarity} In-Season 26/27).`;
+      this.notify(reasonMsg, true);
+
       if (summary) {
-        summary.innerHTML = `Galleria: <strong>${this.cards.length} carte Pro</strong> (${rarityCardsCount} ${this.currentScarcity.toUpperCase()}) • Nessuna formazione valida per <strong>${this.currentCompetition.name}</strong>${gwInfoStr}.`;
+        summary.innerHTML = reasonMsg;
       }
       if (grid) {
         grid.innerHTML = `
           <div class="empty-state">
-            <p>Non hai abbastanza carte eleggibili in <strong>${this.currentScarcity.toUpperCase()}</strong> per completare i ruoli richiesti in <strong>${this.currentCompetition.name}</strong>${gwInfoStr}.</p>
+            <p><strong>${reasonMsg}</strong></p>
+            <p>Verifica di avere almeno 1 GK, 1 DEF, 1 MID, 1 FWD e 1 EXTRA eleggibili (con il requisito In-Season richiesto dal torneo).</p>
           </div>
         `;
       }
@@ -436,9 +477,11 @@ const App = {
     }
 
     const totalPortfolioPoints = lineups.reduce((acc, l) => acc + l.totalProjected, 0);
+    this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} • Totale: ${totalPortfolioPoints} pt`);
+
     if (summary) {
       summary.innerHTML = `
-        Galleria: <strong>${this.cards.length} carte Pro</strong> (${rarityCardsCount} ${this.currentScarcity.toUpperCase()}) •
+        Galleria: <strong>${this.cards.length} carte Pro</strong> (${rarityCards.length} ${this.currentScarcity.toUpperCase()}) •
         <strong>${lineups.length} Formazioni Ottimizzate</strong> per <strong>${this.currentCompetition.name}</strong>${gwInfoStr} •
         Proiezione Totale: <strong>${totalPortfolioPoints} pt</strong>
       `;
@@ -522,7 +565,8 @@ const App = {
     const grid =
       document.getElementById('lineups-grid') ||
       document.getElementById('lineups-container') ||
-      document.getElementById('results-grid');
+      document.getElementById('results-grid') ||
+      document.querySelector('.lineups-grid');
     if (grid) {
       grid.innerHTML = `
         <div class="empty-state">
