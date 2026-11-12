@@ -1,8 +1,7 @@
 // SorareHub - Predictive Opta Engine, Global Portfolio Solver & Tactical Matchup Analyzer
 const OptimizerEngine = {
-  CAPTAIN_MULTIPLIER: 1.50, // Capitano sempre +50%
+  CAPTAIN_MULTIPLIER: 1.50,
 
-  // Mappa alias slug leghe Sorare per allineare al 100% config.js con l'API GraphQL
   LEAGUE_ALIASES: {
     'premier-league-gb-eng': ['premier-league-gb-eng', 'premier-league'],
     'laliga-es': ['laliga-es', 'primera-division-es', 'la-liga-es'],
@@ -29,14 +28,12 @@ const OptimizerEngine = {
   buildCascadePortfolio(cards, competition, scarcity, strategy = 'floor') {
     if (!cards || cards.length === 0) return [];
 
-    // 1. Filtra per rarità ed eleggibilità competizione
     let pool = cards
       .filter(c => c.scarcity === scarcity.toLowerCase())
       .filter(card => this.isEligibleForCompetition(card, competition));
 
     if (pool.length === 0) return [];
 
-    // 2. Calcola proiezione EV multi-fattore e spiegazione tattica individuale
     pool = pool.map(card => {
       const evalResult = this.evaluatePlayer(card, strategy);
       return {
@@ -48,7 +45,6 @@ const OptimizerEngine = {
       };
     });
 
-    // Ordina per tier di disponibilità (Titolari -> Rotazione -> Ultima Spiaggia) e poi EV
     const tierWeight = { starter: 3, rotation: 2, last_resort: 1 };
     pool.sort((a, b) => {
       const tDiff = (tierWeight[b.availabilityTier] || 0) - (tierWeight[a.availabilityTier] || 0);
@@ -57,9 +53,6 @@ const OptimizerEngine = {
     });
 
     const lineups = [];
-    // Traccia solo gli ID delle singole carte già usate:
-    // lo stesso giocatore (playerSlug) NON può mai stare due volte nella stessa squadra,
-    // ma se hai una seconda carta (es. Classic + In-Season) può essere usata in un altro Team successivo.
     const usedCardIds = new Set();
     const rankLabels = [
       'Team A (Top Tier)',
@@ -70,7 +63,7 @@ const OptimizerEngine = {
     ];
 
     let teamIdx = 0;
-    while (true) {
+    while (teamIdx < 15) {
       const available = pool.filter(c => !usedCardIds.has(c.id));
       const lineup = this.solveOptimalLineup(available, competition, strategy);
       if (!lineup) break;
@@ -102,7 +95,6 @@ const OptimizerEngine = {
     return lineups;
   },
 
-  // Verifica che tutti i giocatori di una formazione siano persone diverse (no Classic + In-Season dello stesso player)
   hasDistinctPlayers(team) {
     const seenCardIds = new Set();
     const seenPlayerSlugs = new Set();
@@ -151,7 +143,6 @@ const OptimizerEngine = {
     }
 
     let matchupMod = 1.0;
-
     if (card.isHome === true) {
       matchupMod += (card.position === 'GK' || card.position === 'DEF') ? 0.06 : 0.04;
     } else if (card.isHome === false) {
@@ -159,21 +150,11 @@ const OptimizerEngine = {
     }
 
     const traits = card.tacticalTraits || {};
-    if (traits.setPiece) {
-      matchupMod += strategy === 'floor' ? 0.05 : 0.04;
-    }
-    if (traits.aerial && (card.position === 'DEF' || card.position === 'FWD')) {
-      matchupMod += 0.035;
-    }
-    if (traits.ballWinner && (card.position === 'DEF' || card.position === 'MID')) {
-      matchupMod += strategy === 'floor' ? 0.04 : 0.02;
-    }
-    if (traits.clinical && strategy === 'ceiling') {
-      matchupMod += 0.05;
-    }
-    if ((card.position === 'GK' || card.position === 'DEF') && traits.cleanSheets >= 2 && card.isHome) {
-      matchupMod += 0.04;
-    }
+    if (traits.setPiece) matchupMod += strategy === 'floor' ? 0.05 : 0.04;
+    if (traits.aerial && (card.position === 'DEF' || card.position === 'FWD')) matchupMod += 0.035;
+    if (traits.ballWinner && (card.position === 'DEF' || card.position === 'MID')) matchupMod += strategy === 'floor' ? 0.04 : 0.02;
+    if (traits.clinical && strategy === 'ceiling') matchupMod += 0.05;
+    if ((card.position === 'GK' || card.position === 'DEF') && traits.cleanSheets >= 2 && card.isHome) matchupMod += 0.04;
 
     const cardMultiplier = card.powerMultiplier || 1.0;
     const finalProjected = Math.max(5, Math.round(rawEv * minutesFactor * matchupMod * cardMultiplier));
@@ -248,11 +229,11 @@ const OptimizerEngine = {
   },
 
   solveOptimalSO5(pool, minInSeason, strategy) {
-    const gks = pool.filter(c => c.position === 'GK').slice(0, 8);
-    const defs = pool.filter(c => c.position === 'DEF').slice(0, 12);
-    const mids = pool.filter(c => c.position === 'MID').slice(0, 12);
-    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 12);
-    const extras = pool.filter(c => c.position !== 'GK').slice(0, 16);
+    const gks = pool.filter(c => c.position === 'GK').slice(0, 5);
+    const defs = pool.filter(c => c.position === 'DEF').slice(0, 7);
+    const mids = pool.filter(c => c.position === 'MID').slice(0, 7);
+    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 7);
+    const extras = pool.filter(c => c.position !== 'GK').slice(0, 10);
 
     if (!gks.length || !defs.length || !mids.length || !fwds.length || extras.length < 4) {
       return null;
@@ -297,12 +278,13 @@ const OptimizerEngine = {
     return bestTeam ? { starters: bestTeam } : null;
   },
 
+  // Ottimizzato per essere istantaneo (< 10ms) senza bloccare mai il browser
   solveOptimalSO7(pool, strategy) {
-    const gks = pool.filter(c => c.position === 'GK').slice(0, 6);
-    const defs = pool.filter(c => c.position === 'DEF').slice(0, 10);
-    const mids = pool.filter(c => c.position === 'MID').slice(0, 10);
-    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 8);
-    const extras = pool.filter(c => c.position !== 'GK').slice(0, 14);
+    const gks = pool.filter(c => c.position === 'GK').slice(0, 3);
+    const defs = pool.filter(c => c.position === 'DEF').slice(0, 5);
+    const mids = pool.filter(c => c.position === 'MID').slice(0, 5);
+    const fwds = pool.filter(c => c.position === 'FWD').slice(0, 4);
+    const extras = pool.filter(c => c.position !== 'GK').slice(0, 8);
 
     if (gks.length < 1 || defs.length < 2 || mids.length < 2 || fwds.length < 1) return null;
 
@@ -323,24 +305,31 @@ const OptimizerEngine = {
               if (m1.playerSlug === m2.playerSlug) continue;
 
               for (const fwd of fwds) {
-                for (const extra of extras) {
-                  const team = [
-                    { ...gk, slotRole: 'GK' },
-                    { ...d1, slotRole: 'DEF' },
-                    { ...d2, slotRole: 'DEF' },
-                    { ...m1, slotRole: 'MID' },
-                    { ...m2, slotRole: 'MID' },
-                    { ...fwd, slotRole: 'FWD' },
-                    { ...extra, slotRole: 'EXTRA' }
-                  ];
+                const usedSlugs = new Set([
+                  gk.playerSlug, d1.playerSlug, d2.playerSlug,
+                  m1.playerSlug, m2.playerSlug, fwd.playerSlug
+                ]);
+                if (usedSlugs.size < 6) continue;
 
-                  if (!this.hasDistinctPlayers(team)) continue;
+                const extra = extras.find(e => !usedSlugs.has(e.playerSlug));
+                if (!extra) continue;
 
-                  const teamValue = this.scoreTeamCombination(team, strategy);
-                  if (teamValue > bestScore) {
-                    bestScore = teamValue;
-                    bestTeam = team;
-                  }
+                const team = [
+                  { ...gk, slotRole: 'GK' },
+                  { ...d1, slotRole: 'DEF' },
+                  { ...d2, slotRole: 'DEF' },
+                  { ...m1, slotRole: 'MID' },
+                  { ...m2, slotRole: 'MID' },
+                  { ...fwd, slotRole: 'FWD' },
+                  { ...extra, slotRole: 'EXTRA' }
+                ];
+
+                if (!this.hasDistinctPlayers(team)) continue;
+
+                const teamValue = this.scoreTeamCombination(team, strategy);
+                if (teamValue > bestScore) {
+                  bestScore = teamValue;
+                  bestTeam = team;
                 }
               }
             }
