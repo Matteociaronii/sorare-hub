@@ -1,134 +1,204 @@
-// SorareHub - Official Sorare 26/27 Competitions Configuration (Leagues + European Cups + All-Star + U23)
+// SorareHub - Official Configuration & Rules Engine (2026/2027)
 const CONFIG = {
-  CLIENT_ID: 'Be92I11a5-W_p21_bB25f3w13e4y5N6x7M8z9A0b1C2',
+  CLIENT_ID: 'nb6KHL2pLACJu0KArFiJlejgfPzCQLm7hVT7_HghcGo',
   REDIRECT_URI: 'https://matteociaronii.github.io/sorare-hub/',
-  TOKEN_ENDPOINT: 'https://sorare-oauth-proxy.matteo-ciaroni03.workers.dev',
   AUTH_ENDPOINT: 'https://sorare.com/oauth/authorize',
-  SCOPES: 'read_cards',
+  TOKEN_ENDPOINT: 'https://sorarehub-oauth.matty-ciaroni.workers.dev',
+  GRAPHQL_ENDPOINT: 'https://api.sorare.com/graphql',
+  CORS_PROXY: 'https://corsproxy.io/?',
+  SCOPES: 'read',
+
+  RULES: {
+    MIN_IN_SEASON_SO5: 4,
+    IN_SEASON_BONUS: 0.05,
+    COLLECTION_MAX_BONUS: 0.05,
+    CAPTAIN_BONUS_MULTIPLIER: 1.50
+  },
+
+  WEIGHTS: {
+    FLOOR_MODE: { aas: 0.72, decisive: 0.28 },
+    CEILING_MODE: { aas: 0.40, decisive: 0.60 }
+  },
 
   OFFICIAL_COMPETITIONS: [
+    // === 1. CAMPIONATI DOMESTICI SINGOLI IN-SEASON (SO5: Min 4 In-Season, Mono-Lega) ===
     {
-      id: 'all_star',
-      name: 'All-Star — Classic (Bacino Universale SO7)',
-      format: 'SO7',
-      leagues: ['ALL'],
-      inSeasonRequired: 0,
-      allowNationalTeams: true
-    },
-    {
-      id: 'u23',
-      name: 'Under 23 — Classic (SO5)',
-      format: 'SO5',
-      leagues: ['ALL'],
-      u23Only: true,
-      inSeasonRequired: 0,
-      allowNationalTeams: true
-    },
-    {
-      id: 'champion_europe',
-      name: 'Champion Europe — In-Season (Top 5 Campionati SO5)',
-      format: 'SO5',
-      leagues: ['premier-league', 'serie-a', 'laliga', 'la-liga', 'primera-division', 'bundesliga', 'ligue-1'],
-      inSeasonRequired: 4,
-      allowNationalTeams: false
-    },
-    {
-      id: 'champion_classic',
-      name: 'Champion Europe — Classic (Top 5 Campionati SO7)',
-      format: 'SO7',
-      leagues: ['premier-league', 'serie-a', 'laliga', 'la-liga', 'primera-division', 'bundesliga', 'ligue-1'],
-      inSeasonRequired: 0,
-      allowNationalTeams: false
-    },
-    {
-      id: 'ucl_champions',
-      name: 'European Champion — UEFA Champions League (SO5)',
-      format: 'SO5',
-      competitionType: 'UCL',
-      leagues: ['uefa-champions-league', 'champions-league'],
-      inSeasonRequired: 4,
-      allowNationalTeams: false
-    },
-    {
-      id: 'uel_uecl_contender',
-      name: 'European Contender — UEFA Europa & Conference League (SO5)',
-      format: 'SO5',
-      competitionType: 'UEL_UECL',
-      leagues: ['uefa-europa-league', 'europa-league', 'uefa-europa-conference-league', 'conference-league'],
-      inSeasonRequired: 4,
-      allowNationalTeams: false
-    },
-    {
-      id: 'challenger_europe',
-      name: 'Challenger — In-Season (Liga Portugal, Eredivisie, JPL, Scozia SO5)',
-      format: 'SO5',
-      leagues: ['primeira-liga', 'liga-portugal', 'eredivisie', 'jupiler-pro-league', 'first-division-a', 'scottish-premiership', 'super-lig', 'danish-superliga'],
-      inSeasonRequired: 4,
-      allowNationalTeams: false
-    },
-    {
-      id: 'contender',
-      name: 'Contender — In-Season (Austria, Croazia, 2.BL, Ligue 2 SO5)',
-      format: 'SO5',
-      leagues: ['austrian-bundesliga', 'supersport-hnl', 'prva-hnl', '2-bundesliga', 'ligue-2'],
-      inSeasonRequired: 4,
-      allowNationalTeams: false
-    },
-    {
-      id: 'premier_league',
+      id: 'premier_league_in_season',
       name: 'Premier League — In-Season (SO5)',
       format: 'SO5',
-      leagues: ['premier-league'],
       inSeasonRequired: 4,
-      allowNationalTeams: false
+      allowNationalTeams: false,
+      leagues: ['premier-league-gb-eng', 'premier-league']
     },
     {
-      id: 'serie_a',
+      id: 'serie_a_in_season',
       name: 'Serie A — In-Season (SO5)',
       format: 'SO5',
-      leagues: ['serie-a'],
       inSeasonRequired: 4,
-      allowNationalTeams: false
+      allowNationalTeams: false,
+      leagues: ['serie-a-it', 'serie-a']
     },
     {
-      id: 'laliga',
-      name: 'La Liga — In-Season (SO5)',
+      id: 'laliga_in_season',
+      name: 'LaLiga — In-Season (SO5)',
       format: 'SO5',
-      leagues: ['laliga', 'la-liga', 'primera-division'],
       inSeasonRequired: 4,
-      allowNationalTeams: false
+      allowNationalTeams: false,
+      leagues: ['laliga-es', 'laliga', 'primera-division-es', 'primera-division']
     },
     {
-      id: 'bundesliga',
+      id: 'bundesliga_in_season',
       name: 'Bundesliga — In-Season (SO5)',
       format: 'SO5',
-      leagues: ['bundesliga'],
       inSeasonRequired: 4,
-      allowNationalTeams: false
+      allowNationalTeams: false,
+      leagues: ['bundesliga-de', 'bundesliga']
     },
     {
-      id: 'ligue_1',
+      id: 'ligue1_in_season',
       name: 'Ligue 1 — In-Season (SO5)',
       format: 'SO5',
-      leagues: ['ligue-1'],
       inSeasonRequired: 4,
-      allowNationalTeams: false
+      allowNationalTeams: false,
+      leagues: ['ligue-1-fr', 'ligue-1']
     },
     {
-      id: 'liga_portugal',
+      id: 'championship_in_season',
+      name: 'EFL Championship — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      allowNationalTeams: false,
+      leagues: ['championship-gb-eng', 'efl-championship', 'championship']
+    },
+    {
+      id: 'liga_portugal_in_season',
       name: 'Liga Portugal — In-Season (SO5)',
       format: 'SO5',
-      leagues: ['primeira-liga', 'liga-portugal'],
       inSeasonRequired: 4,
-      allowNationalTeams: false
+      allowNationalTeams: false,
+      leagues: ['primeira-liga-pt', 'primeira-liga', 'liga-portugal']
     },
     {
-      id: 'eredivisie',
+      id: 'jupiler_in_season',
+      name: 'Jupiler Pro League — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      allowNationalTeams: false,
+      leagues: ['jupiler-pro-league-be', 'jupiler-pro-league', 'first-division-a']
+    },
+    {
+      id: 'eredivisie_in_season',
       name: 'Eredivisie — In-Season (SO5)',
       format: 'SO5',
-      leagues: ['eredivisie'],
       inSeasonRequired: 4,
-      allowNationalTeams: false
+      allowNationalTeams: false,
+      leagues: ['eredivisie-nl', 'eredivisie']
+    },
+    {
+      id: 'scottish_in_season',
+      name: 'Scottish Premiership — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      allowNationalTeams: false,
+      leagues: ['premiership-gb-sct', 'scottish-premiership']
+    },
+    {
+      id: 'mls_in_season',
+      name: 'MLS — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      allowNationalTeams: false,
+      leagues: ['mls-us', 'mls', 'major-league-soccer']
+    },
+    {
+      id: 'j1_league_in_season',
+      name: 'J1 League — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      allowNationalTeams: false,
+      leagues: ['j1-league-jp', 'j1-league']
+    },
+    {
+      id: 'k_league_in_season',
+      name: 'K League 1 — In-Season (SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      allowNationalTeams: false,
+      leagues: ['k-league-1-kr', 'k-league-1']
+    },
+    {
+      id: 'challenger_in_season',
+      name: 'Challenger — In-Season (Liga Portugal, Eredivisie, JPL, Scozia SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      allowNationalTeams: false,
+      leagues: [
+        'primeira-liga-pt', 'primeira-liga', 'eredivisie-nl', 'eredivisie',
+        'jupiler-pro-league-be', 'jupiler-pro-league', 'premiership-gb-sct', 'scottish-premiership',
+        'super-lig-tr', 'super-lig', 'superliga-dk', 'super-league-ch', 'eliteserien-no'
+      ]
+    },
+    {
+      id: 'contender_in_season',
+      name: 'Contender — In-Season (Leghe Minori SO5)',
+      format: 'SO5',
+      inSeasonRequired: 4,
+      allowNationalTeams: false,
+      leagues: [
+        'bundesliga-at',
+        'austrian-bundesliga',
+        'supersport-hnl',
+        'prva-hnl',
+        '2-bundesliga-de',
+        '2-bundesliga',
+        'ligue-2-fr',
+        'ligue-2'
+      ]
+    },
+
+    // === 2. COMPETIZIONI CLASSIC (SO7: 7 Titolari, Nessun vincolo di annata) ===
+    {
+      id: 'champions_europe_classic_so7',
+      name: 'CHAMPIONS EUROPE — Classic (UEFA Champions League SO7)',
+      format: 'SO7',
+      inSeasonRequired: 0,
+      isUefaChampions: true,
+      allowNationalTeams: false,
+      leagues: ['uefa-champions-league']
+    },
+    {
+      id: 'contender_europe_classic_so7',
+      name: 'CONTENDER EUROPE — Classic (Europa & Conference League SO7)',
+      format: 'SO7',
+      inSeasonRequired: 0,
+      isUefaContender: true,
+      allowNationalTeams: false,
+      leagues: ['uefa-europa-league', 'uefa-conference-league', 'uefa-europa-conference-league']
+    },
+    {
+      id: 'champion_europe_classic_so7',
+      name: 'Champion Europe — Classic (Premier, Serie A, Liga, Bundes, Ligue 1 SO7)',
+      format: 'SO7',
+      inSeasonRequired: 0,
+      allowNationalTeams: false,
+      leagues: ['premier-league-gb-eng', 'serie-a-it', 'laliga-es', 'bundesliga-de', 'ligue-1-fr']
+    },
+    {
+      id: 'u23_classic_so7',
+      name: 'Under 23 — Classic (Tutti gli U23 SO7)',
+      format: 'SO7',
+      inSeasonRequired: 0,
+      u23Only: true,
+      allowNationalTeams: true,
+      leagues: ['ALL']
+    },
+    {
+      id: 'all_star_classic_so7',
+      name: 'All-Star — Classic (Bacino Universale a Cascata SO7)',
+      format: 'SO7',
+      inSeasonRequired: 0,
+      allowNationalTeams: true,
+      leagues: ['ALL']
     }
   ]
 };
