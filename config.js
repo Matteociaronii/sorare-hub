@@ -133,9 +133,14 @@ const CONFIG = {
       inSeasonRequired: 4,
       allowNationalTeams: false,
       leagues: [
-        'primeira-liga-pt', 'primeira-liga', 'eredivisie-nl', 'eredivisie',
-        'jupiler-pro-league-be', 'jupiler-pro-league', 'premiership-gb-sct', 'scottish-premiership',
-        'super-lig-tr', 'super-lig', 'superliga-dk', 'super-league-ch', 'eliteserien-no'
+        'primeira-liga-pt', 'primeira-liga', 'liga-portugal',
+        'eredivisie-nl', 'eredivisie',
+        'jupiler-pro-league-be', 'jupiler-pro-league', 'first-division-a',
+        'premiership-gb-sct', 'scottish-premiership',
+        'super-lig-tr', 'super-lig',
+        'superliga-dk', 'danish-superliga',
+        'super-league-ch', 'swiss-super-league',
+        'eliteserien-no', 'eliteserien'
       ]
     },
     {
@@ -145,12 +150,25 @@ const CONFIG = {
       inSeasonRequired: 4,
       allowNationalTeams: false,
       leagues: [
-        'bundesliga-at',
-        'austrian-bundesliga',
-        'supersport-hnl',
-        'prva-hnl',
         '2-bundesliga-de',
         '2-bundesliga',
+        'segunda-division-es',
+        'segunda-division',
+        'serie-b-it',
+        'serie-b',
+        'superliga-dk',
+        'danish-superliga',
+        'eliteserien-no',
+        'eliteserien',
+        'bundesliga-at',
+        'austrian-bundesliga',
+        'super-league-ch',
+        'swiss-super-league',
+        'ekstraklasa-pl',
+        'ekstraklasa',
+        'supersport-hnl',
+        'prva-hnl',
+        '1-hnl-hr',
         'ligue-2-fr',
         'ligue-2'
       ]
@@ -181,7 +199,13 @@ const CONFIG = {
       format: 'SO7',
       inSeasonRequired: 0,
       allowNationalTeams: false,
-      leagues: ['premier-league-gb-eng', 'serie-a-it', 'laliga-es', 'bundesliga-de', 'ligue-1-fr']
+      leagues: [
+        'premier-league-gb-eng', 'premier-league',
+        'serie-a-it', 'serie-a',
+        'laliga-es', 'laliga', 'primera-division-es', 'primera-division',
+        'bundesliga-de', 'bundesliga',
+        'ligue-1-fr', 'ligue-1'
+      ]
     },
     {
       id: 'u23_classic_so7',
