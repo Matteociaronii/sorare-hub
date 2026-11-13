@@ -1,4 +1,4 @@
-// SorareHub - Application Controller (Double Match Badge + Dynamic Opponent Form UI)
+// SorareHub - Application Controller (Context-Specific Form Display: Forma Naz vs Forma Club)
 const App = {
   cards: [],
   gameweeks: [],
@@ -330,7 +330,7 @@ const App = {
         position: absolute;
         left: 0;
         top: calc(100% + 6px);
-        width: 360px;
+        width: 365px;
         max-width: 86vw;
         background: #0d0e12;
         border: 1px solid #d4af37;
@@ -843,6 +843,10 @@ const App = {
         const xiBtnCls = isConfirmedStarter ? 'sh-xi-btn xi-confirmed' : 'sh-xi-btn xi-rotation';
         const roleCls = `pos-${p.displayRole.toLowerCase()}`;
 
+        const formTagLabel = p.contextFormLabel || 'Forma';
+        const formTagVal = p.contextFormScore !== undefined ? p.contextFormScore : p.l5;
+        const aasTagVal = p.contextAas !== undefined ? p.contextAas : p.avgAas;
+
         return `
           <div class="sh-row">
             <div class="sh-pos ${roleCls}">${p.displayRole}</div>
@@ -853,7 +857,7 @@ const App = {
                   <span class="tactical-tooltip-box">${this.escapeHtml(p.matchupInsight || '')}</span>
                 </span>
               </div>
-              <div class="sh-sub">${this.escapeHtml(p.club)} • ${matchLine} • L15: ${p.l15} • AA: ${p.avgAas}</div>
+              <div class="sh-sub">${this.escapeHtml(p.club)} • ${matchLine} • ${formTagLabel}: ${formTagVal} • L15: ${p.l15} • AA: ${aasTagVal}</div>
             </div>
             <div class="sh-right">
               <div class="sh-pts">${p.projectedScore} pt</div>
