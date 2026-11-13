@@ -1,4 +1,4 @@
-// SorareHub - Application Controller (Club Stack Official XI Selector + Sosta Club Support + LineupForge UI)
+// SorareHub - Application Controller (Green Confirmed XI Button + Benched Restore Strip + Strict Tournaments)
 const App = {
   cards: [],
   gameweeks: [],
@@ -13,7 +13,8 @@ const App = {
     name: 'All-Star',
     format: 'SO7',
     leagues: ['ALL'],
-    inSeasonRequired: 0
+    inSeasonRequired: 0,
+    allowNationalTeams: true
   },
 
   async init() {
@@ -65,8 +66,6 @@ const App = {
     const total = this.cards.length;
     const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
-    const compId = String(this.currentCompetition?.id || '').toLowerCase();
-    const allowNat = compId.includes('all_star') || compId.includes('all-star');
 
     let confirmedXiCount = 0;
     const roleActiveCounts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
@@ -75,9 +74,11 @@ const App = {
     this.cards.forEach(c => {
       if (c.isInjuredOrSuspended) return;
       if (this.manualOverrides[c.playerSlug] === 'bench') return;
+      if (c.scarcity !== this.currentScarcity) return;
+      if (!OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)) return;
 
       const games = Array.isArray(c.scheduleGames) ? c.scheduleGames : [];
-      const validGames = allowNat ? games : games.filter(g => !g.isNationalTeam);
+      const validGames = games.filter(g => OptimizerEngine.isGameValidForCompetition(g, c, this.currentCompetition));
       let activeMatch = null;
 
       if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
@@ -86,20 +87,17 @@ const App = {
         activeMatch = validGames.find(g => g.timestamp >= s && g.timestamp <= e) || null;
       }
 
-      // Esclude chi ha già fatto 0 pt in un match giocato o chi è riserva in Nazionale
       if (activeMatch) {
         const isDnpZero = activeMatch.alreadyPlayedScore === 0 && (activeMatch.alreadyPlayedMins === 0 || activeMatch.alreadyPlayedMins === null);
-        const isNatBench = activeMatch.isNationalTeam && c.natFitnessTier === 'bench_nat' && this.manualOverrides[c.playerSlug] !== 'xi';
+        const isNatBench = activeMatch.isNationalTeam && (!c.isNationalCallupVerified || c.natFitnessTier === 'bench_nat') && this.manualOverrides[c.playerSlug] !== 'xi';
         if (isDnpZero || isNatBench) activeMatch = null;
       }
 
-      if (activeMatch && c.scarcity === this.currentScarcity && OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)) {
-        if (!seenSlugs.has(c.playerSlug)) {
-          seenSlugs.add(c.playerSlug);
-          if (c.baseFitnessTier !== 'last_resort') confirmedXiCount++;
-          if (roleActiveCounts[c.position] !== undefined) {
-            roleActiveCounts[c.position]++;
-          }
+      if (activeMatch && !seenSlugs.has(c.playerSlug)) {
+        seenSlugs.add(c.playerSlug);
+        if (c.baseFitnessTier !== 'last_resort') confirmedXiCount++;
+        if (roleActiveCounts[c.position] !== undefined) {
+          roleActiveCounts[c.position]++;
         }
       }
     });
@@ -160,7 +158,7 @@ const App = {
               📡 Radar Titolari ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
             </div>
             <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
-              Con partita in GW: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
+              Con partita valida nel torneo: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
             </div>
           </div>
         </div>
@@ -170,7 +168,7 @@ const App = {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <div>
             <div style="font-size:11px;font-weight:800;color:#64b5f6;text-transform:uppercase;letter-spacing:0.5px;">
-              🃏 Bilanciamento Rosa ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})
+              🃏 Rosa Eleggibile ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})
             </div>
             <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
               <strong>${isCount} In-Season (26/27)</strong> • <strong>${classicCount} Classic</strong> • <span style="color:#ff8a95;">🚑 ${injuredCount} Infortunati esclusi</span>
@@ -278,23 +276,27 @@ const App = {
       .sh-sub { font-size: 11.5px; color: #b0b6be; margin-top: 3px; line-height: 1.35; }
       .sh-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
       .sh-pts { font-weight: 800; font-size: 14.5px; color: #f3d266; white-space: nowrap; }
-      .sh-bench-btn {
-        background: rgba(255, 255, 255, 0.06);
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        color: #b0b6be;
-        border-radius: 5px;
-        padding: 2px 6px;
-        font-size: 10px;
-        font-weight: 700;
+      .sh-xi-btn {
+        border-radius: 6px;
+        padding: 3px 7px;
+        font-size: 10.5px;
+        font-weight: 800;
         cursor: pointer;
+        transition: all 0.15s ease;
       }
-      .sh-bench-btn:hover {
-        border-color: #f3d266;
-        color: #f3d266;
+      .sh-xi-btn.xi-confirmed {
+        background: rgba(46, 125, 50, 0.28);
+        border: 1px solid #4caf50;
+        color: #81c784;
       }
-      .sh-bench-btn.is-benched {
-        background: rgba(244, 67, 54, 0.2);
-        border-color: rgba(244, 67, 54, 0.65);
+      .sh-xi-btn.xi-rotation {
+        background: rgba(255, 152, 0, 0.18);
+        border: 1px solid rgba(255, 152, 0, 0.65);
+        color: #ffb74d;
+      }
+      .sh-xi-btn:hover {
+        background: rgba(244, 67, 54, 0.22);
+        border-color: #ef5350;
         color: #ff8a95;
       }
       .sh-season-badge {
@@ -383,6 +385,16 @@ const App = {
         font-size: 12px;
         color: #e0e0e0;
       }
+      .benched-restore-strip {
+        width: 100%;
+        background: rgba(244, 67, 54, 0.1);
+        border: 1px solid rgba(244, 67, 54, 0.4);
+        border-radius: 9px;
+        padding: 7px 12px;
+        margin-top: 6px;
+        font-size: 12px;
+        color: #ffcdd2;
+      }
       .club-xi-chip {
         display: inline-flex;
         align-items: center;
@@ -394,14 +406,13 @@ const App = {
         font-weight: 700;
         cursor: pointer;
         border: 1px solid rgba(76, 175, 80, 0.55);
-        background: rgba(76, 175, 80, 0.16);
+        background: rgba(76, 175, 80, 0.18);
         color: #a5d6a7;
       }
       .club-xi-chip.benched {
         border-color: rgba(244, 67, 54, 0.55);
-        background: rgba(244, 67, 54, 0.15);
+        background: rgba(244, 67, 54, 0.18);
         color: #ef9a9a;
-        text-decoration: line-through;
       }
     `;
     document.head.appendChild(style);
@@ -472,7 +483,6 @@ const App = {
       })
     ].join('');
 
-    // Se è attivo uno Stack Squadra specifico, mostra la barra degli 11 Titolari del Club per confermare/escludere chi è nell'11 ufficiale appena escono le formazioni!
     let clubXiStripHtml = '';
     if (this.selectedClubSlug && this.selectedClubSlug !== 'ALL') {
       const clubCards = this.cards.filter(c =>
@@ -494,15 +504,32 @@ const App = {
         const isBench = this.manualOverrides[p.playerSlug] === 'bench' || !xiSlugs.has(p.playerSlug);
         const cls = isBench ? 'club-xi-chip benched' : 'club-xi-chip';
         const icon = isBench ? '🪑' : '✅';
-        return `<span class="${cls}" data-club-xi-slug="${this.escapeHtml(p.playerSlug)}" title="Clicca per attivare/escludere dagli 11 titolari ufficiali del club">${icon} ${this.escapeHtml(p.position)}: ${this.escapeHtml(p.name)}</span>`;
+        return `<span class="${cls}" data-club-xi-slug="${this.escapeHtml(p.playerSlug)}" title="Clicca per confermare nell'11 titolare o spostare in panchina">${icon} ${this.escapeHtml(p.position)}: ${this.escapeHtml(p.name)}</span>`;
       }).join('');
 
       clubXiStripHtml = `
         <div class="club-xi-strip">
-          <div style="margin-bottom:4px;font-weight:700;color:#64b5f6;">
-            🎯 Filtro 11 Titolari Ufficiali (${this.escapeHtml(uniqueClubPlayers[0]?.club || '')}) — Clicca su un giocatore per segnarlo Titolare (✅) o Panchina (🪑):
+          <div style="margin-bottom:4px;font-weight:700;color:#81c784;">
+            🎯 11 Titolari Ufficiali (${this.escapeHtml(uniqueClubPlayers[0]?.club || '')}) — Verde = Titolare XI (✅) • Rosso = Panchina (🪑):
           </div>
           <div>${chips}</div>
+        </div>
+      `;
+    }
+
+    // Barra di ripristino rapido per i giocatori messi manualmente in panchina
+    const benchedSlugs = Object.keys(this.manualOverrides).filter(slug => this.manualOverrides[slug] === 'bench');
+    let benchedRestoreHtml = '';
+    if (benchedSlugs.length > 0) {
+      const benchedChips = benchedSlugs.map(slug => {
+        const foundCard = this.cards.find(c => c.playerSlug === slug);
+        const pName = foundCard ? foundCard.name : slug;
+        return `<span class="club-xi-chip benched" data-restore-slug="${this.escapeHtml(slug)}" title="Clicca per rimettere subito tra i Titolari XI">🪑 ${this.escapeHtml(pName)} (Ripristina XI ↩)</span>`;
+      }).join('');
+
+      benchedRestoreHtml = `
+        <div class="benched-restore-strip">
+          <strong>🪑 Giocatori esclusi (Panchina):</strong> ${benchedChips}
         </div>
       `;
     }
@@ -517,6 +544,7 @@ const App = {
         <select id="club-stack-select">${clubOptionsHtml}</select>
       </div>
       ${clubXiStripHtml}
+      ${benchedRestoreHtml}
     `;
 
     const gwSelect = document.getElementById('gw-select');
@@ -632,6 +660,17 @@ const App = {
     });
 
     document.addEventListener('click', (e) => {
+      const restoreChip = e.target.closest('[data-restore-slug]');
+      if (restoreChip) {
+        e.stopPropagation();
+        const slug = restoreChip.dataset.restoreSlug;
+        if (slug) {
+          this.manualOverrides[slug] = 'xi';
+          this.runOptimizer();
+        }
+        return;
+      }
+
       const clubXiChip = e.target.closest('[data-club-xi-slug]');
       if (clubXiChip) {
         e.stopPropagation();
@@ -643,12 +682,12 @@ const App = {
         return;
       }
 
-      const benchToggle = e.target.closest('.sh-bench-btn');
-      if (benchToggle) {
+      const xiBtn = e.target.closest('.sh-xi-btn');
+      if (xiBtn) {
         e.stopPropagation();
-        const slug = benchToggle.dataset.slug;
+        const slug = xiBtn.dataset.slug;
         if (slug) {
-          this.manualOverrides[slug] = this.manualOverrides[slug] === 'bench' ? null : 'bench';
+          this.manualOverrides[slug] = 'bench';
           this.runOptimizer();
         }
         return;
@@ -758,7 +797,7 @@ const App = {
     if (!lineups || lineups.length === 0) {
       const reason = isStack
         ? `Non hai tutti i ruoli (GK, DC, CC, ATT) tra gli 11 titolari di questo club (o mancano le ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season).`
-        : `Non possiedi abbastanza carte ${this.currentCompetition.inSeasonRequired > 0 ? `In-Season 26/27 (richieste ${this.currentCompetition.inSeasonRequired}/5)` : ''} per coprire tutti i ruoli in ${this.currentCompetition.name}.`;
+        : `Non possiedi abbastanza carte ${this.currentCompetition.inSeasonRequired > 0 ? `In-Season 26/27 (richieste ${this.currentCompetition.inSeasonRequired}/5)` : ''} appartenenti ai club di ${this.currentCompetition.name}.`;
       const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — ${reason}`;
       this.notify(msg, true);
       targetGrid.innerHTML = `<div class="sh-lineup-card"><p>${msg}</p></div>`;
@@ -767,7 +806,7 @@ const App = {
 
     const isBreakMode = lineups.some(l => l.isLeagueOnBreakMode);
     if (isBreakMode) {
-      this.notify(`⏸️ ${this.currentCompetition.name} in Sosta Club in ${selectedGw?.label || 'questa GW'}: generate comunque ${lineups.length} formazioni (4/5 In-Season rispettato).`);
+      this.notify(`⏸️ ${this.currentCompetition.name} in Sosta Club in ${selectedGw?.label || 'questa GW'}: generate comunque ${lineups.length} formazioni (con appartenenza club e 4/5 In-Season verificati).`);
     } else {
       this.notify(`✅ Generate ${lineups.length} formazioni LineupForge per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
     }
@@ -776,7 +815,7 @@ const App = {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
 
       const playersHtml = orderedStarters.map(p => {
-        const capBadge = p.isCaptain ? ' <strong>[C +50%]</strong>' : '';
+        const capBadge = p.isCaptain ? ' <strong>[C]</strong>' : '';
         const seasonTag = p.isInSeason
           ? '<span class="sh-season-badge in-season">26/27</span>'
           : '<span class="sh-season-badge classic">CLASSIC</span>';
@@ -789,9 +828,9 @@ const App = {
           matchLine = `${p.activeMatch.isHome === true ? '🏠' : '✈️'} vs ${this.escapeHtml(p.activeMatch.opponentName)} (${this.escapeHtml(p.activeMatch.competitionName)})`;
         }
 
-        const isBenched = this.manualOverrides[p.playerSlug] === 'bench';
-        const benchBtnLabel = isBenched ? '🪑 Panchina' : 'XI';
-        const benchBtnCls = isBenched ? 'sh-bench-btn is-benched' : 'sh-bench-btn';
+        const isConfirmedStarter = p.availabilityTier === 'starter' || this.manualOverrides[p.playerSlug] === 'xi';
+        const xiBtnLabel = isConfirmedStarter ? '✅ XI' : '⚠️ Rot.';
+        const xiBtnCls = isConfirmedStarter ? 'sh-xi-btn xi-confirmed' : 'sh-xi-btn xi-rotation';
         const roleCls = `pos-${p.displayRole.toLowerCase()}`;
 
         return `
@@ -808,7 +847,7 @@ const App = {
             </div>
             <div class="sh-right">
               <div class="sh-pts">${p.projectedScore} pt</div>
-              <button type="button" class="${benchBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Segna in panchina se non parte nell'11 titolare ufficiale">${benchBtnLabel}</button>
+              <button type="button" class="${xiBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Verde = Titolare confermato. Clicca per spostarlo in Panchina se non parte dal 1'">${xiBtnLabel}</button>
             </div>
           </div>
         `;
