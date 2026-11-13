@@ -1,7 +1,8 @@
-// SorareHub - Application Controller (Context-Specific Form Display: Forma Naz vs Forma Club)
+// SorareHub - Application Controller + Direct Sorare GraphQL Submitter
 const App = {
   cards: [],
   gameweeks: [],
+  lastGeneratedLineups: [],
   selectedGwIndex: 0,
   selectedClubSlug: 'ALL',
   manualOverrides: {},
@@ -59,6 +60,169 @@ const App = {
       banner.className = 'status-banner';
       const mainContainer = document.querySelector('main') || document.body;
       mainContainer.insertBefore(banner, mainContainer.firstChild);
+    }
+  },
+
+  sendToExtension(type, input = {}) {
+    return new Promise((resolve) => {
+      const reqId = 'sh_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', listener);
+        resolve({ ok: false, error: 'extension_timeout' });
+      }, 10000);
+
+      function listener(event) {
+        if (event.source !== window) return;
+        const data = event.data;
+        if (!data || data.__shSource !== 'ext' || data.reqId !== reqId) return;
+        clearTimeout(timeout);
+        window.removeEventListener('message', listener);
+        resolve(data.resp || { ok: false, error: 'empty_response' });
+      }
+
+      window.addEventListener('message', listener);
+      window.postMessage({ __shSource: 'page', type, reqId, input }, '*');
+    });
+  },
+
+  matchLeaderboardFromFixture(leaderboards, comp, scarcity) {
+    if (!Array.isArray(leaderboards) || leaderboards.length === 0) return null;
+    const targetRarity = String(scarcity || 'limited').toLowerCase();
+    const compId = String(comp.id || '').toLowerCase();
+
+    const rarityFiltered = leaderboards.filter(lb => {
+      const r = String(lb.rarityType || lb.slug || '').toLowerCase();
+      if (targetRarity === 'super_rare') return r.includes('super_rare');
+      if (targetRarity === 'rare') return r.includes('rare') && !r.includes('super_rare');
+      return r.includes(targetRarity);
+    });
+
+    const pool = rarityFiltered.length > 0 ? rarityFiltered : leaderboards;
+
+    const keywordMap = {
+      'premier_league_in_season': ['premier_league', 'premier-league'],
+      'serie_a_in_season': ['serie_a', 'serie-a'],
+      'laliga_in_season': ['laliga', 'primera_division'],
+      'bundesliga_in_season': ['bundesliga'],
+      'ligue1_in_season': ['ligue_1', 'ligue-1'],
+      'challenger_in_season': ['challenger'],
+      'contender_in_season': ['contender'],
+      'champions_europe_classic_so7': ['champions_league', 'champions_europe', 'ucl'],
+      'contender_europe_classic_so7': ['europa_league', 'contender_europe'],
+      'champion_europe_classic_so7': ['champion_europe', 'champion'],
+      'u23_classic_so7': ['under_twenty_one', 'u23', 'under_23'],
+      'all_star_classic_so7': ['all_star', 'all-star']
+    };
+
+    const keywords = keywordMap[compId] || [compId.replace(/_in_season|_classic_so7/g, '')];
+    const isClassic = comp.format === 'SO7' || compId.includes('classic');
+
+    const scored = pool.map(lb => {
+      const s = String(lb.slug || '').toLowerCase();
+      const dName = String(lb.displayName || '').toLowerCase();
+      let score = 0;
+
+      if (keywords.some(k => s.includes(k) || dName.includes(k))) score += 50;
+      if (isClassic && (s.includes('all_seasons') || s.includes('classic'))) score += 20;
+      if (!isClassic && (s.includes('in_season') || s.includes('in-season') || !s.includes('all_seasons'))) score += 20;
+      if (lb.division === 1) score += 5;
+
+      return { lb, score };
+    }).sort((a, b) => b.score - a.score);
+
+    return scored[0] && scored[0].score >= 20 ? scored[0].lb : pool[0];
+  },
+
+  async submitLineupDirectlyToSorare(lineupIndex, btnEl) {
+    const lineup = this.lastGeneratedLineups[lineupIndex];
+    if (!lineup || !Array.isArray(lineup.starters) || lineup.starters.length === 0) {
+      this.notify('❌ Formazione non trovata.', true);
+      return;
+    }
+
+    const originalText = btnEl ? btnEl.innerHTML : '⚡ Invia Diretto a Sorare';
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.innerHTML = '⏳ Invio a Sorare in corso...';
+    }
+
+    try {
+      const lbResp = await this.sendToExtension('SH_GET_LEADERBOARDS');
+      if (!lbResp || !lbResp.ok) {
+        throw new Error('Estensione SorareHub non rilevata. Vai su chrome://extensions, ricarica SorareHub Direct Submitter e aggiorna questa pagina.');
+      }
+
+      const fixtures = lbResp.data?.data?.so5?.so5Fixtures?.nodes || [];
+      const selectedGw = this.gameweeks[this.selectedGwIndex];
+
+      let targetFixture = fixtures.find(f => selectedGw && f.gameWeek === selectedGw.gameWeek && f.so5Leaderboards?.length > 0)
+        || fixtures.find(f => f.so5Leaderboards && f.so5Leaderboards.length > 0);
+
+      if (!targetFixture) {
+        throw new Error('Nessuna Gameweek aperta trovata su Sorare in questo momento.');
+      }
+
+      const matchedLb = this.matchLeaderboardFromFixture(
+        targetFixture.so5Leaderboards,
+        this.currentCompetition,
+        this.currentScarcity
+      );
+
+      if (!matchedLb) {
+        throw new Error(`Leaderboard non trovata su Sorare per ${this.currentCompetition.name}.`);
+      }
+
+      const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
+      const captainCard = orderedStarters.find(p => p.isCaptain) || orderedStarters[0];
+
+      const appearancesInput = orderedStarters.map(p => ({
+        cardSlug: p.id,
+        captain: Boolean(p.id === captainCard.id)
+      }));
+
+      let submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', {
+        so5LeaderboardId: matchedLb.id,
+        name: lineup.rankLabel,
+        so5AppearancesAttributes: appearancesInput
+      });
+
+      const extractErr = (r) => {
+        if (!r || !r.ok) return r?.error || 'Errore di rete';
+        const topErr = r.json?.errors?.[0]?.message;
+        if (topErr) return topErr;
+        const mutErr = r.json?.data?.createOrUpdateSo5Lineup?.errors?.[0]?.message;
+        if (mutErr) return mutErr;
+        return null;
+      };
+
+      let errMsg = extractErr(submitResp);
+
+      if (errMsg && /unknown argument|field|input|invalid/i.test(errMsg)) {
+        submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', {
+          so5LeaderboardSlug: matchedLb.slug,
+          so5AppearancesAttributes: appearancesInput
+        });
+        errMsg = extractErr(submitResp);
+      }
+
+      const targetSorareUrl = `https://sorare.com/it/football/play/boards/arena/essence/${targetFixture.slug}/${matchedLb.slug}/lineups`;
+
+      if (errMsg) {
+        console.warn('Dettaglio risposta Sorare GraphQL:', submitResp?.json);
+        this.notify(`⚠️ Risposta Sorare: ${errMsg} — Apro la competizione su Sorare!`, true);
+        window.open(targetSorareUrl, '_blank');
+      } else {
+        this.notify(`✅ ${lineup.rankLabel} inviata e schierata su Sorare (${matchedLb.displayName || matchedLb.slug})!`);
+        window.open(targetSorareUrl, '_blank');
+      }
+    } catch (err) {
+      console.error('Errore invio Sorare:', err);
+      this.notify('❌ ' + err.message, true);
+    } finally {
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.innerHTML = originalText;
+      }
     }
   },
 
@@ -413,6 +577,37 @@ const App = {
         background: rgba(244, 67, 54, 0.18);
         color: #ef9a9a;
       }
+      .sh-direct-submit-footer {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(212, 175, 55, 0.22);
+        display: flex;
+        gap: 8px;
+      }
+      .sh-direct-submit-btn {
+        flex: 1;
+        background: linear-gradient(135deg, #f3d266 0%, #d4af37 100%);
+        color: #0d0e12;
+        border: none;
+        border-radius: 9px;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 800;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        transition: transform 0.12s ease, opacity 0.15s ease;
+      }
+      .sh-direct-submit-btn:hover {
+        transform: translateY(-1px);
+        opacity: 0.95;
+      }
+      .sh-direct-submit-btn:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
     `;
     document.head.appendChild(style);
   },
@@ -658,6 +853,16 @@ const App = {
     });
 
     document.addEventListener('click', (e) => {
+      const directSubmitBtn = e.target.closest('[data-direct-submit-idx]');
+      if (directSubmitBtn) {
+        e.stopPropagation();
+        const idx = Number(directSubmitBtn.dataset.directSubmitIdx);
+        if (!Number.isNaN(idx)) {
+          this.submitLineupDirectlyToSorare(idx, directSubmitBtn);
+        }
+        return;
+      }
+
       const restoreChip = e.target.closest('[data-restore-slug]');
       if (restoreChip) {
         e.stopPropagation();
@@ -705,7 +910,7 @@ const App = {
       }
 
       const btn = e.target.closest('button');
-      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn') {
+      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn' && !btn.hasAttribute('data-direct-submit-idx')) {
         const txt = (btn.textContent || '').toLowerCase();
         if (txt.includes('genera') || txt.includes('ottimizz') || txt.includes('calcola') || btn.id === 'generate-btn' || btn.id === 'optimize-btn') {
           this.syncStateFromDOM();
@@ -767,6 +972,7 @@ const App = {
         )
       : [];
 
+    this.lastGeneratedLineups = lineups;
     this.updateGalleryCounters(lineups.length);
     this.renderLineups(lineups, selectedGw);
   },
@@ -809,7 +1015,7 @@ const App = {
       this.notify(`✅ Generate ${lineups.length} formazioni ottimali per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
     }
 
-    targetGrid.innerHTML = lineups.map(lineup => {
+    targetGrid.innerHTML = lineups.map((lineup, idx) => {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
 
       const playersHtml = orderedStarters.map(p => {
@@ -878,6 +1084,11 @@ const App = {
               <div class="sh-score">${lineup.totalProjected} pt</div>
             </div>
             <div>${playersHtml}</div>
+          </div>
+          <div class="sh-direct-submit-footer">
+            <button type="button" class="sh-direct-submit-btn" data-direct-submit-idx="${idx}">
+              ⚡ Invia Diretto a Sorare
+            </button>
           </div>
         </div>
       `;
