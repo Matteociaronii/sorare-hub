@@ -1,4 +1,4 @@
-// SorareHub - Application Controller (Tactical HUD Replacement for Duplicate Boxes + Club Stack Filter + LineupForge UI)
+// SorareHub - Application Controller (Club Stack Official XI Selector + Sosta Club Support + LineupForge UI)
 const App = {
   cards: [],
   gameweeks: [],
@@ -61,7 +61,6 @@ const App = {
     }
   },
 
-  // Aggiorna i 4 box KPI in alto E trasforma i 2 box neri ripetitivi ("383" e "Connesso • @XT_matty") in una Plancia Tattica Live utilissima
   updateGalleryCounters(lineupsCount = 0) {
     const total = this.cards.length;
     const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
@@ -79,15 +78,22 @@ const App = {
 
       const games = Array.isArray(c.scheduleGames) ? c.scheduleGames : [];
       const validGames = allowNat ? games : games.filter(g => !g.isNationalTeam);
-      let hasGwGame = false;
+      let activeMatch = null;
 
       if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
         const s = new Date(selectedGw.startDate).getTime();
         const e = new Date(selectedGw.endDate).getTime();
-        hasGwGame = validGames.some(g => g.timestamp >= s && g.timestamp <= e);
+        activeMatch = validGames.find(g => g.timestamp >= s && g.timestamp <= e) || null;
       }
 
-      if (hasGwGame && c.scarcity === this.currentScarcity && OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)) {
+      // Esclude chi ha già fatto 0 pt in un match giocato o chi è riserva in Nazionale
+      if (activeMatch) {
+        const isDnpZero = activeMatch.alreadyPlayedScore === 0 && (activeMatch.alreadyPlayedMins === 0 || activeMatch.alreadyPlayedMins === null);
+        const isNatBench = activeMatch.isNationalTeam && c.natFitnessTier === 'bench_nat' && this.manualOverrides[c.playerSlug] !== 'xi';
+        if (isDnpZero || isNatBench) activeMatch = null;
+      }
+
+      if (activeMatch && c.scarcity === this.currentScarcity && OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)) {
         if (!seenSlugs.has(c.playerSlug)) {
           seenSlugs.add(c.playerSlug);
           if (c.baseFitnessTier !== 'last_resort') confirmedXiCount++;
@@ -98,7 +104,6 @@ const App = {
       }
     });
 
-    // 1) Aggiorna SOLO i 4 box KPI principali che hanno l'intestazione esatta in children[0]
     const allContainers = document.querySelectorAll('div, section, article');
     allContainers.forEach(el => {
       if (el.children.length === 3) {
@@ -114,15 +119,14 @@ const App = {
           if (subEl) subEl.textContent = `26/27 pronte (${this.currentScarcity.toUpperCase()})`;
         } else if (label.includes('CONFIRMED XI') || label.includes('TITOLARI')) {
           valEl.textContent = String(confirmedXiCount);
-          if (subEl) subEl.textContent = `Con match in ${selectedGw?.label?.split(' ')[0] || 'GW'}`;
+          if (subEl) subEl.textContent = `Titolari attivi in ${selectedGw?.label?.split(' ')[0] || 'GW'}`;
         } else if (label === 'SQUADRE GENERATE') {
           valEl.textContent = String(lineupsCount);
-          if (subEl) subEl.textContent = `Zero-DNP • ${this.currentStrategy.toUpperCase()}`;
+          if (subEl) subEl.textContent = `LineupForge • ${this.currentStrategy.toUpperCase()}`;
         }
       }
     });
 
-    // 2) Individua i due box secondari che mostravano solo "383" e "Connesso • @XT_matty" (o che hanno 2 box affiancati sotto la barra) e li trasforma in 2 widget tattici utili
     this.upgradeSecondaryInfoBoxes(selectedGw, roleActiveCounts);
   },
 
@@ -136,7 +140,6 @@ const App = {
     const classicCount = rarityCards.length - isCount;
     const injuredCount = this.cards.filter(c => c.scarcity === this.currentScarcity && c.isInjuredOrSuspended).length;
 
-    // Cerca i box che contengono solo il numero 383 o "Connesso • @" o che sono stati già marcati come HUD
     const candidates = Array.from(document.querySelectorAll('div')).filter(el => {
       if (el.dataset.sorarehubHud === 'left' || el.dataset.sorarehubHud === 'right') return true;
       if (el.children.length > 2) return false;
@@ -154,10 +157,10 @@ const App = {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <div>
             <div style="font-size:11px;font-weight:800;color:#f3d266;text-transform:uppercase;letter-spacing:0.5px;">
-              📡 Radar Partite ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
+              📡 Radar Titolari ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
             </div>
             <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
-              Giocatori con match in GW: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
+              Con partita in GW: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
             </div>
           </div>
         </div>
@@ -170,7 +173,7 @@ const App = {
               🃏 Bilanciamento Rosa ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})
             </div>
             <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
-              <strong>${isCount} In-Season (26/27)</strong> • <strong>${classicCount} Classic</strong> • <span style="color:#ff8a95;">🚑 ${injuredCount} Out/Infortunati esclusi</span>
+              <strong>${isCount} In-Season (26/27)</strong> • <strong>${classicCount} Classic</strong> • <span style="color:#ff8a95;">🚑 ${injuredCount} Infortunati esclusi</span>
             </div>
           </div>
         </div>
@@ -326,7 +329,7 @@ const App = {
         position: absolute;
         left: 0;
         top: calc(100% + 6px);
-        width: 315px;
+        width: 320px;
         max-width: 84vw;
         background: #0e0f12;
         border: 1px solid #d4af37;
@@ -370,6 +373,36 @@ const App = {
         font-size: 12px;
         font-weight: 700;
       }
+      .club-xi-strip {
+        width: 100%;
+        background: rgba(33, 150, 243, 0.08);
+        border: 1px solid rgba(33, 150, 243, 0.35);
+        border-radius: 9px;
+        padding: 8px 12px;
+        margin-top: 6px;
+        font-size: 12px;
+        color: #e0e0e0;
+      }
+      .club-xi-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin: 3px 4px 3px 0;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+        border: 1px solid rgba(76, 175, 80, 0.55);
+        background: rgba(76, 175, 80, 0.16);
+        color: #a5d6a7;
+      }
+      .club-xi-chip.benched {
+        border-color: rgba(244, 67, 54, 0.55);
+        background: rgba(244, 67, 54, 0.15);
+        color: #ef9a9a;
+        text-decoration: line-through;
+      }
     `;
     document.head.appendChild(style);
   },
@@ -403,7 +436,6 @@ const App = {
     }
   },
 
-  // Renderizza sia il Selettore GW ufficiale Sorare sia il filtro "🏟️ Stack Squadra" (es. SL Benfica)
   renderGwAndClubSelectors() {
     if (!this.gameweeks || this.gameweeks.length === 0) return;
 
@@ -440,6 +472,41 @@ const App = {
       })
     ].join('');
 
+    // Se è attivo uno Stack Squadra specifico, mostra la barra degli 11 Titolari del Club per confermare/escludere chi è nell'11 ufficiale appena escono le formazioni!
+    let clubXiStripHtml = '';
+    if (this.selectedClubSlug && this.selectedClubSlug !== 'ALL') {
+      const clubCards = this.cards.filter(c =>
+        c.scarcity === this.currentScarcity &&
+        c.clubSlug === this.selectedClubSlug &&
+        !c.isInjuredOrSuspended
+      );
+      const xiSlugs = OptimizerEngine.getClubStartingXiPool(clubCards, this.manualOverrides);
+      const uniqueClubPlayers = [];
+      const seen = new Set();
+      clubCards.forEach(c => {
+        if (!seen.has(c.playerSlug)) {
+          seen.add(c.playerSlug);
+          uniqueClubPlayers.push(c);
+        }
+      });
+
+      const chips = uniqueClubPlayers.map(p => {
+        const isBench = this.manualOverrides[p.playerSlug] === 'bench' || !xiSlugs.has(p.playerSlug);
+        const cls = isBench ? 'club-xi-chip benched' : 'club-xi-chip';
+        const icon = isBench ? '🪑' : '✅';
+        return `<span class="${cls}" data-club-xi-slug="${this.escapeHtml(p.playerSlug)}" title="Clicca per attivare/escludere dagli 11 titolari ufficiali del club">${icon} ${this.escapeHtml(p.position)}: ${this.escapeHtml(p.name)}</span>`;
+      }).join('');
+
+      clubXiStripHtml = `
+        <div class="club-xi-strip">
+          <div style="margin-bottom:4px;font-weight:700;color:#64b5f6;">
+            🎯 Filtro 11 Titolari Ufficiali (${this.escapeHtml(uniqueClubPlayers[0]?.club || '')}) — Clicca su un giocatore per segnarlo Titolare (✅) o Panchina (🪑):
+          </div>
+          <div>${chips}</div>
+        </div>
+      `;
+    }
+
     container.innerHTML = `
       <div class="gw-selector-pill">
         <span>📅 GW Sorare:</span>
@@ -449,6 +516,7 @@ const App = {
         <span>🏟️ Stack Squadra:</span>
         <select id="club-stack-select">${clubOptionsHtml}</select>
       </div>
+      ${clubXiStripHtml}
     `;
 
     const gwSelect = document.getElementById('gw-select');
@@ -564,6 +632,17 @@ const App = {
     });
 
     document.addEventListener('click', (e) => {
+      const clubXiChip = e.target.closest('[data-club-xi-slug]');
+      if (clubXiChip) {
+        e.stopPropagation();
+        const slug = clubXiChip.dataset.clubXiSlug;
+        if (slug) {
+          this.manualOverrides[slug] = this.manualOverrides[slug] === 'bench' ? 'xi' : 'bench';
+          this.runOptimizer();
+        }
+        return;
+      }
+
       const benchToggle = e.target.closest('.sh-bench-btn');
       if (benchToggle) {
         e.stopPropagation();
@@ -678,15 +757,20 @@ const App = {
 
     if (!lineups || lineups.length === 0) {
       const reason = isStack
-        ? `Non hai tutti i ruoli necessari (o 4/5 In-Season) per completare lo stack di questo singolo club.`
-        : `Nessuna formazione completa con tutti i giocatori (incluso GK) dotati di partita reale in ${selectedGw?.label || 'questa GW'} e requisito ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season.`;
+        ? `Non hai tutti i ruoli (GK, DC, CC, ATT) tra gli 11 titolari di questo club (o mancano le ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season).`
+        : `Non possiedi abbastanza carte ${this.currentCompetition.inSeasonRequired > 0 ? `In-Season 26/27 (richieste ${this.currentCompetition.inSeasonRequired}/5)` : ''} per coprire tutti i ruoli in ${this.currentCompetition.name}.`;
       const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — ${reason}`;
       this.notify(msg, true);
       targetGrid.innerHTML = `<div class="sh-lineup-card"><p>${msg}</p></div>`;
       return;
     }
 
-    this.notify(`✅ Generate ${lineups.length} formazioni LineupForge per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
+    const isBreakMode = lineups.some(l => l.isLeagueOnBreakMode);
+    if (isBreakMode) {
+      this.notify(`⏸️ ${this.currentCompetition.name} in Sosta Club in ${selectedGw?.label || 'questa GW'}: generate comunque ${lineups.length} formazioni (4/5 In-Season rispettato).`);
+    } else {
+      this.notify(`✅ Generate ${lineups.length} formazioni LineupForge per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
+    }
 
     targetGrid.innerHTML = lineups.map(lineup => {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
@@ -698,7 +782,7 @@ const App = {
           : '<span class="sh-season-badge classic">CLASSIC</span>';
 
         const isNat = p.activeMatch?.isNationalTeam === true;
-        let matchLine = '⏸️ Nessun match in GW';
+        let matchLine = '⏸️ Sosta Club in questa GW';
         if (isNat) {
           matchLine = `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`;
         } else if (p.activeMatch) {
@@ -724,7 +808,7 @@ const App = {
             </div>
             <div class="sh-right">
               <div class="sh-pts">${p.projectedScore} pt</div>
-              ${p.activeMatch ? `<button type="button" class="${benchBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Segna in panchina se non parte nell'11 titolare">${benchBtnLabel}</button>` : ''}
+              <button type="button" class="${benchBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Segna in panchina se non parte nell'11 titolare ufficiale">${benchBtnLabel}</button>
             </div>
           </div>
         `;
