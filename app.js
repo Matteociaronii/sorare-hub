@@ -1,4 +1,4 @@
-// SorareHub - Application Controller (Green Confirmed XI Button + Benched Restore Strip + Strict Tournaments)
+// SorareHub - Application Controller (Bespoke Player Dossier UI + Confirmed XI Controls)
 const App = {
   cards: [],
   gameweeks: [],
@@ -9,7 +9,7 @@ const App = {
   currentScarcity: 'limited',
   currentStrategy: 'floor',
   currentCompetition: (window.CONFIG && CONFIG.OFFICIAL_COMPETITIONS && CONFIG.OFFICIAL_COMPETITIONS[0]) || {
-    id: 'all_star',
+    id: 'all_star_classic_so7',
     name: 'All-Star',
     format: 'SO7',
     leagues: ['ALL'],
@@ -120,7 +120,7 @@ const App = {
           if (subEl) subEl.textContent = `Titolari attivi in ${selectedGw?.label?.split(' ')[0] || 'GW'}`;
         } else if (label === 'SQUADRE GENERATE') {
           valEl.textContent = String(lineupsCount);
-          if (subEl) subEl.textContent = `LineupForge • ${this.currentStrategy.toUpperCase()}`;
+          if (subEl) subEl.textContent = `SorareHub Engine • ${this.currentStrategy.toUpperCase()}`;
         }
       }
     });
@@ -222,9 +222,9 @@ const App = {
         align-items: stretch !important;
       }
       .sh-lineup-card, .lineup-card {
-        flex: 0 0 390px !important;
-        min-width: 370px !important;
-        max-width: 415px !important;
+        flex: 0 0 395px !important;
+        min-width: 375px !important;
+        max-width: 420px !important;
         background: #141519 !important;
         border: 1px solid rgba(212, 175, 55, 0.42) !important;
         border-radius: 14px !important;
@@ -331,19 +331,19 @@ const App = {
         position: absolute;
         left: 0;
         top: calc(100% + 6px);
-        width: 320px;
-        max-width: 84vw;
-        background: #0e0f12;
+        width: 350px;
+        max-width: 86vw;
+        background: #0d0e12;
         border: 1px solid #d4af37;
-        border-radius: 9px;
-        padding: 11px 12px;
-        color: #ececec;
+        border-radius: 10px;
+        padding: 12px 13px;
+        color: #f0f0f0;
         font-size: 11.5px;
         font-weight: 400;
-        line-height: 1.5;
+        line-height: 1.55;
         z-index: 9999;
         white-space: pre-line;
-        box-shadow: 0 12px 28px rgba(0,0,0,0.9);
+        box-shadow: 0 14px 32px rgba(0,0,0,0.92);
       }
       .player-info-trigger:hover .tactical-tooltip-box,
       .player-info-trigger.active .tactical-tooltip-box { display: block; }
@@ -517,7 +517,6 @@ const App = {
       `;
     }
 
-    // Barra di ripristino rapido per i giocatori messi manualmente in panchina
     const benchedSlugs = Object.keys(this.manualOverrides).filter(slug => this.manualOverrides[slug] === 'bench');
     let benchedRestoreHtml = '';
     if (benchedSlugs.length > 0) {
@@ -808,7 +807,7 @@ const App = {
     if (isBreakMode) {
       this.notify(`⏸️ ${this.currentCompetition.name} in Sosta Club in ${selectedGw?.label || 'questa GW'}: generate comunque ${lineups.length} formazioni (con appartenenza club e 4/5 In-Season verificati).`);
     } else {
-      this.notify(`✅ Generate ${lineups.length} formazioni LineupForge per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
+      this.notify(`✅ Generate ${lineups.length} formazioni ottimali per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
     }
 
     targetGrid.innerHTML = lineups.map(lineup => {
