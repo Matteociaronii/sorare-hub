@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>SorareHub — Portfolio & Lineup Optimizer</title>
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="stylesheet" href="style.css?v=25">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
@@ -137,10 +137,281 @@
     }
   </script>
 
-  <script src="config.js?v=10"></script>
-  <script src="sorare_api.js?v=10"></script>
-  <script src="optimizer.js?v=10"></script>
-  <script src="app.js?v=10"></script>
+  <script src="config.js?v=25"></script>
+  <script src="sorare_api.js?v=25"></script>
+  <script src="optimizer.js?v=25"></script>
+  <script src="app.js?v=25"></script>
+
+  <!-- SorareHub Bridge: Desktop Extension + iPad/Mobile Split-View Companion -->
+  <script>
+  (function () {
+    function extractLineupFromCardElement(cardEl, index) {
+      const titleEl = cardEl.querySelector('h2, h3, h4, .lineup-title, [class*="title"]');
+      const title = titleEl ? titleEl.innerText.trim().split('\n')[0] : `Squadra Consigliata #${index + 1}`;
+
+      const players = [];
+      const candidateRows = Array.from(
+        cardEl.querySelectorAll('[data-player-slug], [data-player-name], .player-row, .lineup-player, li, tr, div')
+      );
+
+      const seenNames = new Set();
+      const roleRegex = /\b(POR|DIF|CEN|ATT|EXTRA|GK|DEF|MID|FW|FLX)\b/i;
+
+      for (const row of candidateRows) {
+        if (row.querySelectorAll('h3, h4, table').length > 0) continue;
+        if (row.classList && row.classList.contains('shub-export-bar')) continue;
+        const text = (row.innerText || '').trim();
+        if (!text || text.length < 4 || text.length > 260) continue;
+
+        const hasInfoBtn = row.querySelector('button, .info-btn, [title*="Dossier"], [onclick]');
+        const hasSeasonTag = text.includes('26/27') || text.includes('CLASSIC') || text.includes('Classic');
+        if (!hasInfoBtn && !hasSeasonTag) continue;
+
+        let rawLines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+        if (rawLines.length === 0) continue;
+
+        let pos = 'FLX';
+        const roleMatch = text.match(roleRegex);
+        if (roleMatch) pos = roleMatch[1].toUpperCase();
+
+        let nameLine = rawLines.find(
+          (l) =>
+            l.length > 3 &&
+            !roleRegex.test(l) &&
+            !/^\d+(\.\d+)?\s*pt$/i.test(l) &&
+            !l.includes('Forma ') &&
+            !l.includes('L15:') &&
+            !l.includes('Esportazione Diretta')
+        ) || rawLines[0];
+
+        nameLine = nameLine
+          .replace(/\b(26\/27|CLASSIC|Classic|EXTRA|\?)\b/g, '')
+          .replace(/\[C\]/gi, '')
+          .trim();
+
+        if (!nameLine || nameLine.length < 3 || seenNames.has(nameLine.toLowerCase())) continue;
+        seenNames.add(nameLine.toLowerCase());
+
+        const isCaptain =
+          /\bCAPITANO\b|\[C\]/i.test(text) ||
+          Boolean(row.querySelector('.captain-badge, [title*="Capitano"], [class*="captain"]'));
+        const isInSeason = text.includes('26/27');
+        const slug = row.getAttribute('data-player-slug') || row.getAttribute('data-slug') || '';
+
+        players.push({
+          pos,
+          name: nameLine,
+          lastName: nameLine.split(/\s+/).pop() || nameLine,
+          isCaptain,
+          isInSeason,
+          slug
+        });
+
+        if (players.length >= 7) break;
+      }
+
+      if (players.length > 0 && !players.some((p) => p.isCaptain)) {
+        players[0].isCaptain = true;
+      }
+
+      return {
+        title,
+        timestamp: Date.now(),
+        players
+      };
+    }
+
+    function openQuickCompanionModal(lineup) {
+      let modal = document.getElementById('sorarehub-companion-modal');
+      if (modal) modal.remove();
+
+      modal = document.createElement('div');
+      modal.id = 'sorarehub-companion-modal';
+      modal.style.cssText = `
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        width: min(350px, calc(100vw - 28px));
+        background: #0f172a;
+        color: #f8fafc;
+        border: 2px solid #eab308;
+        border-radius: 14px;
+        box-shadow: 0 18px 42px rgba(0,0,0,0.75);
+        z-index: 999999;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        overflow: hidden;
+      `;
+
+      const rowsHtml = lineup.players
+        .map((p, idx) => {
+          const capTag = p.isCaptain
+            ? `<span style="background:#eab308;color:#000;font-weight:800;font-size:10px;padding:1px 5px;border-radius:4px;margin-left:5px;">[C]</span>`
+            : '';
+          const seasonTag = p.isInSeason
+            ? `<span style="background:#065f46;color:#6ee7b7;font-size:10px;padding:1px 5px;border-radius:4px;margin-left:4px;">26/27</span>`
+            : `<span style="background:#334155;color:#cbd5e1;font-size:10px;padding:1px 5px;border-radius:4px;margin-left:4px;">CLS</span>`;
+          return `
+            <div class="shub-comp-row" data-idx="${idx}" data-lastname="${p.lastName}" style="display:flex;align-items:center;justify-content:space-between;padding:9px 10px;margin-bottom:6px;background:#1e293b;border:1px solid #334155;border-radius:9px;cursor:pointer;user-select:none;">
+              <div style="display:flex;align-items:center;overflow:hidden;">
+                <span style="font-size:10px;font-weight:800;color:#94a3b8;width:34px;flex-shrink:0;">${p.pos}</span>
+                <span style="font-size:13px;font-weight:700;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.name}</span>
+                ${capTag}
+                ${seasonTag}
+              </div>
+              <span class="shub-comp-state" style="font-size:11px;font-weight:700;color:#eab308;margin-left:8px;flex-shrink:0;">Copia 📋</span>
+            </div>
+          `;
+        })
+        .join('');
+
+      modal.innerHTML = `
+        <div style="background:#1e293b;padding:10px 12px;border-bottom:1px solid #334155;display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <div style="font-size:12px;font-weight:800;color:#eab308;">📱 ASSISTENTE RAPIDO (iPad / Mobile)</div>
+            <div style="font-size:11px;color:#94a3b8;">${lineup.title}</div>
+          </div>
+          <button id="shub-comp-close" style="background:#334155;border:none;color:#fff;border-radius:6px;padding:4px 8px;cursor:pointer;font-weight:700;">✕</button>
+        </div>
+        <div style="padding:10px 12px;">
+          <div id="shub-comp-toast" style="font-size:11px;color:#cbd5e1;margin-bottom:8px;">
+            Tocca un giocatore per <b>copiare il cognome</b> e spuntarlo come inserito:
+          </div>
+          <div>${rowsHtml}</div>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <a href="https://sorare.com/football/play" target="_blank" rel="noopener" style="flex:1;text-align:center;background:#eab308;color:#0f172a;text-decoration:none;padding:8px 10px;border-radius:8px;font-weight:800;font-size:12px;">
+              🔗 Apri Lobby Sorare
+            </a>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+
+      document.getElementById('shub-comp-close').addEventListener('click', () => modal.remove());
+
+      modal.querySelectorAll('.shub-comp-row').forEach((row) => {
+        row.addEventListener('click', async () => {
+          const last = row.getAttribute('data-lastname') || '';
+          try {
+            await navigator.clipboard.writeText(last);
+          } catch (e) {}
+          row.style.borderColor = '#10b981';
+          row.style.background = '#064e3b';
+          const st = row.querySelector('.shub-comp-state');
+          if (st) {
+            st.textContent = 'Inserito ✓';
+            st.style.color = '#6ee7b7';
+          }
+          const toast = document.getElementById('shub-comp-toast');
+          if (toast) {
+            toast.innerHTML = `✅ <b>"${last}"</b> copiato negli appunti! Incollalo nella ricerca su Sorare.`;
+            toast.style.color = '#6ee7b7';
+          }
+        });
+      });
+    }
+
+    function sendLineupToSorare(lineup, forceCompanionModal) {
+      const hasExtension = document.documentElement.getAttribute('data-sorarehub-extension') === 'installed';
+
+      if (forceCompanionModal || !hasExtension) {
+        openQuickCompanionModal(lineup);
+        if (!hasExtension && !forceCompanionModal) {
+          try {
+            localStorage.setItem('sorarehub_last_exported_lineup', JSON.stringify(lineup));
+          } catch (e) {}
+        }
+        return;
+      }
+
+      window.postMessage(
+        {
+          type: 'SORAREHUB_SEND_TO_EXTENSION',
+          payload: lineup,
+          openTab: true
+        },
+        '*'
+      );
+    }
+
+    function injectExportButtons() {
+      const outputRoot = document.getElementById('lineups-output') || document.body;
+      const allContainers = Array.from(
+        outputRoot.querySelectorAll('.lineup-card, .team-card, [class*="lineup"], [class*="squadra"], section, article, div')
+      );
+
+      let cardIndex = 0;
+      for (const el of allContainers) {
+        if (el.getAttribute('data-shub-export-injected') === '1') continue;
+
+        const txt = el.innerText || '';
+        const ptMatches = txt.match(/\d+(\.\d+)?\s*pt/g);
+        const hasSquadHeader = /Squadra\s*#\d+|Formazione\s*#\d+|Lineup\s*#\d+/i.test(txt);
+
+        if (!hasSquadHeader || !ptMatches || ptMatches.length < 5) continue;
+        const squadHeadersInside = (txt.match(/Squadra\s*#\d+/gi) || []).length;
+        if (squadHeadersInside > 1) continue;
+
+        el.setAttribute('data-shub-export-injected', '1');
+        const currentIdx = cardIndex++;
+
+        const bar = document.createElement('div');
+        bar.className = 'shub-export-bar';
+        bar.style.cssText = `
+          display: flex;
+          gap: 8px;
+          margin: 10px 0 6px 0;
+          padding: 8px 10px;
+          background: rgba(15, 23, 42, 0.85);
+          border: 1px solid rgba(234, 179, 8, 0.45);
+          border-radius: 10px;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+        `;
+
+        bar.innerHTML = `
+          <span style="font-size:11px;font-weight:700;color:#eab308;">🚀 Esportazione Diretta Sorare</span>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="shub-btn-ext" style="background:#eab308;color:#0f172a;border:none;border-radius:7px;padding:6px 11px;font-weight:800;font-size:11px;cursor:pointer;">
+              ⚡ Invia a Sorare
+            </button>
+            <button type="button" class="shub-btn-ipad" style="background:#1e293b;color:#f8fafc;border:1px solid #475569;border-radius:7px;padding:6px 10px;font-weight:700;font-size:11px;cursor:pointer;">
+              📱 Vista iPad / Split
+            </button>
+          </div>
+        `;
+
+        el.prepend(bar);
+
+        bar.querySelector('.shub-btn-ext').addEventListener('click', (e) => {
+          e.stopPropagation();
+          const lineup = extractLineupFromCardElement(el, currentIdx);
+          sendLineupToSorare(lineup, false);
+        });
+
+        bar.querySelector('.shub-btn-ipad').addEventListener('click', (e) => {
+          e.stopPropagation();
+          const lineup = extractLineupFromCardElement(el, currentIdx);
+          sendLineupToSorare(lineup, true);
+        });
+      }
+    }
+
+    const observer = new MutationObserver(() => {
+      injectExportButtons();
+    });
+
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true });
+      injectExportButtons();
+    } else {
+      window.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, { childList: true, subtree: true });
+        injectExportButtons();
+      });
+    }
+  })();
+  </script>
 </body>
 </html>
-
