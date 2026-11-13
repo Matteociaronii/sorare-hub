@@ -1,6 +1,6 @@
-// SorareHub - Separate Club vs National Team Stats + Full GW Match Tracking + Official Lineup Detection
+// SorareHub - Verified National Team Callups + Strict Club Competition Slugs + Real Opta Split
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v19',
+  CACHE_KEY: 'sorarehub_gallery_cache_v20',
   CACHE_TTL_MS: 10 * 60 * 1000, // 10 minuti
 
   generateRandomString(length = 32) {
@@ -178,7 +178,6 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
 
-    // Interroga le ultime 10 partite (so5Scores(last: 10)) per separare con precisione il rendimento/titolarità nel CLUB da quello in NAZIONALE
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -212,7 +211,7 @@ const SorareAPI = {
                   activeSuspensions {
                     reason
                   }
-                  so5Scores(last: 10) {
+                  so5Scores(last: 12) {
                     score
                     decisiveScore {
                       totalScore
@@ -251,7 +250,7 @@ const SorareAPI = {
                       slug
                       displayName
                     }
-                    upcomingGames(first: 4) {
+                    upcomingGames(first: 5) {
                       date
                       competition {
                         slug
@@ -356,7 +355,7 @@ const SorareAPI = {
         loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
       }
       if (window.App && App.notify) {
-        App.notify(`📥 Analisi Opta (Club vs Nazionale): ${allCards.length} carte Pro...`);
+        App.notify(`📥 Verifica Tornei, Coppe & Convocazioni Nazionali: ${allCards.length} carte Pro...`);
       }
 
       const pageInfo = connection?.pageInfo;
@@ -417,19 +416,19 @@ const SorareAPI = {
 
         const club = player.activeClub || {};
         const clubName = club.name || 'Svincolato / N.D.';
-        const clubSlug = club.slug || 'no-club';
+        const clubSlug = (club.slug || 'no-club').toLowerCase();
         const leagueSlug = (club.domesticLeague?.slug || 'other').toLowerCase();
         const leagueName = club.domesticLeague?.displayName || leagueSlug;
 
         const natTeam = player.activeNationalTeam || {};
-        const natSlug = natTeam.slug || '';
+        const natSlug = (natTeam.slug || '').toLowerCase();
         const natName = natTeam.name || '';
 
         const isGameNational = (g, isNatSource = false) => {
           if (isNatSource) return true;
           if (!g) return false;
-          const homeSlug = g.homeTeam?.slug || '';
-          const awaySlug = g.awayTeam?.slug || '';
+          const homeSlug = (g.homeTeam?.slug || '').toLowerCase();
+          const awaySlug = (g.awayTeam?.slug || '').toLowerCase();
           const compSlug = String(g.competition?.slug || '').toLowerCase();
           const matchesNatTeam = Boolean(natSlug && (homeSlug === natSlug || awaySlug === natSlug));
           const matchesClubTeam = Boolean(clubSlug && (homeSlug === clubSlug || awaySlug === clubSlug));
@@ -437,105 +436,27 @@ const SorareAPI = {
           return matchesNatTeam || (!matchesClubTeam && isCompNational);
         };
 
-        const scheduleGames = [];
-        const seenGameKeys = new Set();
-
-        const pushUniqueGame = (g, isNatSource, alreadyPlayedScore = null, alreadyPlayedMins = null) => {
-          if (!g || !g.date) return;
-          const ts = new Date(g.date).getTime();
-          if (!ts || Number.isNaN(ts)) return;
-
-          const homeSlug = g.homeTeam?.slug || '';
-          const awaySlug = g.awayTeam?.slug || '';
-          const homeName = g.homeTeam?.name || 'Casa';
-          const awayName = g.awayTeam?.name || 'Trasferta';
-          const compSlug = String(g.competition?.slug || '').toLowerCase();
-          const compName = g.competition?.displayName || g.competition?.slug || 'Match';
-
-          const dayKey = new Date(ts).toISOString().slice(0, 10);
-          const dedupKey = `${dayKey}_${homeSlug || homeName}_${awaySlug || awayName}`;
-          if (seenGameKeys.has(dedupKey)) return;
-          seenGameKeys.add(dedupKey);
-
-          const isNationalMatch = isGameNational(g, isNatSource);
-
-          if (isNationalMatch) {
-            const isHome = natSlug ? (homeSlug === natSlug) : true;
-            const myNatName = natName || (isHome ? homeName : awayName);
-            const oppName = isHome ? awayName : homeName;
-            scheduleGames.push({
-              date: g.date,
-              timestamp: ts,
-              competitionSlug: compSlug || 'international',
-              competitionName: compName || 'Nazionale',
-              isHome: isHome,
-              opponentName: oppName,
-              opponentSlug: isHome ? awaySlug : homeSlug,
-              isNationalTeam: true,
-              alreadyPlayedScore: alreadyPlayedScore,
-              alreadyPlayedMins: alreadyPlayedMins,
-              teamName: `${myNatName} vs ${oppName}`
-            });
-          } else {
-            const isHome = homeSlug === clubSlug;
-            scheduleGames.push({
-              date: g.date,
-              timestamp: ts,
-              competitionSlug: compSlug,
-              competitionName: compName || 'Club',
-              isHome: isHome,
-              opponentName: isHome ? awayName : homeName,
-              opponentSlug: isHome ? awaySlug : homeSlug,
-              isNationalTeam: false,
-              alreadyPlayedScore: alreadyPlayedScore,
-              alreadyPlayedMins: alreadyPlayedMins,
-              teamName: clubName
-            });
-          }
-        };
-
-        // 1) Prima inseriamo i match da so5Scores (così se un match della GW è già stato giocato, conserva il punteggio reale e i minuti reali!)
+        // 1) Separa rigorosamente lo storico so5Scores tra partite di CLUB e partite di NAZIONALE
         const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
-        allRecentScores.forEach(s => {
-          if (s && s.game && s.game.date) {
-            const sc = typeof s.score === 'number' ? Number(s.score.toFixed(1)) : 0;
-            const mins = typeof s.playerGameStats?.minsPlayed === 'number' ? s.playerGameStats.minsPlayed : 0;
-            pushUniqueGame(s.game, false, sc, mins);
-          }
-        });
-
-        // 2) Poi inseriamo i match futuri da activeClub e activeNationalTeam
-        (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, false, null, null));
-        (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, true, null, null));
-
-        scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
-
-        const rawSeasonStr = String(card.seasonYear || '');
-        const parsedYearMatch = rawSeasonStr.match(/20\d{2}/);
-        const sYear = parsedYearMatch ? Number(parsedYearMatch[0]) : 0;
-        const slugHasCurrentSeason = String(card.slug || '').includes('-2026-');
-        const inSeasonUntilMs = card.inSeasonUntil ? new Date(card.inSeasonUntil).getTime() : 0;
-
-        const isInSeason =
-          (inSeasonUntilMs > nowMs) ||
-          (sYear >= 2026) ||
-          slugHasCurrentSeason;
-
-        const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0;
-        const u23Cutoff = new Date('2003-07-01').getTime();
-        const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
-
-        // Separa rigorosamente le statistiche di CLUB da quelle di NAZIONALE
         const clubScoreEntries = [];
         const natScoreEntries = [];
+        const activeClubCompetitionsSet = new Set();
+        if (leagueSlug && leagueSlug !== 'other') activeClubCompetitionsSet.add(leagueSlug);
 
         allRecentScores.forEach(s => {
           if (!s) return;
+          const compSlug = String(s.game?.competition?.slug || '').toLowerCase();
           if (isGameNational(s.game, false)) {
             natScoreEntries.push(s);
           } else {
             clubScoreEntries.push(s);
+            if (compSlug) activeClubCompetitionsSet.add(compSlug);
           }
+        });
+
+        (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => {
+          const compSlug = String(g?.competition?.slug || '').toLowerCase();
+          if (compSlug) activeClubCompetitionsSet.add(compSlug);
         });
 
         const computeSplitMetrics = (entries, maxWindow = 5) => {
@@ -560,7 +481,7 @@ const SorareAPI = {
           slice.forEach(s => {
             const sc = typeof s.score === 'number' ? s.score : 0;
             const stats = s.playerGameStats || {};
-            const mins = typeof stats.minsPlayed === 'number' ? stats.playerGameStats?.minsPlayed ?? stats.minsPlayed : (sc > 0 ? 60 : 0);
+            const mins = typeof stats.minsPlayed === 'number' ? stats.minsPlayed : (sc > 0 ? 60 : 0);
 
             if (mins > 0 || sc > 0) {
               playedCount++;
@@ -618,7 +539,108 @@ const SorareAPI = {
         };
 
         const clubStats = computeSplitMetrics(clubScoreEntries.length > 0 ? clubScoreEntries : allRecentScores, 5);
-        const natStats = computeSplitMetrics(natScoreEntries, 5);
+        const natStats = computeSplitMetrics(natScoreEntries, 8);
+
+        // VERIFICA RIGOROSA CONVOCAZIONE IN NAZIONALE:
+        // Un giocatore è considerato realmente convocato/attivo con la sua Nazionale SOLO SE ha almeno 1 presenza effettiva (playedCount >= 1)
+        // nelle partite internazionali registrate in so5Scores!
+        // In questo modo giocatori come Yusuf Demir (che hanno activeNationalTeam = Austria su Sorare ma 0 presenze in Nazionale) NON ricevono i match futuri della Nazionale!
+        const isNationalCallupVerified = natStats.playedCount >= 1;
+
+        const scheduleGames = [];
+        const seenGameKeys = new Set();
+
+        const pushUniqueGame = (g, isNatSource, alreadyPlayedScore = null, alreadyPlayedMins = null) => {
+          if (!g || !g.date) return;
+          const ts = new Date(g.date).getTime();
+          if (!ts || Number.isNaN(ts)) return;
+
+          const homeSlug = (g.homeTeam?.slug || '').toLowerCase();
+          const awaySlug = (g.awayTeam?.slug || '').toLowerCase();
+          const homeName = g.homeTeam?.name || 'Casa';
+          const awayName = g.awayTeam?.name || 'Trasferta';
+          const compSlug = String(g.competition?.slug || '').toLowerCase();
+          const compName = g.competition?.displayName || g.competition?.slug || 'Match';
+
+          const dayKey = new Date(ts).toISOString().slice(0, 10);
+          const dedupKey = `${dayKey}_${homeSlug || homeName}_${awaySlug || awayName}`;
+          if (seenGameKeys.has(dedupKey)) return;
+
+          const isNationalMatch = isGameNational(g, isNatSource);
+
+          // Se è un match futuro di Nazionale (alreadyPlayedScore === null) ma il calciatore NON è verificato come convocato in Nazionale, IGNORA il match!
+          if (isNationalMatch && alreadyPlayedScore === null && !isNationalCallupVerified) {
+            return;
+          }
+
+          seenGameKeys.add(dedupKey);
+
+          if (isNationalMatch) {
+            const isHome = natSlug ? (homeSlug === natSlug) : true;
+            const myNatName = natName || (isHome ? homeName : awayName);
+            const oppName = isHome ? awayName : homeName;
+            scheduleGames.push({
+              date: g.date,
+              timestamp: ts,
+              competitionSlug: compSlug || 'international',
+              competitionName: compName || 'Nazionale',
+              isHome: isHome,
+              opponentName: oppName,
+              opponentSlug: isHome ? awaySlug : homeSlug,
+              isNationalTeam: true,
+              alreadyPlayedScore: alreadyPlayedScore,
+              alreadyPlayedMins: alreadyPlayedMins,
+              teamName: `${myNatName} vs ${oppName}`
+            });
+          } else {
+            const isHome = homeSlug === clubSlug;
+            scheduleGames.push({
+              date: g.date,
+              timestamp: ts,
+              competitionSlug: compSlug || leagueSlug,
+              competitionName: compName || leagueName,
+              isHome: isHome,
+              opponentName: isHome ? awayName : homeName,
+              opponentSlug: isHome ? awaySlug : homeSlug,
+              isNationalTeam: false,
+              alreadyPlayedScore: alreadyPlayedScore,
+              alreadyPlayedMins: alreadyPlayedMins,
+              teamName: clubName
+            });
+          }
+        };
+
+        // Inserisce prima i match già giocati da so5Scores (con voto e minuti reali)
+        allRecentScores.forEach(s => {
+          if (s && s.game && s.game.date) {
+            const sc = typeof s.score === 'number' ? Number(s.score.toFixed(1)) : 0;
+            const mins = typeof s.playerGameStats?.minsPlayed === 'number' ? s.playerGameStats.minsPlayed : 0;
+            pushUniqueGame(s.game, false, sc, mins);
+          }
+        });
+
+        // Poi i match futuri di Club e (solo se convocato!) di Nazionale
+        (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, false, null, null));
+        if (isNationalCallupVerified) {
+          (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, true, null, null));
+        }
+
+        scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
+
+        const rawSeasonStr = String(card.seasonYear || '');
+        const parsedYearMatch = rawSeasonStr.match(/20\d{2}/);
+        const sYear = parsedYearMatch ? Number(parsedYearMatch[0]) : 0;
+        const slugHasCurrentSeason = String(card.slug || '').includes('-2026-');
+        const inSeasonUntilMs = card.inSeasonUntil ? new Date(card.inSeasonUntil).getTime() : 0;
+
+        const isInSeason =
+          (inSeasonUntilMs > nowMs) ||
+          (sYear >= 2026) ||
+          slugHasCurrentSeason;
+
+        const birthTime = player.birthDate ? new Date(player.birthDate).getTime() : 0;
+        const u23Cutoff = new Date('2003-07-01').getTime();
+        const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
 
         const apiL5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
         const l5 = clubStats.avgScore > 0 ? clubStats.avgScore : apiL5;
@@ -631,7 +653,6 @@ const SorareAPI = {
         const isSuspended = suspensions.length > 0;
         const isInjuredOrSuspended = isInjured || isSuspended;
 
-        // Titolarità specifica nel CLUB
         let clubFitnessTier = 'last_resort';
         if (!isInjuredOrSuspended) {
           if (clubStats.starterCount >= 3 || (clubStats.playedCount >= 3 && clubStats.avgMins >= 62)) {
@@ -641,22 +662,14 @@ const SorareAPI = {
           }
         }
 
-        // Titolarità specifica in NAZIONALE (es. Pandur ha dnpZeroCount >= 1 e starterCount === 0 in Nazionale -> riserva in Nazionale!)
-        let natFitnessTier = 'rotation';
-        if (isInjuredOrSuspended) {
-          natFitnessTier = 'last_resort';
-        } else if (natStats.totalEntries > 0) {
-          if (natStats.starterCount >= 2 || (natStats.starterCount >= 1 && natStats.dnpZeroCount === 0 && natStats.avgMins >= 65)) {
+        // Titolarità rigorosa in NAZIONALE
+        let natFitnessTier = 'bench_nat';
+        if (!isInjuredOrSuspended && isNationalCallupVerified) {
+          if (natStats.starterCount >= 2 || (natStats.starterCount >= 1 && natStats.dnpZeroCount === 0 && natStats.avgMins >= 60)) {
             natFitnessTier = 'starter';
-          } else if (natStats.playedCount === 0 && natStats.dnpZeroCount > 0) {
-            // Convocato in Nazionale ma tenuto in panchina (0 pt) -> Riserva / Non titolare in Nazionale
-            natFitnessTier = 'bench_nat';
-          } else {
+          } else if (natStats.playedCount >= 1) {
             natFitnessTier = 'rotation';
           }
-        } else {
-          // Se non ha storico recente in Nazionale, solo i top player (L15 >= 52) vengono considerati potenziali titolari, i portieri di club minori vengono considerati riserve in Nazionale
-          natFitnessTier = (pos === 'GK' && l15 < 50) ? 'bench_nat' : (clubFitnessTier === 'starter' && l15 >= 48 ? 'starter' : 'rotation');
         }
 
         let baseUnavailableReason = '';
@@ -683,6 +696,8 @@ const SorareAPI = {
           clubSlug: clubSlug,
           leagueSlug: leagueSlug,
           leagueName: leagueName,
+          activeClubCompetitions: Array.from(activeClubCompetitionsSet),
+          isNationalCallupVerified: isNationalCallupVerified,
           scheduleGames: scheduleGames,
           position: pos,
           scarcity: (card.rarityTyped || 'limited').toLowerCase(),
