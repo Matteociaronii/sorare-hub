@@ -335,9 +335,8 @@
     }
 
     function injectExportButtons() {
-      const outputRoot = document.getElementById('lineups-output') || document.body;
       const allContainers = Array.from(
-        outputRoot.querySelectorAll('.lineup-card, .team-card, [class*="lineup"], [class*="squadra"], section, article, div')
+        document.querySelectorAll('.carbon-card, section, article, div')
       );
 
       let cardIndex = 0;
@@ -346,11 +345,11 @@
 
         const txt = el.innerText || '';
         const ptMatches = txt.match(/\d+(\.\d+)?\s*pt/g);
-        const hasSquadHeader = /Squadra\s*#\d+|Formazione\s*#\d+|Lineup\s*#\d+/i.test(txt);
+        const hasSquadHeader = /Squadra\s*#\d+/i.test(txt);
 
         if (!hasSquadHeader || !ptMatches || ptMatches.length < 5) continue;
-        const squadHeadersInside = (txt.match(/Squadra\s*#\d+/gi) || []).length;
-        if (squadHeadersInside > 1) continue;
+        const headersCount = (txt.match(/Squadra\s*#\d+/gi) || []).length;
+        if (headersCount > 1) continue;
 
         el.setAttribute('data-shub-export-injected', '1');
         const currentIdx = cardIndex++;
@@ -360,11 +359,11 @@
         bar.style.cssText = `
           display: flex;
           gap: 8px;
-          margin: 10px 0 6px 0;
+          margin: 0 0 12px 0;
           padding: 8px 10px;
-          background: rgba(15, 23, 42, 0.85);
-          border: 1px solid rgba(234, 179, 8, 0.45);
-          border-radius: 10px;
+          background: rgba(15, 23, 42, 0.95);
+          border: 1px solid rgba(234, 179, 8, 0.6);
+          border-radius: 8px;
           align-items: center;
           justify-content: space-between;
           flex-wrap: wrap;
@@ -373,16 +372,21 @@
         bar.innerHTML = `
           <span style="font-size:11px;font-weight:700;color:#eab308;">🚀 Esportazione Diretta Sorare</span>
           <div style="display:flex;gap:6px;">
-            <button type="button" class="shub-btn-ext" style="background:#eab308;color:#0f172a;border:none;border-radius:7px;padding:6px 11px;font-weight:800;font-size:11px;cursor:pointer;">
+            <button type="button" class="shub-btn-ext" style="background:#eab308;color:#0f172a;border:none;border-radius:6px;padding:5px 10px;font-weight:800;font-size:11px;cursor:pointer;">
               ⚡ Invia a Sorare
             </button>
-            <button type="button" class="shub-btn-ipad" style="background:#1e293b;color:#f8fafc;border:1px solid #475569;border-radius:7px;padding:6px 10px;font-weight:700;font-size:11px;cursor:pointer;">
-              📱 Vista iPad / Split
+            <button type="button" class="shub-btn-ipad" style="background:#1e293b;color:#f8fafc;border:1px solid #475569;border-radius:6px;padding:5px 9px;font-weight:700;font-size:11px;cursor:pointer;">
+              📱 Vista iPad
             </button>
           </div>
         `;
 
-        el.prepend(bar);
+        const headerEl = el.querySelector('h2, h3, h4, div');
+        if (headerEl) {
+          headerEl.insertAdjacentElement('afterend', bar);
+        } else {
+          el.prepend(bar);
+        }
 
         bar.querySelector('.shub-btn-ext').addEventListener('click', (e) => {
           e.stopPropagation();
