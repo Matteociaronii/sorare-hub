@@ -1,75 +1,65 @@
-// SorareHub - Strict Tournament/Cup Membership + Verified National Callups + Calibrated LineupForge Scale
+// SorareHub - Strict Tournament/Cup Membership (UCL vs UEL/UECL vs Domestic Leagues) + Verified National Callups
 const OptimizerEngine = {
-  CHAMPION_LEAGUES: [
-    'premier-league',
-    'serie-a',
-    'laliga',
-    'la-liga',
-    'primera-division',
-    'bundesliga',
-    'ligue-1'
+  CHAMPION_DOMESTIC_LEAGUES: [
+    'premier-league-gb-eng', 'premier-league',
+    'serie-a-it', 'serie-a',
+    'laliga-es', 'laliga', 'la-liga', 'primera-division-es', 'primera-division',
+    'bundesliga-de', 'bundesliga',
+    'ligue-1-fr', 'ligue-1'
   ],
 
   CONTENDER_LEAGUES_BASE: [
-    'austrian-bundesliga',
-    'bundesliga-at',
-    'supersport-hnl',
-    'prva-hnl',
-    'croatian-first-football-league',
-    '2-bundesliga',
-    '2-bundesliga-de',
-    'ligue-2',
-    'ligue-2-fr'
+    'bundesliga-at', 'austrian-bundesliga',
+    'supersport-hnl', 'prva-hnl', 'croatian-first-football-league', '1-hnl-hr',
+    '2-bundesliga-de', '2-bundesliga',
+    'ligue-2-fr', 'ligue-2'
   ],
   CONTENDER_LEAGUES_HIGH_SCARCITY: [
-    'scottish-premiership',
-    'premiership',
-    'efl-championship',
-    'championship',
-    'j1-league',
-    'j-league'
+    'premiership-gb-sct', 'scottish-premiership',
+    'championship-gb-eng', 'efl-championship', 'championship',
+    'j1-league-jp', 'j1-league'
   ],
 
   CHALLENGER_LEAGUES: [
-    'primeira-liga',
-    'liga-portugal',
-    'eredivisie',
-    'jupiler-pro-league',
-    'first-division-a',
-    'scottish-premiership',
-    'premiership',
-    'super-lig',
-    'turkish-super-lig',
-    'danish-superliga',
-    'superliga',
-    'swiss-super-league',
-    'super-league',
-    'eliteserien',
-    'allsvenskan',
-    'ekstraklasa'
+    'primeira-liga-pt', 'primeira-liga', 'liga-portugal',
+    'eredivisie-nl', 'eredivisie',
+    'jupiler-pro-league-be', 'jupiler-pro-league', 'first-division-a',
+    'premiership-gb-sct', 'scottish-premiership',
+    'super-lig-tr', 'super-lig', 'turkish-super-lig',
+    'superliga-dk', 'danish-superliga',
+    'super-league-ch', 'swiss-super-league',
+    'eliteserien-no', 'eliteserien',
+    'allsvenskan', 'ekstraklasa-pl', 'ekstraklasa'
   ],
 
-  // Club partecipanti alla UEFA Champions League (per impedire che squadre fuori dalla UCL entrino in European Champion!)
-  UCL_CLUB_KEYWORDS: [
-    'real-madrid', 'barcelona', 'atletico-madrid', 'girona', 'athletic-club', 'villarreal',
+  // Squadre partecipanti alla UEFA Champions League (esclude rigorosamente i club dei campionati nazionali che NON fanno la Champions!)
+  UCL_CLUB_EXACT_MATCHES: [
+    'real-madrid', 'barcelona', 'fc-barcelona', 'atletico-madrid', 'club-atletico-de-madrid', 'girona', 'athletic-club', 'villarreal',
     'manchester-city', 'arsenal', 'liverpool', 'aston-villa', 'chelsea', 'newcastle', 'tottenham',
-    'inter', 'internazionale', 'milan', 'ac-milan', 'juventus', 'atalanta', 'bologna', 'napoli',
-    'bayern', 'leverkusen', 'dortmund', 'leipzig', 'stuttgart', 'frankfurt',
-    'paris-saint-germain', 'psg', 'monaco', 'brest', 'lille', 'marseille',
-    'benfica', 'sporting', 'porto', 'psv', 'feyenoord', 'ajax',
-    'club-brugge', 'celtic', 'rangers', 'sturm-graz', 'salzburg', 'dinamo-zagreb',
-    'shakhtar', 'sparta-praha', 'slavia-praha', 'young-boys', 'crvena-zvezda', 'slovan-bratislava', 'galatasaray', 'fenerbahce'
+    'inter', 'internazionale', 'fc-internazionale-milano', 'milan', 'ac-milan', 'juventus', 'atalanta', 'bologna', 'napoli',
+    'bayern', 'fc-bayern-munchen', 'leverkusen', 'bayer-04-leverkusen', 'dortmund', 'borussia-dortmund', 'leipzig', 'rb-leipzig', 'stuttgart', 'vfb-stuttgart', 'eintracht-frankfurt',
+    'paris-saint-germain', 'psg', 'monaco', 'as-monaco', 'brest', 'stade-brestois', 'lille', 'losc-lille', 'marseille', 'olympique-de-marseille',
+    'benfica', 'sl-benfica', 'sporting', 'sporting-cp', 'porto', 'fc-porto',
+    'psv', 'feyenoord', 'ajax', 'afc-ajax',
+    'club-brugge', 'celtic', 'celtic-fc', 'sturm-graz', 'salzburg', 'fc-red-bull-salzburg', 'dinamo-zagreb', 'gnk-dinamo-zagreb',
+    'shakhtar', 'sparta-praha', 'slavia-praha', 'young-boys', 'crvena-zvezda', 'slovan-bratislava', 'galatasaray'
   ],
 
-  UEL_UECL_CLUB_KEYWORDS: [
-    'roma', 'lazio', 'fiorentina', 'real-sociedad', 'real-betis', 'manchester-united',
-    'lyon', 'nice', 'lens', 'strasbourg', 'hoffenheim', 'freiburg', 'mainz',
-    'az', 'twente', 'utrecht', 'braga', 'vitoria-guimaraes', 'anderlecht', 'union-saint-gilloise', 'gent', 'genk',
-    'olympiacos', 'paok', 'panathinaikos', 'besiktas', 'trabzonspor', 'midtjylland', 'fc-kobenhavn',
-    'bodo-glimt', 'malmo', 'elfsborg', 'rapid', 'sk-rapid', 'lask', 'lugano', 'servette', 'basel', 'legia', 'jagiellonia'
+  // Squadre partecipanti a UEFA Europa League / Conference League
+  UEL_UECL_CLUB_EXACT_MATCHES: [
+    'roma', 'as-roma', 'lazio', 'ss-lazio', 'fiorentina', 'acf-fiorentina',
+    'real-sociedad', 'real-betis', 'manchester-united',
+    'lyon', 'olympique-lyonnais', 'nice', 'ogc-nice', 'lens', 'rc-lens', 'strasbourg',
+    'hoffenheim', 'freiburg', 'sc-freiburg', 'mainz',
+    'az', 'az-alkmaar', 'twente', 'fc-twente', 'utrecht',
+    'braga', 'sc-braga', 'vitoria-guimaraes',
+    'anderlecht', 'rsc-anderlecht', 'union-saint-gilloise', 'gent', 'kaa-gent', 'genk', 'krc-genk',
+    'rangers', 'rangers-fc', 'hearts',
+    'olympiacos', 'paok', 'panathinaikos', 'besiktas', 'fenerbahce', 'trabzonspor',
+    'midtjylland', 'fc-kobenhavn', 'bodo-glimt', 'malmo', 'elfsborg',
+    'rapid', 'sk-rapid', 'lask', 'lugano', 'servette', 'basel', 'legia', 'jagiellonia'
   ],
 
-  // Verifica rigorosa se il giocatore e il suo club appartengono davvero al torneo selezionato
   isCardEligibleForCompetition(card, competition, scarcity) {
     const compId = String(competition.id || '').toLowerCase();
     const compName = String(competition.name || '').toLowerCase();
@@ -78,70 +68,81 @@ const OptimizerEngine = {
     const clubComps = Array.isArray(card.activeClubCompetitions) ? card.activeClubCompetitions : [cardLeague];
     const targetScarcity = String(scarcity || 'limited').toLowerCase();
 
+    // 1) Under 23
     if (competition.u23Only || compId.includes('u23')) {
       return Boolean(card.isU23);
     }
 
+    // 2) All-Star
     if (compId.includes('all_star') || compId.includes('all-star') || compName.includes('all-star')) {
       return true;
     }
 
-    // 1) UEFA Champions League (European Champion): SOLO club che giocano realmente la UCL
-    if (competition.competitionType === 'UCL' || compId.includes('ucl')) {
+    // 3) CHAMPIONS EUROPE — UEFA Champions League (controllato PRIMA di qualsiasi altro "champion"!)
+    if (competition.isUefaChampions || compId === 'champions_europe_classic_so7' || compId.includes('ucl')) {
       const hasUclInSchedule = clubComps.some(c => c.includes('champions-league') || c.includes('ucl'));
-      const isKnownUclClub = this.UCL_CLUB_KEYWORDS.some(k => clubSlug.includes(k));
+      const isKnownUclClub = this.UCL_CLUB_EXACT_MATCHES.some(k => clubSlug === k || clubSlug.includes(k));
       return hasUclInSchedule || isKnownUclClub;
     }
 
-    // 2) UEFA Europa / Conference League (European Contender): SOLO club che giocano realmente UEL o UECL
-    if (competition.competitionType === 'UEL_UECL' || compId.includes('uel')) {
+    // 4) CONTENDER EUROPE — UEFA Europa League & Conference League (controllato PRIMA di "contender" domestico!)
+    if (competition.isUefaContender || compId === 'contender_europe_classic_so7' || compId.includes('uel')) {
       const hasUelInSchedule = clubComps.some(c => c.includes('europa-league') || c.includes('conference-league'));
-      const isKnownUelClub = this.UEL_UECL_CLUB_KEYWORDS.some(k => clubSlug.includes(k));
+      const isKnownUelClub = this.UEL_UECL_CLUB_EXACT_MATCHES.some(k => clubSlug === k || clubSlug.includes(k));
       return hasUelInSchedule || isKnownUelClub;
     }
 
-    // 3) Contender: rigorosamente la lista ufficiale Sorare Contender
-    if (compId.includes('contender') || compName.includes('contender')) {
+    // 5) Contender Domestico (Austria, Croazia, 2. Bundesliga, Ligue 2)
+    if (compId === 'contender_in_season' || (compId.includes('contender') && !compId.includes('europe'))) {
       const allowedContender = (targetScarcity === 'super_rare' || targetScarcity === 'unique')
         ? [...this.CONTENDER_LEAGUES_BASE, ...this.CONTENDER_LEAGUES_HIGH_SCARCITY]
         : this.CONTENDER_LEAGUES_BASE;
       return allowedContender.some(l => cardLeague === l || cardLeague.includes(l));
     }
 
-    // 4) Challenger: rigorosamente la lista ufficiale Sorare Challenger
-    if (compId.includes('challenger') || compName.includes('challenger')) {
+    // 6) Challenger Domestico
+    if (compId.includes('challenger')) {
       return this.CHALLENGER_LEAGUES.some(l => cardLeague === l || cardLeague.includes(l));
     }
 
-    // 5) Champion Europe (Top 5 Campionati)
-    if (compId.includes('champion')) {
-      return this.CHAMPION_LEAGUES.some(l => cardLeague === l || cardLeague.includes(l));
+    // 7) Champion Europe Domestico (Top 5 Campionati)
+    if (compId === 'champion_europe_classic_so7' || compId === 'champion_europe') {
+      return this.CHAMPION_DOMESTIC_LEAGUES.some(l => cardLeague === l || cardLeague.includes(l));
     }
 
-    // 6) Singolo Campionato Nazionale specifico (Serie A, Premier League, La Liga, Bundesliga, Ligue 1, Liga Portugal, Eredivisie)
+    // 8) Singolo Campionato Nazionale specifico (Premier League, Serie A, LaLiga, Bundesliga, Ligue 1, EFL Championship, Liga Portugal, Eredivisie, JPL, Scottish, MLS, J1, K1)
     if (Array.isArray(competition.leagues) && !competition.leagues.includes('ALL')) {
-      return competition.leagues.some(l => cardLeague === String(l).toLowerCase() || cardLeague.includes(String(l).toLowerCase()));
+      return competition.leagues.some(targetLeague => {
+        const tl = String(targetLeague).toLowerCase();
+        // Evita falsi positivi tra "bundesliga-de" e "2-bundesliga-de" o "bundesliga-at"!
+        if (tl === 'bundesliga' || tl === 'bundesliga-de') {
+          return (cardLeague === 'bundesliga' || cardLeague === 'bundesliga-de') && !cardLeague.includes('2-bundesliga') && !cardLeague.includes('at');
+        }
+        if (tl === 'ligue-1' || tl === 'ligue-1-fr') {
+          return (cardLeague === 'ligue-1' || cardLeague === 'ligue-1-fr') && !cardLeague.includes('ligue-2');
+        }
+        return cardLeague === tl || cardLeague.includes(tl);
+      });
     }
 
     return true;
   },
 
-  // Verifica che una singola partita in calendario sia valida per il torneo selezionato
   isGameValidForCompetition(game, card, competition) {
     if (!game) return false;
     const compId = String(competition.id || '').toLowerCase();
     const gameCompSlug = String(game.competitionSlug || '').toLowerCase();
 
-    // Le partite delle Nazionali valgono SOLO in All-Star e Under 23 (MAI in Champion Europe, Contender, Serie A, ecc.!)
+    // Partite delle Nazionali ammesse SOLO in All-Star e Under 23
     if (game.isNationalTeam) {
       return Boolean(competition.allowNationalTeams || compId.includes('all_star') || compId.includes('u23'));
     }
 
-    if (competition.competitionType === 'UCL' || compId.includes('ucl')) {
+    if (competition.isUefaChampions || compId === 'champions_europe_classic_so7' || compId.includes('ucl')) {
       return gameCompSlug.includes('champions-league') || gameCompSlug.includes('ucl');
     }
 
-    if (competition.competitionType === 'UEL_UECL' || compId.includes('uel')) {
+    if (competition.isUefaContender || compId === 'contender_europe_classic_so7' || compId.includes('uel')) {
       return gameCompSlug.includes('europa-league') || gameCompSlug.includes('conference-league');
     }
 
@@ -220,7 +221,6 @@ const OptimizerEngine = {
     const requiredInSeason = Number(competition.inSeasonRequired || 0);
     const isClubStackActive = Boolean(selectedClubSlug && selectedClubSlug !== 'ALL');
 
-    // 1. Filtra per rarità, appartenenza rigorosa al torneo/coppa e blocca infortunati/squalificati
     const eligibleCards = allCards.filter(card => {
       if (!card) return false;
       if (card.scarcity !== targetScarcity) return false;
@@ -231,12 +231,10 @@ const OptimizerEngine = {
 
     if (eligibleCards.length < slotsTemplate.length) return [];
 
-    // 2. Valuta ogni carta per la GW selezionata e il torneo selezionato
     let evaluatedPool = eligibleCards.map(card =>
       this.evaluateCardForGw(card, selectedGw, strategy, competition, manualOverrides[card.playerSlug] || null)
     );
 
-    // 3. Se lo Stack Club è attivo, filtra sugli 11 titolari effettivi del club
     if (isClubStackActive) {
       const clubXiSlugs = this.getClubStartingXiPool(evaluatedPool, manualOverrides);
       const filteredToXi = evaluatedPool.filter(c => clubXiSlugs.has(c.playerSlug));
@@ -245,7 +243,6 @@ const OptimizerEngine = {
       }
     }
 
-    // 4. Verifica se in questa GW ci sono partite attive per questo torneo
     const activePlayableCards = evaluatedPool.filter(c => Boolean(c.activeMatch) && c.selectionPriority > 0 && manualOverrides[c.playerSlug] !== 'bench');
     const activeRoles = new Set(activePlayableCards.map(c => c.position));
     const canBuildFullActiveTeam =
@@ -279,7 +276,6 @@ const OptimizerEngine = {
 
       picked.forEach(p => usedCardIdsGlobal.add(p.id));
 
-      // Capitano (+20% / +50% reale Sorare)
       const captainPool = [...picked].sort((a, b) => {
         const aSc = a.projectedScore > 0 ? a.projectedScore : a.standbyScore;
         const bSc = b.projectedScore > 0 ? b.projectedScore : b.standbyScore;
@@ -400,7 +396,6 @@ const OptimizerEngine = {
     const baseL5 = card.l5 > 0 ? card.l5 : baseL15;
     const isCeiling = String(strategy || '').toLowerCase() === 'ceiling';
 
-    // Scala LineupForge calibrata sui punteggi reali Sorare (40-75 pt base)
     let lfBaseProjection = 0;
     if (card.position === 'GK') {
       const gkForm = (baseL15 * 0.58) + (baseL5 * 0.42);
