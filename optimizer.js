@@ -1,4 +1,4 @@
-// SorareHub - Role-Specific Scouting Archetypes (GK, DEF, MID, FWD) + Exact League/Cup Filtering
+// SorareHub - Double Match (2 Games in GW) + Dynamic Opponent Form Analysis + Role-Specific Dossiers
 const OptimizerEngine = {
   normalizeLeagueSlug(rawSlug) {
     const s = String(rawSlug || '').toLowerCase().trim();
@@ -223,6 +223,130 @@ const OptimizerEngine = {
     return true;
   },
 
+  // Valuta dinamicamente la difficoltà e il momento di forma di una singola avversaria per il ruolo specifico del giocatore
+  analyzeSingleMatchupDifficulty(game, cardPosition) {
+    if (!game) {
+      return { multiplier: 1.0, difficultyScore: 0.5, summaryText: '' };
+    }
+
+    const venueFactor = game.isHome ? 1.035 : 0.985;
+    const venueLabel = game.isHome ? 'in casa' : 'in trasferta';
+    const oppForm = game.opponentForm;
+
+    // Se abbiamo i dati dinamici reali delle ultime partite dell'avversaria (gol fatti, gol subiti, W-D-L):
+    if (oppForm && oppForm.sampleSize >= 1 && oppForm.avgGa !== null) {
+      const { avgGf, avgGa, recordStr, strengthIndex, sampleSize } = oppForm;
+      let roleMod = 1.0;
+      let tacticalNote = '';
+
+      if (cardPosition === 'GK' || cardPosition === 'DEF') {
+        if (avgGf >= 1.9) {
+          roleMod = 0.96; // Avversaria con attacco molto prolifico -> più difficile il Clean Sheet
+          tacticalNote = `avversaria in striscia offensiva (${avgGf} gol segnati/gara nelle ultime ${sampleSize}, ${recordStr}): match impegnativo per la porta inviolata`;
+        } else if (avgGf <= 0.95) {
+          roleMod = 1.045; // Avversaria che segna poco -> ottimo per Clean Sheet
+          tacticalNote = `avversaria con attacco sterile (${avgGf} gol segnati/gara nelle ultime ${sampleSize}, ${recordStr}): alta probabilità di Clean Sheet`;
+        } else {
+          roleMod = 1.0 + ((0.55 - strengthIndex) * 0.06);
+          tacticalNote = `avversaria in equilibrio (${recordStr}, media ${avgGf} GF / ${avgGa} GS nelle ultime ${sampleSize})`;
+        }
+      } else {
+        // MID e FWD: guardiamo soprattutto quanto concede la difesa avversaria (avgGa)
+        if (avgGa >= 1.75) {
+          roleMod = 1.055; // Difesa avversaria vulnerabile -> boost per gol/assist
+          tacticalNote = `avversaria in difficoltà difensiva (concede ${avgGa} gol/gara nelle ultime ${sampleSize}, ${recordStr}): scenario ideale per bonus offensivi`;
+        } else if (avgGa <= 0.85 && strengthIndex >= 0.62) {
+          roleMod = 0.965; // Difesa avversaria blindata -> più difficile trovare il bonus
+          tacticalNote = `avversaria solida dietro (solo ${avgGa} gol subiti/gara nelle ultime ${sampleSize}, ${recordStr}): gara chiusa, conta la base AA`;
+        } else {
+          roleMod = 1.0 + ((0.55 - strengthIndex) * 0.06);
+          tacticalNote = `avversaria con stato di forma ${recordStr} (${avgGa} gol concessi/gara nelle ultime ${sampleSize})`;
+        }
+      }
+
+      const finalMult = Number((venueFactor * roleMod).toFixed(3));
+      return {
+        multiplier: finalMult,
+        difficultyScore: strengthIndex,
+        summaryText: `${venueLabel} vs ${game.opponentName} [${tacticalNote}]`
+      };
+    }
+
+    // Se l'avversaria non ha ancora uno storico di gol nel campione ma ha un indice di forza basato sui punteggi SO5:
+    if (oppForm && typeof oppForm.strengthIndex === 'number') {
+      const sIdx = oppForm.strengthIndex;
+      const roleMod = 1.0 + ((0.55 - sIdx) * 0.07);
+      const finalMult = Number((venueFactor * roleMod).toFixed(3));
+      const levelDesc = sIdx >= 0.65 ? 'avversaria in ottimo momento di forma' : (sIdx <= 0.42 ? 'avversaria in flessione recente' : 'impegno equilibrato');
+      return {
+        multiplier: finalMult,
+        difficultyScore: sIdx,
+        summaryText: `${venueLabel} vs ${game.opponentName} (${levelDesc})`
+      };
+    }
+
+    return {
+      multiplier: venueFactor,
+      difficultyScore: game.isHome ? 0.46 : 0.54,
+      summaryText: `${venueLabel} vs ${game.opponentName} (${game.competitionName})`
+    };
+  },
+
+  // Valuta un intero pacchetto di partite nella GW (gestendo sia il Match Singolo sia il DOPPIO MATCH con boost calibrato!)
+  evaluateGwMatchesPackage(gwMatches, cardPosition) {
+    if (!Array.isArray(gwMatches) || gwMatches.length === 0) {
+      return {
+        combinedMultiplier: 1.0,
+        doubleMatchBoostPct: 0,
+        matchupNarrative: ''
+      };
+    }
+
+    if (gwMatches.length === 1) {
+      const single = this.analyzeSingleMatchupDifficulty(gwMatches[0], cardPosition);
+      const playedNote = gwMatches[0].alreadyPlayedScore !== null
+        ? ` • Voto reale già acquisito: ${gwMatches[0].alreadyPlayedScore} pt`
+        : '';
+      return {
+        combinedMultiplier: single.multiplier,
+        doubleMatchBoostPct: 0,
+        matchupNarrative: `🏟️ MATCHUP GW: Sfida ${single.summaryText}${playedNote}.`
+      };
+    }
+
+    // Caso DOPPIO MATCH (2 gare nella stessa Gameweek!)
+    const m1 = this.analyzeSingleMatchupDifficulty(gwMatches[0], cardPosition);
+    const m2 = this.analyzeSingleMatchupDifficulty(gwMatches[1], cardPosition);
+
+    // Su Sorare conta il MIGLIOR punteggio tra le 2 partite:
+    // Partiamo dal moltiplicatore della partita più favorevole tra le due, e aggiungiamo un boost per la seconda chance
+    // strettamente calibrato sulla difficoltà della seconda partita!
+    const bestSingleMult = Math.max(m1.multiplier, m2.multiplier);
+    const avgDifficulty = (m1.difficultyScore + m2.difficultyScore) / 2;
+
+    // Se entrambe le partite sono toste (avgDifficulty >= 0.62), il boost per la doppia gara è prudente (+4.5%)
+    // Se almeno una partita è morbida/favorevole, il boost sale fino a +10.5%
+    let secondChanceBoost = 0.075;
+    if (avgDifficulty >= 0.62) {
+      secondChanceBoost = 0.045;
+    } else if (avgDifficulty <= 0.45) {
+      secondChanceBoost = 0.105;
+    }
+
+    const combinedMult = Number((bestSingleMult * (1 + secondChanceBoost)).toFixed(3));
+    const boostPct = Math.round(secondChanceBoost * 100);
+
+    const difficultyComment = avgDifficulty >= 0.62
+      ? `Doppio impegno probante: applicato boost prudente (+${boostPct}%) per la doppia chance di voto`
+      : `Calendario favorevole con doppia occasione da bonus (+${boostPct}% boost sulla proiezione migliore)`;
+
+    return {
+      combinedMultiplier: combinedMult,
+      doubleMatchBoostPct: boostPct,
+      matchupNarrative: `🔥 DOPPIO MATCH IN GW (2 Gare): 1️⃣ ${m1.summaryText} • 2️⃣ ${m2.summaryText}. ${difficultyComment}.`
+    };
+  },
+
   getAvailableClubsForCompetition(allCards, competition, scarcity) {
     const targetScarcity = String(scarcity || 'limited').toLowerCase();
     const clubMap = new Map();
@@ -365,7 +489,7 @@ const OptimizerEngine = {
 
         const bespokeDossier = this.buildBespokeScoutingDossier(
           p,
-          p.activeMatch,
+          p.gwMatches || (p.activeMatch ? [p.activeMatch] : []),
           String(strategy || '').toLowerCase() === 'ceiling',
           manualOverrides[p.playerSlug] || null,
           finalScore,
@@ -409,14 +533,13 @@ const OptimizerEngine = {
     return lineups;
   },
 
-  // Dossier Analitico differenziato per RUOLO (GK, DEF, MID, FWD) basato sulle vere statistiche Opta del calciatore
-  buildBespokeScoutingDossier(card, activeMatch, isCeiling, manualStatus, finalProjScore, isNationalMatch, lineupContext = null) {
-    // Usa SEMPRE lo storico combinato delle ultime 5-6 partite (Club + Nazionale) per avere il quadro reale completo
+  buildBespokeScoutingDossier(card, gwMatches, isCeiling, manualStatus, finalProjScore, isNationalMatch, lineupContext = null) {
     const fullStats = card.combinedStats || card.clubStats || {};
     const logs = Array.isArray(fullStats.matchLogs) ? fullStats.matchLogs : [];
     const traits = card.tacticalTraits || {};
+    const matchesList = Array.isArray(gwMatches) ? gwMatches : [];
 
-    // 1. CONTINUITÀ & STRISCIA MINUTAGGIO REALE (Ultime 5 uscite tra Club e Nazionale)
+    // 1. CONTINUITÀ & STRISCIA MINUTAGGIO REALE
     const minsHistoryStr = logs.length > 0
       ? logs.slice(0, 5).map(m => `${m.mins}'`).join(' → ')
       : `${card.avgMins || 0}' medi`;
@@ -428,14 +551,18 @@ const OptimizerEngine = {
       statusSection = `✅ STATO: Confermato nell'11 Titolare (Minutaggio recente: ${minsHistoryStr}).`;
     } else if (isNationalMatch) {
       const ns = card.natStats || {};
-      statusSection = `🌍 IMPIEGO NAZIONALE & CLUB: ${ns.starterCount || 1} da titolare in Nazionale e ${card.clubStats?.starterCount || 0}/${card.clubStats?.totalEntries || 5} nel ${card.club} (Ultimi 5 minutaggi: ${minsHistoryStr}).`;
+      if (ns.playedCount > 0) {
+        statusSection = `🌍 IMPIEGO NAZIONALE & CLUB: ${ns.starterCount}/${ns.totalEntries} da titolare in Nazionale e ${card.clubStats?.starterCount || 0}/${card.clubStats?.totalEntries || 5} nel ${card.club} (Ultimi minutaggi: ${minsHistoryStr}).`;
+      } else {
+        statusSection = `🌍 NAZIONALE (Da verificare): Match in calendario ufficiale Sorare (${card.clubStats?.starterCount || 0}/${card.clubStats?.totalEntries || 5} da titolare nel ${card.club} • Minutaggi club: ${minsHistoryStr}).`;
+      }
     } else if (card.baseFitnessTier === 'starter') {
-      statusSection = `✅ CONTINUITÀ DAL 1': Titolare inamovibile nel ${card.club} (${fullStats.starterCount}/${fullStats.totalEntries || 5} gare dal 1' • Minutaggi: ${minsHistoryStr}).`;
+      statusSection = `✅ CONTINUITÀ DAL 1': Titolare fisso nel ${card.club} (${fullStats.starterCount}/${fullStats.totalEntries || 5} gare dal 1' • Minutaggi: ${minsHistoryStr}).`;
     } else {
       statusSection = `⚠️ GESTIONE MINUTAGGIO: Impiegato in rotazione nel ${card.club} (${fullStats.playedCount}/${fullStats.totalEntries || 5} presenze • Minutaggi: ${minsHistoryStr}).`;
     }
 
-    // 2. STORICO REALE DELLE ULTIME 4 PARTITE (Club + Nazionale, con Avversario, Voto e Statistica chiave di ruolo)
+    // 2. STORICO REALE DELLE ULTIME 4 PARTITE
     let recentLogSection = '';
     if (logs.length > 0) {
       const formattedLogs = logs.slice(0, 4).map(m => {
@@ -453,7 +580,7 @@ const OptimizerEngine = {
       recentLogSection = `🗓️ MEDIE STORICHE: L15 ${card.l15} pt • L5 ${card.l5} pt.`;
     }
 
-    // 3. ARCHETIPO TATTICO SPECIFICO PER RUOLO (GK vs DEF vs MID vs FWD)
+    // 3. ARCHETIPO TATTICO SPECIFICO PER RUOLO
     const formDelta = Number((card.l5 - card.l15).toFixed(1));
     const formTrendStr = formDelta >= 4.0
       ? `in salita (+${formDelta} pt sulla L15 di ${card.l15})`
@@ -462,16 +589,13 @@ const OptimizerEngine = {
         : `in linea con il suo standard (L5 ${card.l5} vs L15 ${card.l15})`);
 
     let tacticalDnaSection = '';
-
     if (card.position === 'GK') {
-      // ARCHETIPI PORTIERE
       if ((traits.saves || 0) >= 12 || card.avgAas >= 10) {
         tacticalDnaSection = `🧤 ARCHETIPO (Portiere Para-Tiri ad Alto AA): Forma ${formTrendStr}. Nelle ultime ${fullStats.playedCount} gare ha sommato ${traits.saves || 0} parate e ${traits.cleanSheets || 0} Clean Sheet, aggiungendo +${card.avgAas} pt medi di All-Around oltre al voto base.`;
       } else {
         tacticalDnaSection = `🧤 ARCHETIPO (Portiere da Clean Sheet): Rendimento ${formTrendStr}. Garantisce sicurezza tra i pali con ${traits.cleanSheets || 0} porte inviolate nelle ultime ${fullStats.playedCount} gare (${traits.saves || 0} parate totali, picco di ${card.maxRecentScore} pt).`;
       }
     } else if (card.position === 'DEF') {
-      // ARCHETIPI DIFENSORE (Mai "Finalizzatore da Bonus" se non segna!)
       if ((traits.goals + traits.assists) >= 2) {
         tacticalDnaSection = `⚡ ARCHETIPO DIFENSIVO (Terzino di Spinta / Pericolo da Palla Inattiva): Forma ${formTrendStr}. Oltre alla fase difensiva (${traits.avgDefActions || 0} interventi/gara), ha inciso davanti con ${traits.goals} gol e ${traits.assists} assist nelle ultime ${fullStats.playedCount} gare (+${card.avgAas} pt AA medi).`;
       } else if ((traits.avgPasses || 0) >= 48 && card.avgAas >= 16) {
@@ -482,7 +606,6 @@ const OptimizerEngine = {
         tacticalDnaSection = `🧱 ARCHETIPO DIFENSIVO (Difensore Posizionale da Clean Sheet): Forma ${formTrendStr}. Basa il suo punteggio sulla tenuta di reparto (${traits.cleanSheets || 0} gare senza subire reti nelle ultime ${fullStats.playedCount}, media +${card.avgAas} pt AA e range [${card.minRecentScore}–${card.maxRecentScore}]).`;
       }
     } else if (card.position === 'MID') {
-      // ARCHETIPI CENTROCAMPISTA
       if ((traits.goals + traits.assists) >= 2 && card.avgAas >= 18) {
         tacticalDnaSection = `👑 ARCHETIPO CENTROCAMPISTA (Tuttocampista Totale AA + Bonus): Forma ${formTrendStr}. Unisce un volume di gioco dominante (+${card.avgAas} pt AA medi, ${traits.avgPasses || 0} passaggi/gara) a ${traits.goals} gol e ${traits.assists} assist nelle ultime ${fullStats.playedCount} gare (picco ${card.maxRecentScore} pt).`;
       } else if ((traits.avgPasses || 0) >= 42 || card.avgAas >= 18) {
@@ -493,11 +616,10 @@ const OptimizerEngine = {
         tacticalDnaSection = `⚙️ ARCHETIPO CENTROCAMPISTA (Mediano di Equilibrio): Rendimento ${formTrendStr} (${traits.avgDefActions || 0} recuperi difensivi e ${traits.avgPasses || 0} passaggi di media, +${card.avgAas} pt AA, oscillazione [${card.minRecentScore}–${card.maxRecentScore}]).`;
       }
     } else {
-      // ARCHETIPI ATTACCANTE (FWD)
       if (card.avgAas >= 16 && (traits.goals + traits.assists) >= 1) {
         tacticalDnaSection = `🔥 ARCHETIPO OFFENSIVO (Ala Creativa / Attaccante Completo): Forma ${formTrendStr}. Non dipende solo dal gol: abbina ${traits.goals} reti e ${traits.assists} assist a ben +${card.avgAas} pt medi di All-Around tra dribbling, passaggi chiave e tiri (picco ${card.maxRecentScore} pt).`;
       } else if ((traits.goals + traits.assists) >= 2 || card.avgDecisive >= 12) {
-        tacticalDnaSection = `🎯 ARCHETIPO OFFENSIVO (Finalizzatore d'Area): Forma ${formTrendStr}. incisivo sotto porta con ${traits.goals} gol e ${traits.assists} assist nelle ultime ${fullStats.playedCount} gare (+${card.avgDecisive} pt netti da bonus decisivi oltre il voto base).`;
+        tacticalDnaSection = `🎯 ARCHETIPO OFFENSIVO (Finalizzatore d'Area): Forma ${formTrendStr}. Incisivo sotto porta con ${traits.goals} gol e ${traits.assists} assist nelle ultime ${fullStats.playedCount} gare (+${card.avgDecisive} pt netti da bonus decisivi oltre il voto base).`;
       } else if (card.avgAas >= 12) {
         tacticalDnaSection = `⚡ ARCHETIPO OFFENSIVO (Attaccante di Manovra): Forma ${formTrendStr}. Partecipa attivamente allo sviluppo offensivo generando +${card.avgAas} pt AA medi (${traits.avgDuelsWon || 0} duelli vinti/gara, range [${card.minRecentScore}–${card.maxRecentScore}]).`;
       } else {
@@ -505,14 +627,13 @@ const OptimizerEngine = {
       }
     }
 
-    // 4. LETTURA SPECIFICA DEL MATCHUP IN QUESTA GW
+    // 4. ANALISI DINAMICA DELLE AVVERSARIE & EVENTUALE DOPPIO MATCH IN GW
     let matchupSection = '';
-    if (!activeMatch) {
+    if (matchesList.length === 0) {
       matchupSection = `⏸️ CALENDARIO GW: ${card.club} in sosta in questo turno (valutazione di riferimento: ${finalProjScore} pt).`;
     } else {
-      const venueStr = activeMatch.isHome ? 'in casa (+4% fattore campo)' : 'in trasferta';
-      const playedNote = activeMatch.alreadyPlayedScore !== null ? ` • Voto reale già acquisito: ${activeMatch.alreadyPlayedScore} pt` : '';
-      matchupSection = `🏟️ MATCHUP GW: Sfida ${venueStr} contro ${activeMatch.opponentName} (${activeMatch.competitionName})${playedNote}.`;
+      const pkg = this.evaluateGwMatchesPackage(matchesList, card.position);
+      matchupSection = pkg.matchupNarrative;
     }
 
     // 5. RUOLO NELLA FORMAZIONE
@@ -537,13 +658,16 @@ const OptimizerEngine = {
     const allGames = Array.isArray(card.scheduleGames) ? card.scheduleGames : [];
     const allowedGames = allGames.filter(g => this.isGameValidForCompetition(g, card, competition));
 
-    let activeMatch = null;
+    // Raccoglie TUTTE le partite del giocatore nella finestra della Gameweek (così intercetta anche il DOPPIO MATCH!)
+    let gwMatches = [];
     if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
       const gwStart = new Date(selectedGw.startDate).getTime();
       const gwEnd = new Date(selectedGw.endDate).getTime();
-      activeMatch = allowedGames.find(g => g.timestamp >= gwStart && g.timestamp <= gwEnd) || null;
+      gwMatches = allowedGames.filter(g => g.timestamp >= gwStart && g.timestamp <= gwEnd);
     }
 
+    const activeMatch = gwMatches[0] || null;
+    const hasDoubleMatch = gwMatches.length >= 2;
     const isNationalMatch = Boolean(activeMatch && activeMatch.isNationalTeam);
     const baseL15 = card.l15 > 0 ? card.l15 : (card.l5 > 0 ? card.l5 : 35);
     const baseL5 = card.l5 > 0 ? card.l5 : baseL15;
@@ -574,10 +698,12 @@ const OptimizerEngine = {
     const standbyScore = Number(Math.max(18, baseProjection * (card.powerMultiplier || 1)).toFixed(1));
 
     if (!activeMatch || card.isInjuredOrSuspended) {
-      const detailedInsight = this.buildBespokeScoutingDossier(card, null, isCeiling, manualStatus, standbyScore, false, null);
+      const detailedInsight = this.buildBespokeScoutingDossier(card, [], isCeiling, manualStatus, standbyScore, false, null);
       return {
         ...card,
         activeMatch: null,
+        gwMatches: [],
+        hasDoubleMatch: false,
         isHome: null,
         opponentName: 'Sosta Club in questa GW',
         availabilityTier: card.baseFitnessTier === 'starter' ? 'starter' : 'rotation',
@@ -592,26 +718,26 @@ const OptimizerEngine = {
       };
     }
 
-    const alreadyDnpInThisGw =
-      activeMatch.alreadyPlayedScore !== null &&
-      activeMatch.alreadyPlayedScore === 0 &&
-      (activeMatch.alreadyPlayedMins === 0 || activeMatch.alreadyPlayedMins === null);
+    // Se TUTTE le partite della GW sono già state giocate con 0 minuti (DNP totale):
+    const allPlayedAreDnpZero = gwMatches.every(m =>
+      m.alreadyPlayedScore !== null &&
+      m.alreadyPlayedScore === 0 &&
+      (m.alreadyPlayedMins === 0 || m.alreadyPlayedMins === null)
+    );
 
-    const isUnverifiedOrBenchNat = isNationalMatch && (!card.isNationalCallupVerified || card.natFitnessTier === 'bench_nat') && manualStatus !== 'xi';
-
-    if (alreadyDnpInThisGw || isUnverifiedOrBenchNat) {
-      const detailedInsight = this.buildBespokeScoutingDossier(card, activeMatch, isCeiling, manualStatus, 0, isNationalMatch, null);
+    if (allPlayedAreDnpZero) {
+      const detailedInsight = this.buildBespokeScoutingDossier(card, gwMatches, isCeiling, manualStatus, 0, isNationalMatch, null);
       return {
         ...card,
         activeMatch: activeMatch,
+        gwMatches: gwMatches,
+        hasDoubleMatch: hasDoubleMatch,
         isHome: activeMatch.isHome,
         opponentName: activeMatch.opponentName,
         availabilityTier: 'dnp',
         manualStatus: manualStatus,
         isLastResort: true,
-        unavailableReason: alreadyDnpInThisGw
-          ? '0 pt (Panchina/DNP) nel match già disputato in questa GW'
-          : 'Non convocato / Riserva in Nazionale',
+        unavailableReason: '0 pt (Panchina/DNP) nel match già disputato in questa GW',
         projectedScore: 0,
         standbyScore: 0,
         selectionPriority: 0,
@@ -620,19 +746,50 @@ const OptimizerEngine = {
       };
     }
 
-    const homeAwayMultiplier = activeMatch.isHome === true ? 1.04 : 0.985;
-    let adjustedProjection = baseProjection * homeAwayMultiplier;
+    // Calcola il moltiplicatore dinamico del matchup (o del Doppio Match calibrato sulla forza delle 2 avversarie!)
+    const matchPkg = this.evaluateGwMatchesPackage(gwMatches, card.position);
+    let adjustedProjection = baseProjection * matchPkg.combinedMultiplier;
 
-    if (isNationalMatch && card.natFitnessTier === 'rotation' && manualStatus !== 'xi') {
-      adjustedProjection *= 0.84;
+    let priorityTier = 3;
+    let availabilityLabel = 'starter';
+
+    if (manualStatus === 'xi') {
+      priorityTier = 3;
+      availabilityLabel = 'starter';
+    } else if (isNationalMatch) {
+      if (card.natFitnessTier === 'starter') {
+        priorityTier = 3;
+        availabilityLabel = 'starter';
+      } else if (card.natFitnessTier === 'rotation') {
+        priorityTier = 2;
+        availabilityLabel = 'rotation';
+        adjustedProjection *= 0.90;
+      } else {
+        // Giocatore con match di Nazionale ufficiale su Sorare ma senza presenze recenti in Nazionale:
+        // Priorità 1 -> usato per completare la 3ª, 4ª e 5ª formazione!
+        priorityTier = 1;
+        availabilityLabel = 'rotation';
+        adjustedProjection *= 0.80;
+      }
+    } else {
+      if (card.baseFitnessTier === 'starter') {
+        priorityTier = 3;
+        availabilityLabel = 'starter';
+      } else {
+        priorityTier = 2;
+        availabilityLabel = 'rotation';
+        adjustedProjection *= 0.88;
+      }
     }
 
     if (manualStatus === 'bench') {
       const benchScore = Number(Math.max(12, adjustedProjection * 0.45 * (card.powerMultiplier || 1)).toFixed(1));
-      const detailedInsight = this.buildBespokeScoutingDossier(card, activeMatch, isCeiling, 'bench', benchScore, isNationalMatch, null);
+      const detailedInsight = this.buildBespokeScoutingDossier(card, gwMatches, isCeiling, 'bench', benchScore, isNationalMatch, null);
       return {
         ...card,
         activeMatch: activeMatch,
+        gwMatches: gwMatches,
+        hasDoubleMatch: hasDoubleMatch,
         isHome: activeMatch.isHome,
         opponentName: activeMatch.opponentName,
         availabilityTier: 'bench',
@@ -647,17 +804,18 @@ const OptimizerEngine = {
       };
     }
 
-    const effectiveTier = isNationalMatch ? card.natFitnessTier : card.baseFitnessTier;
-    const priorityTier = (manualStatus === 'xi' || effectiveTier === 'starter') ? 3 : 2;
     const projectedScore = Number(Math.max(18, adjustedProjection * (card.powerMultiplier || 1)).toFixed(1));
-    const detailedInsight = this.buildBespokeScoutingDossier(card, activeMatch, isCeiling, manualStatus, projectedScore, isNationalMatch, null);
+    const detailedInsight = this.buildBespokeScoutingDossier(card, gwMatches, isCeiling, manualStatus, projectedScore, isNationalMatch, null);
 
     return {
       ...card,
       activeMatch: activeMatch,
+      gwMatches: gwMatches,
+      hasDoubleMatch: hasDoubleMatch,
+      doubleMatchBoostPct: matchPkg.doubleMatchBoostPct,
       isHome: activeMatch.isHome,
       opponentName: activeMatch.opponentName,
-      availabilityTier: priorityTier === 3 ? 'starter' : 'rotation',
+      availabilityTier: availabilityLabel,
       manualStatus: manualStatus,
       isLastResort: false,
       unavailableReason: '',
