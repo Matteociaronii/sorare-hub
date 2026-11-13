@@ -1,7 +1,7 @@
-// SorareHub - Safe GraphQL Complexity (No Failed to Fetch) + Verified National Callups + Club Competition Slugs
+// SorareHub - Data Sync Engine + Detailed Match Logs & Verified National Callups
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v21',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v21', 'sorarehub_gallery_cache_v20', 'sorarehub_gallery_cache_v19', 'sorarehub_gallery_cache_v18'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v22',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v22', 'sorarehub_gallery_cache_v21', 'sorarehub_gallery_cache_v20', 'sorarehub_gallery_cache_v19'],
   CACHE_TTL_MS: 12 * 60 * 1000, // 12 minuti
 
   generateRandomString(length = 32) {
@@ -80,7 +80,6 @@ const SorareAPI = {
     }
   },
 
-  // Gestisce sia HTTP 429/502/503 sia eventuali "Failed to fetch" temporanei del Worker
   async fetchWithRetry(url, options, maxRetries = 3) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
@@ -201,10 +200,9 @@ const SorareAPI = {
       }
     }
 
-    const baseWorkerUrl = String(CONFIG.TOKEN_ENDPOINT || 'https://sorare-oauth-proxy.matteo-ciaroni03.workers.dev').replace(/\/$/, '');
+    const baseWorkerUrl = String(CONFIG.TOKEN_ENDPOINT || 'https://sorarehub-oauth.matty-ciaroni.workers.dev').replace(/\/$/, '');
     const workerGraphqlEndpoint = baseWorkerUrl.endsWith('/graphql') ? baseWorkerUrl : `${baseWorkerUrl}/graphql`;
 
-    // Query ottimizzata: 30 carte per batch e so5Scores(last: 6) -> resta sempre sotto la soglia di complessità di Sorare e Cloudflare!
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -383,7 +381,7 @@ const SorareAPI = {
           loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
         }
         if (window.App && App.notify) {
-          App.notify(`📥 Sincronizzazione Opta & Tornei: ${allCards.length} carte Pro...`);
+          App.notify(`📥 Analisi Storico Match, Tornei & Nazionali: ${allCards.length} carte Pro...`);
         }
 
         const pageInfo = connection?.pageInfo;
@@ -395,12 +393,11 @@ const SorareAPI = {
         await new Promise(resolve => setTimeout(resolve, 350));
       }
     } catch (fetchErr) {
-      // Se aveva già scaricato gran parte delle carte o se c'è una cache salvata, non blocca l'utente!
       if (allCards.length === 0) {
         const fallbackCache = this.loadAnyAvailableCache(true);
         if (fallbackCache) {
           if (window.App && App.notify) {
-            App.notify('⚠️ Proxy Sorare momentaneamente saturo: caricata galleria salvata in cache.');
+            App.notify('⚠️ Proxy Sorare momentaneamente occupato: caricata galleria salvata in cache.');
           }
           return {
             user: fallbackCache.user,
@@ -503,7 +500,7 @@ const SorareAPI = {
           if (compSlug) activeClubCompetitionsSet.add(compSlug);
         });
 
-        const computeSplitMetrics = (entries, maxWindow = 5) => {
+        const computeSplitMetrics = (entries, maxWindow = 5, referenceTeamSlug = clubSlug) => {
           const slice = entries.slice(0, maxWindow);
           let totalEntries = slice.length;
           let playedCount = 0;
@@ -516,6 +513,7 @@ const SorareAPI = {
           let maxScore = 0;
           let minScore = 100;
           const validScores = [];
+          const matchLogs = [];
 
           let goals = 0;
           let assists = 0;
@@ -523,9 +521,23 @@ const SorareAPI = {
           let saves = 0;
 
           slice.forEach(s => {
-            const sc = typeof s.score === 'number' ? s.score : 0;
+            const sc = typeof s.score === 'number' ? Number(s.score.toFixed(1)) : 0;
             const stats = s.playerGameStats || {};
             const mins = typeof stats.minsPlayed === 'number' ? stats.minsPlayed : (sc > 0 ? 60 : 0);
+            const dec = typeof s.decisiveScore?.totalScore === 'number' ? Number(s.decisiveScore.totalScore.toFixed(1)) : 0;
+            const aas = Math.max(0, Number((sc - dec).toFixed(1)));
+
+            const g = s.game || {};
+            const homeSlug = (g.homeTeam?.slug || '').toLowerCase();
+            const homeName = g.homeTeam?.name || 'Casa';
+            const awayName = g.awayTeam?.name || 'Trasferta';
+            const isHome = referenceTeamSlug ? (homeSlug === referenceTeamSlug) : true;
+            const oppName = isHome ? awayName : homeName;
+
+            const gGoals = stats.goals || 0;
+            const gAssists = stats.goalAssist || 0;
+            const gCs = stats.cleanSheet || 0;
+            const gSaves = stats.saves || 0;
 
             if (mins > 0 || sc > 0) {
               playedCount++;
@@ -536,15 +548,27 @@ const SorareAPI = {
               if (sc > maxScore) maxScore = sc;
               if (sc < minScore) minScore = sc;
 
-              const dec = typeof s.decisiveScore?.totalScore === 'number' ? s.decisiveScore.totalScore : 0;
-              const aas = Math.max(0, Number((sc - dec).toFixed(1)));
               sumAas += aas;
               sumDecisive += dec;
 
-              goals += stats.goals || 0;
-              assists += stats.goalAssist || 0;
-              cleanSheets += stats.cleanSheet || 0;
-              saves += stats.saves || 0;
+              goals += gGoals;
+              assists += gAssists;
+              cleanSheets += gCs;
+              saves += gSaves;
+
+              matchLogs.push({
+                opponent: oppName,
+                isHome: isHome,
+                score: Math.round(sc),
+                exactScore: sc,
+                aas: aas,
+                decisive: dec,
+                mins: mins,
+                goals: gGoals,
+                assists: gAssists,
+                cleanSheet: gCs,
+                saves: gSaves
+              });
             } else {
               dnpZeroCount++;
             }
@@ -578,15 +602,15 @@ const SorareAPI = {
             goals,
             assists,
             cleanSheets,
-            saves
+            saves,
+            matchLogs
           };
         };
 
-        const clubStats = computeSplitMetrics(clubScoreEntries.length > 0 ? clubScoreEntries : allRecentScores, 5);
-        const natStats = computeSplitMetrics(natScoreEntries, 6);
+        const clubStats = computeSplitMetrics(clubScoreEntries.length > 0 ? clubScoreEntries : allRecentScores, 5, clubSlug);
+        const natStats = computeSplitMetrics(natScoreEntries, 6, natSlug);
 
-        // Verifica reale convocazione in Nazionale:
-        // Il calciatore è considerato convocato/attivo in Nazionale SOLO se ha almeno 1 presenza effettiva (playedCount >= 1) in Nazionale!
+        // Verifica reale convocazione in Nazionale: almeno 1 presenza effettiva in Nazionale
         const isNationalCallupVerified = natStats.playedCount >= 1;
 
         const scheduleGames = [];
@@ -714,14 +738,6 @@ const SorareAPI = {
         if (isInjured) baseUnavailableReason = 'Infortunato (Ufficiale Sorare)';
         else if (isSuspended) baseUnavailableReason = 'Squalificato (Ufficiale Sorare)';
 
-        const isAerialDominator = pos === 'DEF' && clubStats.playedCount > 0 && (clubStats.goals >= 1 || clubStats.avgAas >= 20);
-        const isDefensiveWall = pos === 'DEF' && clubStats.playedCount > 0 && clubStats.avgAas >= 22;
-        const isPlaymakerCreator = pos === 'MID' && clubStats.playedCount > 0 && (clubStats.avgAas >= 24 || clubStats.assists >= 1);
-        const isBoxToBoxEngine = pos === 'MID' && clubStats.playedCount > 0 && clubStats.avgAas >= 19 && clubStats.avgMins >= 75;
-        const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && clubStats.playedCount > 0 && ((clubStats.goals + clubStats.assists) >= 2 || clubStats.avgDecisive >= 25);
-        const isTargetPenaltyBox = pos === 'FWD' && clubStats.playedCount > 0 && (clubStats.goals >= 1 || clubStats.maxScore >= 68);
-        const isShotStopper = pos === 'GK' && clubStats.playedCount > 0 && (clubStats.saves >= 10 || clubStats.avgAas >= 12);
-
         const rawPower = parseFloat(card.power) || (isInSeason ? 1.05 : 1.00);
         const totalBonusPct = Math.round((rawPower - 1) * 100);
 
@@ -759,13 +775,6 @@ const SorareAPI = {
           natFitnessTier: natFitnessTier,
           baseUnavailableReason: baseUnavailableReason,
           tacticalTraits: {
-            aerialDominator: isAerialDominator,
-            defensiveWall: isDefensiveWall,
-            playmakerCreator: isPlaymakerCreator,
-            boxToBoxEngine: isBoxToBoxEngine,
-            clinicalFinisher: isClinicalFinisher,
-            targetPenaltyBox: isTargetPenaltyBox,
-            shotStopper: isShotStopper,
             cleanSheets: clubStats.cleanSheets,
             goals: clubStats.goals,
             assists: clubStats.assists,
