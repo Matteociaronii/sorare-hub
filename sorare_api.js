@@ -1,7 +1,7 @@
-// SorareHub - Official Sorare Tue-Fri / Fri-Tue Gameweeks + GW Number + Club vs National Team Separation
+// SorareHub - Full GW Window (Past + Live + Upcoming Matches in GW) & Role-Specific Opta Analytics
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v16',
-  CACHE_TTL_MS: 15 * 60 * 1000, // 15 minuti
+  CACHE_KEY: 'sorarehub_gallery_cache_v18',
+  CACHE_TTL_MS: 12 * 60 * 1000, // 12 minuti
 
   generateRandomString(length = 32) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -97,25 +97,21 @@ const SorareAPI = {
     }
   },
 
-  // Calcola esattamente il calendario bisettimanale ufficiale di Sorare:
-  // Midweek: Martedì 16:00 -> Venerdì 15:59 (es. 10 Nov - 13 Nov)
-  // Weekend: Venerdì 16:00 -> Martedì 15:59 (es. 13 Nov - 17 Nov)
+  // Calendario Ufficiale Sorare:
+  // Midweek: Martedì 16:00 CET (15:00 UTC) -> Venerdì 15:59 CET (14:59 UTC)
+  // Weekend: Venerdì 16:00 CET (15:00 UTC) -> Martedì 15:59 CET (14:59 UTC)
   buildOfficialSorareGameweeks(officialGwNumber = null) {
     const now = new Date();
-
-    // Ancoraggio ufficiale Sorare: GW #524 = Martedì 10 Novembre 2026 ore 16:00 CET (15:00 UTC)
-    const anchorStartMs = Date.UTC(2026, 10, 10, 15, 0, 0);
+    const anchorStartMs = Date.UTC(2026, 10, 10, 15, 0, 0); // Mar 10 Nov 2026 16:00 CET = GW #524
     const anchorGwNum = officialGwNumber || 524;
 
-    // Genera una sequenza di confini Mar 15:00 UTC <-> Ven 15:00 UTC attorno alla data odierna
     const boundaries = [];
-    let cursorMs = anchorStartMs - (14 * 24 * 3600 * 1000); // 2 settimane prima dell'ancora
+    let cursorMs = anchorStartMs - (14 * 24 * 3600 * 1000);
     let gwCounter = anchorGwNum - 4;
 
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 24; i++) {
       const d = new Date(cursorMs);
       const dayOfWeek = d.getUTCDay(); // 2 = Martedì, 5 = Venerdì
-      // Da Martedì a Venerdì = 3 giorni (72h); da Venerdì a Martedì = 4 giorni (96h)
       const durationHours = (dayOfWeek === 2) ? 72 : 96;
       const nextMs = cursorMs + durationHours * 3600 * 1000;
 
@@ -185,6 +181,7 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
 
+    // Include anche game dentro so5Scores(last: 5) così i match già giocati ieri/avantieri dentro la GW Live vengono rilevati sempre!
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -229,6 +226,25 @@ const SorareAPI = {
                       goalAssist
                       cleanSheet
                       saves
+                    }
+                    game {
+                      date
+                      competition {
+                        slug
+                        displayName
+                      }
+                      homeTeam {
+                        ... on TeamInterface {
+                          slug
+                          name
+                        }
+                      }
+                      awayTeam {
+                        ... on TeamInterface {
+                          slug
+                          name
+                        }
+                      }
                     }
                   }
                   activeClub {
@@ -378,6 +394,7 @@ const SorareAPI = {
 
   enrichCardsWithRealOptaData(rawCards) {
     const nowMs = Date.now();
+    const NATIONAL_COMP_KEYWORDS = ['nations-league', 'world-cup', 'euro', 'qualification', 'international', 'friendlies', 'copa-america', 'africa-cup', 'conmebol', 'concacaf', 'uefa-nations'];
 
     return (rawCards || [])
       .filter(c => c && (c.name || c.player?.displayName))
@@ -401,7 +418,7 @@ const SorareAPI = {
         const scheduleGames = [];
         const seenGameKeys = new Set();
 
-        const pushUniqueGame = (g, isNatSource) => {
+        const pushUniqueGame = (g, isNatSource, alreadyPlayedScore = null) => {
           if (!g || !g.date) return;
           const ts = new Date(g.date).getTime();
           if (!ts || Number.isNaN(ts)) return;
@@ -410,24 +427,34 @@ const SorareAPI = {
           const awaySlug = g.awayTeam?.slug || '';
           const homeName = g.homeTeam?.name || 'Casa';
           const awayName = g.awayTeam?.name || 'Trasferta';
+          const compSlug = String(g.competition?.slug || '').toLowerCase();
+          const compName = g.competition?.displayName || g.competition?.slug || 'Match';
+
           const dayKey = new Date(ts).toISOString().slice(0, 10);
           const dedupKey = `${dayKey}_${homeSlug || homeName}_${awaySlug || awayName}`;
           if (seenGameKeys.has(dedupKey)) return;
           seenGameKeys.add(dedupKey);
 
-          if (isNatSource) {
+          // Determina se è una partita di Nazionale (sia da activeNationalTeam sia dai match già giocati in so5Scores durante la GW)
+          const matchesNatTeam = Boolean(natSlug && (homeSlug === natSlug || awaySlug === natSlug));
+          const matchesClubTeam = Boolean(clubSlug && (homeSlug === clubSlug || awaySlug === clubSlug));
+          const isCompNational = NATIONAL_COMP_KEYWORDS.some(k => compSlug.includes(k));
+          const isNationalMatch = isNatSource || matchesNatTeam || (!matchesClubTeam && isCompNational);
+
+          if (isNationalMatch) {
             const isHome = natSlug ? (homeSlug === natSlug) : true;
             const myNatName = natName || (isHome ? homeName : awayName);
             const oppName = isHome ? awayName : homeName;
             scheduleGames.push({
               date: g.date,
               timestamp: ts,
-              competitionSlug: String(g.competition?.slug || 'international').toLowerCase(),
-              competitionName: g.competition?.displayName || 'Nazionale',
+              competitionSlug: compSlug || 'international',
+              competitionName: compName || 'Nazionale',
               isHome: isHome,
               opponentName: oppName,
               opponentSlug: isHome ? awaySlug : homeSlug,
               isNationalTeam: true,
+              alreadyPlayedScore: alreadyPlayedScore,
               teamName: `${myNatName} vs ${oppName}`
             });
           } else {
@@ -435,19 +462,30 @@ const SorareAPI = {
             scheduleGames.push({
               date: g.date,
               timestamp: ts,
-              competitionSlug: String(g.competition?.slug || '').toLowerCase(),
-              competitionName: g.competition?.displayName || g.competition?.slug || 'Club',
+              competitionSlug: compSlug,
+              competitionName: compName || 'Club',
               isHome: isHome,
               opponentName: isHome ? awayName : homeName,
               opponentSlug: isHome ? awaySlug : homeSlug,
               isNationalTeam: false,
+              alreadyPlayedScore: alreadyPlayedScore,
               teamName: clubName
             });
           }
         };
 
-        (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, false));
-        (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, true));
+        // 1) Partite future o imminenti da activeClub e activeNationalTeam
+        (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, false, null));
+        (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, true, null));
+
+        // 2) Partite già disputate ieri/oggi dentro la stessa GW (recuperate da so5Scores)
+        const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
+        allRecentScores.forEach(s => {
+          if (s && s.game && s.game.date) {
+            const sc = typeof s.score === 'number' ? Number(s.score.toFixed(1)) : null;
+            pushUniqueGame(s.game, false, sc);
+          }
+        });
 
         scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -466,7 +504,6 @@ const SorareAPI = {
         const u23Cutoff = new Date('2003-07-01').getTime();
         const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
 
-        const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
         const last5Window = allRecentScores.slice(0, 5);
         const playedMatchesAll = allRecentScores.filter(s => {
           if (!s) return false;
@@ -490,6 +527,7 @@ const SorareAPI = {
         let sumAas = 0;
         let sumDecisive = 0;
         let maxRecentScore = 0;
+        let minRecentScore = 100;
         let validScoreValues = [];
 
         let totalGoals = 0;
@@ -509,6 +547,7 @@ const SorareAPI = {
             if (mins >= 55) starterCount++;
             validScoreValues.push(sc);
             if (sc > maxRecentScore) maxRecentScore = sc;
+            if (sc < minRecentScore) minRecentScore = sc;
 
             const dec = typeof s.decisiveScore?.totalScore === 'number' ? s.decisiveScore.totalScore : 0;
             const aas = Math.max(0, Number((sc - dec).toFixed(1)));
@@ -521,6 +560,8 @@ const SorareAPI = {
             totalSaves += stats.saves || 0;
           }
         });
+
+        if (validScoreValues.length === 0) minRecentScore = 0;
 
         const avgMins = playedInLast5Games > 0 ? Math.round(totalMins / playedInLast5Games) : 0;
         const avgAas = playedInLast5Games > 0 ? Number((sumAas / playedInLast5Games).toFixed(1)) : 0;
@@ -537,30 +578,35 @@ const SorareAPI = {
         const suspensions = Array.isArray(player.activeSuspensions) ? player.activeSuspensions : [];
         const isInjured = injuries.length > 0;
         const isSuspended = suspensions.length > 0;
+        const isInjuredOrSuspended = isInjured || isSuspended;
 
         let baseFitnessTier = 'last_resort';
         let baseUnavailableReason = '';
 
         if (isInjured) {
-          baseUnavailableReason = 'Infortunato (segnalato su Sorare)';
+          baseUnavailableReason = 'Infortunato (Ufficiale Sorare)';
         } else if (isSuspended) {
-          baseUnavailableReason = 'Squalificato';
+          baseUnavailableReason = 'Squalificato (Ufficiale Sorare)';
         } else if (!club.slug && !natSlug && scheduleGames.length === 0) {
           baseUnavailableReason = 'Senza club/nazionale attiva';
-        } else if (l5 <= 0 && playedInLast5Games === 0 && scheduleGames.length === 0) {
-          baseUnavailableReason = 'Nessuna presenza nelle ultime 5 partite';
-        } else if (starterCount >= 3 || (playedInLast5Games >= 3 && avgMins >= 60)) {
+        } else if (l5 <= 0 && playedInLast5Games === 0) {
+          baseUnavailableReason = '0 presenze nelle ultime 5 gare';
+        } else if (starterCount >= 3 || (playedInLast5Games >= 3 && avgMins >= 62)) {
           baseFitnessTier = 'starter';
-        } else if (playedInLast5Games >= 1 || l5 > 0 || scheduleGames.length > 0) {
+        } else if (playedInLast5Games >= 1 || l5 > 0) {
           baseFitnessTier = 'rotation';
         } else {
-          baseUnavailableReason = 'Inattivo / fuori dalle rotazioni recenti';
+          baseUnavailableReason = 'Fuori dalle rotazioni recenti';
         }
 
-        const isSetPieceTaker = pos !== 'GK' && playedInLast5Games > 0 && (avgAas >= 26 || totalAssists >= 2);
-        const isAerialThreat = (pos === 'DEF' || pos === 'FWD') && playedInLast5Games > 0 && (avgAas >= 22);
-        const isBallWinner = (pos === 'DEF' || pos === 'MID') && playedInLast5Games > 0 && (avgAas >= 23);
-        const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && playedInLast5Games > 0 && ((totalGoals + totalAssists) >= 2 || avgDecisive >= 28);
+        // Lettura tattica realistica e differenziata per ruolo (Niente "Battitore piazzati" su DC come Otamendi, e niente Clean Sheet su CC/ATT!)
+        const isAerialDominator = pos === 'DEF' && playedInLast5Games > 0 && (totalGoals >= 1 || avgAas >= 20);
+        const isDefensiveWall = pos === 'DEF' && playedInLast5Games > 0 && avgAas >= 22;
+        const isPlaymakerCreator = pos === 'MID' && playedInLast5Games > 0 && (avgAas >= 24 || totalAssists >= 1);
+        const isBoxToBoxEngine = pos === 'MID' && playedInLast5Games > 0 && avgAas >= 19 && avgMins >= 75;
+        const isClinicalFinisher = (pos === 'FWD' || pos === 'MID') && playedInLast5Games > 0 && ((totalGoals + totalAssists) >= 2 || avgDecisive >= 25);
+        const isTargetPenaltyBox = pos === 'FWD' && playedInLast5Games > 0 && (totalGoals >= 1 || maxRecentScore >= 68);
+        const isShotStopper = pos === 'GK' && playedInLast5Games > 0 && (totalSaves >= 10 || avgAas >= 18);
 
         const rawPower = parseFloat(card.power) || (isInSeason ? 1.05 : 1.00);
         const totalBonusPct = Math.round((rawPower - 1) * 100);
@@ -580,11 +626,13 @@ const SorareAPI = {
           seasonYear: sYear,
           isInSeason: isInSeason,
           isU23: isU23,
+          isInjuredOrSuspended: isInjuredOrSuspended,
           l5: l5,
           l15: l15,
           avgAas: avgAas,
           avgDecisive: avgDecisive,
           maxRecentScore: Math.round(maxRecentScore),
+          minRecentScore: Math.round(minRecentScore),
           stdDev: stdDev,
           playedCount: playedInLast5Games,
           starterCount: starterCount,
@@ -592,10 +640,13 @@ const SorareAPI = {
           baseFitnessTier: baseFitnessTier,
           baseUnavailableReason: baseUnavailableReason,
           tacticalTraits: {
-            setPiece: isSetPieceTaker,
-            aerial: isAerialThreat,
-            ballWinner: isBallWinner,
-            clinical: isClinicalFinisher,
+            aerialDominator: isAerialDominator,
+            defensiveWall: isDefensiveWall,
+            playmakerCreator: isPlaymakerCreator,
+            boxToBoxEngine: isBoxToBoxEngine,
+            clinicalFinisher: isClinicalFinisher,
+            targetPenaltyBox: isTargetPenaltyBox,
+            shotStopper: isShotStopper,
             cleanSheets: totalCleanSheets,
             goals: totalGoals,
             assists: totalAssists,
