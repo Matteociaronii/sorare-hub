@@ -1,128 +1,220 @@
-// SorareHub - Strict Tournament/Cup Membership (UCL vs UEL/UECL vs Domestic Leagues) + Verified National Callups
+// SorareHub - Exact League/Cup Filtering (===) + Bespoke Player Scouting Dossiers
 const OptimizerEngine = {
-  CHAMPION_DOMESTIC_LEAGUES: [
-    'premier-league-gb-eng', 'premier-league',
-    'serie-a-it', 'serie-a',
-    'laliga-es', 'laliga', 'la-liga', 'primera-division-es', 'primera-division',
-    'bundesliga-de', 'bundesliga',
-    'ligue-1-fr', 'ligue-1'
-  ],
+  // Mappa rigorosa di normalizzazione degli slug dei campionati Sorare (impedisce qualsiasi confusione tra Bundesliga-DE, Bundesliga-AT e 2-Bundesliga-DE!)
+  normalizeLeagueSlug(rawSlug) {
+    const s = String(rawSlug || '').toLowerCase().trim();
+    if (!s) return 'other';
 
-  CONTENDER_LEAGUES_BASE: [
-    'bundesliga-at', 'austrian-bundesliga',
-    'supersport-hnl', 'prva-hnl', 'croatian-first-football-league', '1-hnl-hr',
-    '2-bundesliga-de', '2-bundesliga',
-    'ligue-2-fr', 'ligue-2'
-  ],
-  CONTENDER_LEAGUES_HIGH_SCARCITY: [
-    'premiership-gb-sct', 'scottish-premiership',
-    'championship-gb-eng', 'efl-championship', 'championship',
-    'j1-league-jp', 'j1-league'
-  ],
+    // 1. Esclusioni prioritarie per campionati di seconda fascia o omonimi
+    if (s === '2-bundesliga' || s === '2-bundesliga-de' || s.startsWith('2-bundesliga')) return '2-bundesliga-de';
+    if (s === 'bundesliga-at' || s === 'austrian-bundesliga' || s.includes('austria')) return 'bundesliga-at';
+    if (s === 'ligue-2' || s === 'ligue-2-fr' || s.startsWith('ligue-2')) return 'ligue-2-fr';
+    if (s === 'serie-b' || s === 'serie-b-it' || s.startsWith('serie-b')) return 'serie-b-it';
+    if (s === 'serie-a-br' || s === 'brasileirao' || s.includes('brazil')) return 'serie-a-br';
+    if (s === 'segunda-division' || s === 'segunda-division-es' || s === 'laliga-2' || s === 'laliga-hypermotion') return 'segunda-division-es';
+    if (s === 'championship' || s === 'efl-championship' || s === 'championship-gb-eng') return 'championship-gb-eng';
+    if (s === 'scottish-premiership' || s === 'premiership-gb-sct' || s === 'premiership') return 'premiership-gb-sct';
 
-  CHALLENGER_LEAGUES: [
-    'primeira-liga-pt', 'primeira-liga', 'liga-portugal',
-    'eredivisie-nl', 'eredivisie',
-    'jupiler-pro-league-be', 'jupiler-pro-league', 'first-division-a',
-    'premiership-gb-sct', 'scottish-premiership',
-    'super-lig-tr', 'super-lig', 'turkish-super-lig',
-    'superliga-dk', 'danish-superliga',
-    'super-league-ch', 'swiss-super-league',
-    'eliteserien-no', 'eliteserien',
-    'allsvenskan', 'ekstraklasa-pl', 'ekstraklasa'
-  ],
+    // 2. Top 5 Campionati Europei (Slug Canonici Esatti)
+    if (s === 'premier-league' || s === 'premier-league-gb-eng') return 'premier-league-gb-eng';
+    if (s === 'serie-a' || s === 'serie-a-it') return 'serie-a-it';
+    if (s === 'laliga' || s === 'la-liga' || s === 'laliga-es' || s === 'primera-division' || s === 'primera-division-es') return 'laliga-es';
+    if (s === 'bundesliga' || s === 'bundesliga-de') return 'bundesliga-de';
+    if (s === 'ligue-1' || s === 'ligue-1-fr') return 'ligue-1-fr';
 
-  // Squadre partecipanti alla UEFA Champions League (esclude rigorosamente i club dei campionati nazionali che NON fanno la Champions!)
-  UCL_CLUB_EXACT_MATCHES: [
-    'real-madrid', 'barcelona', 'fc-barcelona', 'atletico-madrid', 'club-atletico-de-madrid', 'girona', 'athletic-club', 'villarreal',
-    'manchester-city', 'arsenal', 'liverpool', 'aston-villa', 'chelsea', 'newcastle', 'tottenham',
-    'inter', 'internazionale', 'fc-internazionale-milano', 'milan', 'ac-milan', 'juventus', 'atalanta', 'bologna', 'napoli',
-    'bayern', 'fc-bayern-munchen', 'leverkusen', 'bayer-04-leverkusen', 'dortmund', 'borussia-dortmund', 'leipzig', 'rb-leipzig', 'stuttgart', 'vfb-stuttgart', 'eintracht-frankfurt',
-    'paris-saint-germain', 'psg', 'monaco', 'as-monaco', 'brest', 'stade-brestois', 'lille', 'losc-lille', 'marseille', 'olympique-de-marseille',
-    'benfica', 'sl-benfica', 'sporting', 'sporting-cp', 'porto', 'fc-porto',
-    'psv', 'feyenoord', 'ajax', 'afc-ajax',
-    'club-brugge', 'celtic', 'celtic-fc', 'sturm-graz', 'salzburg', 'fc-red-bull-salzburg', 'dinamo-zagreb', 'gnk-dinamo-zagreb',
-    'shakhtar', 'sparta-praha', 'slavia-praha', 'young-boys', 'crvena-zvezda', 'slovan-bratislava', 'galatasaray'
-  ],
+    // 3. Altri Campionati Nazionali
+    if (s === 'primeira-liga' || s === 'primeira-liga-pt' || s === 'liga-portugal') return 'primeira-liga-pt';
+    if (s === 'eredivisie' || s === 'eredivisie-nl') return 'eredivisie-nl';
+    if (s === 'jupiler-pro-league' || s === 'jupiler-pro-league-be' || s === 'first-division-a') return 'jupiler-pro-league-be';
+    if (s === 'super-lig' || s === 'super-lig-tr' || s === 'turkish-super-lig') return 'super-lig-tr';
+    if (s === 'superliga-dk' || s === 'danish-superliga' || s === 'superliga') return 'superliga-dk';
+    if (s === 'super-league-ch' || s === 'swiss-super-league' || s === 'super-league') return 'super-league-ch';
+    if (s === 'eliteserien' || s === 'eliteserien-no') return 'eliteserien-no';
+    if (s === 'ekstraklasa' || s === 'ekstraklasa-pl') return 'ekstraklasa-pl';
+    if (s === 'supersport-hnl' || s === 'prva-hnl' || s === '1-hnl-hr' || s === 'croatian-first-football-league') return '1-hnl-hr';
+    if (s === 'mls' || s === 'mls-us' || s === 'major-league-soccer') return 'mls-us';
+    if (s === 'j1-league' || s === 'j1-league-jp') return 'j1-league-jp';
+    if (s === 'k-league-1' || s === 'k-league-1-kr') return 'k-league-1-kr';
 
-  // Squadre partecipanti a UEFA Europa League / Conference League
-  UEL_UECL_CLUB_EXACT_MATCHES: [
-    'roma', 'as-roma', 'lazio', 'ss-lazio', 'fiorentina', 'acf-fiorentina',
-    'real-sociedad', 'real-betis', 'manchester-united',
-    'lyon', 'olympique-lyonnais', 'nice', 'ogc-nice', 'lens', 'rc-lens', 'strasbourg',
-    'hoffenheim', 'freiburg', 'sc-freiburg', 'mainz',
-    'az', 'az-alkmaar', 'twente', 'fc-twente', 'utrecht',
-    'braga', 'sc-braga', 'vitoria-guimaraes',
-    'anderlecht', 'rsc-anderlecht', 'union-saint-gilloise', 'gent', 'kaa-gent', 'genk', 'krc-genk',
-    'rangers', 'rangers-fc', 'hearts',
-    'olympiacos', 'paok', 'panathinaikos', 'besiktas', 'fenerbahce', 'trabzonspor',
-    'midtjylland', 'fc-kobenhavn', 'bodo-glimt', 'malmo', 'elfsborg',
-    'rapid', 'sk-rapid', 'lask', 'lugano', 'servette', 'basel', 'legia', 'jagiellonia'
-  ],
+    return s;
+  },
+
+  TOP_5_CANONICAL_LEAGUES: new Set([
+    'premier-league-gb-eng',
+    'serie-a-it',
+    'laliga-es',
+    'bundesliga-de',
+    'ligue-1-fr'
+  ]),
+
+  // Club qualificati alla UEFA Champions League (SENZA Celtic e senza squadre di Europa/Conference League!)
+  UCL_QUALIFIED_CLUBS: new Set([
+    'real-madrid', 'real-madrid-cf',
+    'barcelona', 'fc-barcelona',
+    'atletico-madrid', 'club-atletico-de-madrid',
+    'athletic-club', 'villarreal', 'villarreal-cf',
+    'manchester-city', 'manchester-city-fc',
+    'arsenal', 'arsenal-fc',
+    'liverpool', 'liverpool-fc',
+    'aston-villa', 'aston-villa-fc',
+    'chelsea', 'chelsea-fc',
+    'newcastle-united', 'newcastle',
+    'tottenham-hotspur', 'tottenham',
+    'manchester-united', 'manchester-united-fc',
+    'inter', 'internazionale', 'fc-internazionale-milano',
+    'milan', 'ac-milan',
+    'juventus', 'juventus-fc',
+    'atalanta', 'atalanta-bc',
+    'napoli', 'ssc-napoli',
+    'bologna', 'bologna-fc-1909',
+    'bayern-munchen', 'fc-bayern-munchen',
+    'bayer-04-leverkusen', 'bayer-leverkusen',
+    'borussia-dortmund', 'dortmund',
+    'rb-leipzig', 'rasenballsport-leipzig',
+    'vfb-stuttgart', 'stuttgart',
+    'eintracht-frankfurt',
+    'paris-saint-germain', 'psg',
+    'as-monaco', 'monaco',
+    'losc-lille', 'lille',
+    'olympique-de-marseille', 'marseille',
+    'sl-benfica', 'benfica',
+    'sporting-cp', 'sporting-clube-de-portugal',
+    'fc-porto', 'porto',
+    'psv', 'psv-eindhoven',
+    'feyenoord', 'feyenoord-rotterdam',
+    'afc-ajax', 'ajax',
+    'club-brugge', 'club-brugge-kv',
+    'sturm-graz', 'sk-sturm-graz',
+    'fc-red-bull-salzburg', 'salzburg',
+    'gnk-dinamo-zagreb', 'dinamo-zagreb',
+    'shakhtar-donetsk', 'fc-shakhtar-donetsk',
+    'ac-sparta-praha', 'sparta-praha',
+    'sk-slavia-praha', 'slavia-praha',
+    'bsc-young-boys', 'young-boys',
+    'fk-crvena-zvezda', 'crvena-zvezda',
+    'sk-slovan-bratislava', 'slovan-bratislava',
+    'galatasaray', 'galatasaray-sk'
+  ]),
+
+  // Club qualificati a UEFA Europa League / UEFA Conference League (NESSUN club di Champions League come Inter o Man United!)
+  UEL_UECL_QUALIFIED_CLUBS: new Set([
+    'as-roma', 'roma',
+    'ss-lazio', 'lazio',
+    'acf-fiorentina', 'fiorentina',
+    'real-sociedad', 'real-sociedad-de-futbol',
+    'real-betis', 'real-betis-balompie',
+    'olympique-lyonnais', 'lyon',
+    'ogc-nice', 'nice',
+    'rc-lens', 'lens',
+    'rc-strasbourg-alsace', 'strasbourg',
+    'tsg-1899-hoffenheim', 'hoffenheim',
+    'sc-freiburg', 'freiburg',
+    '1-fsv-mainz-05', 'mainz',
+    'az-alkmaar', 'az',
+    'fc-twente', 'twente',
+    'fc-utrecht', 'utrecht',
+    'sc-braga', 'braga',
+    'vitoria-guimaraes', 'vitoria-sc',
+    'rsc-anderlecht', 'anderlecht',
+    'union-saint-gilloise', 'royale-union-saint-gilloise',
+    'kaa-gent', 'gent',
+    'krc-genk', 'genk',
+    'rangers', 'rangers-fc',
+    'celtic', 'celtic-fc',
+    'heart-of-midlothian', 'hearts',
+    'olympiacos-fc', 'olympiacos',
+    'paok', 'paok-fc',
+    'panathinaikos', 'panathinaikos-fc',
+    'besiktas', 'besiktas-jk',
+    'fenerbahce', 'fenerbahce-sk',
+    'trabzonspor',
+    'fc-midtjylland', 'midtjylland',
+    'fc-kobenhavn', 'kobenhavn',
+    'fk-bodo-glimt', 'bodo-glimt',
+    'malmo-ff', 'malmo',
+    'if-elfsborg', 'elfsborg',
+    'sk-rapid', 'rapid-wien', 'sk-rapid-wien',
+    'lask', 'lask-linz',
+    'fc-lugano', 'lugano',
+    'servette-fc', 'servette',
+    'fc-basel-1893', 'basel',
+    'legia-warszawa', 'legia',
+    'jagiellonia-bialystok', 'jagiellonia'
+  ]),
+
+  // Verifica se il club del giocatore partecipa alla UEFA Champions League
+  isClubInChampionsLeague(card) {
+    const clubSlug = String(card.clubSlug || '').toLowerCase().trim();
+    const clubComps = Array.isArray(card.activeClubCompetitions) ? card.activeClubCompetitions : [];
+
+    // Se il club non è il Celtic e ha partite ufficiali di Champions League in calendario/storico, è in UCL
+    if (clubSlug.includes('celtic')) return false;
+
+    const hasUclInSchedule = clubComps.some(c => c === 'uefa-champions-league' || c === 'champions-league');
+    if (hasUclInSchedule) return true;
+
+    const hasUelOrUeclInSchedule = clubComps.some(c =>
+      c === 'uefa-europa-league' || c === 'europa-league' ||
+      c === 'uefa-europa-conference-league' || c === 'uefa-conference-league' || c === 'conference-league'
+    );
+    if (hasUelOrUeclInSchedule) return false;
+
+    return this.UCL_QUALIFIED_CLUBS.has(clubSlug);
+  },
+
+  // Verifica se il club del giocatore partecipa a UEFA Europa League / Conference League
+  isClubInContenderEurope(card) {
+    const clubSlug = String(card.clubSlug || '').toLowerCase().trim();
+    const clubComps = Array.isArray(card.activeClubCompetitions) ? card.activeClubCompetitions : [];
+
+    // Regola ferrea: se il club fa la Champions League (es. Inter, Man United, Real Madrid, ecc.), NON PUÒ MAI entrare in Contender Europe!
+    if (this.isClubInChampionsLeague(card)) return false;
+
+    const hasUelOrUeclInSchedule = clubComps.some(c =>
+      c === 'uefa-europa-league' || c === 'europa-league' ||
+      c === 'uefa-europa-conference-league' || c === 'uefa-conference-league' || c === 'conference-league'
+    );
+    if (hasUelOrUeclInSchedule) return true;
+
+    return this.UEL_UECL_QUALIFIED_CLUBS.has(clubSlug);
+  },
 
   isCardEligibleForCompetition(card, competition, scarcity) {
     const compId = String(competition.id || '').toLowerCase();
-    const compName = String(competition.name || '').toLowerCase();
-    const cardLeague = String(card.leagueSlug || '').toLowerCase();
-    const clubSlug = String(card.clubSlug || '').toLowerCase();
-    const clubComps = Array.isArray(card.activeClubCompetitions) ? card.activeClubCompetitions : [cardLeague];
-    const targetScarcity = String(scarcity || 'limited').toLowerCase();
+    const canonicalCardLeague = this.normalizeLeagueSlug(card.leagueSlug);
 
     // 1) Under 23
     if (competition.u23Only || compId.includes('u23')) {
       return Boolean(card.isU23);
     }
 
-    // 2) All-Star
-    if (compId.includes('all_star') || compId.includes('all-star') || compName.includes('all-star')) {
+    // 2) All-Star (Bacino Universale)
+    if (compId.includes('all_star') || compId.includes('all-star')) {
       return true;
     }
 
-    // 3) CHAMPIONS EUROPE — UEFA Champions League (controllato PRIMA di qualsiasi altro "champion"!)
-    if (competition.isUefaChampions || compId === 'champions_europe_classic_so7' || compId.includes('ucl')) {
-      const hasUclInSchedule = clubComps.some(c => c.includes('champions-league') || c.includes('ucl'));
-      const isKnownUclClub = this.UCL_CLUB_EXACT_MATCHES.some(k => clubSlug === k || clubSlug.includes(k));
-      return hasUclInSchedule || isKnownUclClub;
+    // 3) CHAMPIONS EUROPE — UEFA Champions League (SO7)
+    if (competition.isUefaChampions || compId === 'champions_europe_classic_so7') {
+      return this.isClubInChampionsLeague(card);
     }
 
-    // 4) CONTENDER EUROPE — UEFA Europa League & Conference League (controllato PRIMA di "contender" domestico!)
-    if (competition.isUefaContender || compId === 'contender_europe_classic_so7' || compId.includes('uel')) {
-      const hasUelInSchedule = clubComps.some(c => c.includes('europa-league') || c.includes('conference-league'));
-      const isKnownUelClub = this.UEL_UECL_CLUB_EXACT_MATCHES.some(k => clubSlug === k || clubSlug.includes(k));
-      return hasUelInSchedule || isKnownUelClub;
+    // 4) CONTENDER EUROPE — UEFA Europa & Conference League (SO7)
+    if (competition.isUefaContender || compId === 'contender_europe_classic_so7') {
+      return this.isClubInContenderEurope(card);
     }
 
-    // 5) Contender Domestico (Austria, Croazia, 2. Bundesliga, Ligue 2)
-    if (compId === 'contender_in_season' || (compId.includes('contender') && !compId.includes('europe'))) {
-      const allowedContender = (targetScarcity === 'super_rare' || targetScarcity === 'unique')
-        ? [...this.CONTENDER_LEAGUES_BASE, ...this.CONTENDER_LEAGUES_HIGH_SCARCITY]
-        : this.CONTENDER_LEAGUES_BASE;
-      return allowedContender.some(l => cardLeague === l || cardLeague.includes(l));
-    }
-
-    // 6) Challenger Domestico
-    if (compId.includes('challenger')) {
-      return this.CHALLENGER_LEAGUES.some(l => cardLeague === l || cardLeague.includes(l));
-    }
-
-    // 7) Champion Europe Domestico (Top 5 Campionati)
+    // 5) Champion Europe — Classic (Top 5 Campionati: Premier, Serie A, LaLiga, Bundesliga Tedesca, Ligue 1)
+    // Qui Rapid Vienna (bundesliga-at) e 2. Bundesliga (2-bundesliga-de) vengono bloccati al 100%!
     if (compId === 'champion_europe_classic_so7' || compId === 'champion_europe') {
-      return this.CHAMPION_DOMESTIC_LEAGUES.some(l => cardLeague === l || cardLeague.includes(l));
+      return this.TOP_5_CANONICAL_LEAGUES.has(canonicalCardLeague);
     }
 
-    // 8) Singolo Campionato Nazionale specifico (Premier League, Serie A, LaLiga, Bundesliga, Ligue 1, EFL Championship, Liga Portugal, Eredivisie, JPL, Scottish, MLS, J1, K1)
+    // 6) Qualsiasi altro torneo (Singoli campionati nazionali, Contender, Challenger): confronto ESATTO (===) sugli slug normalizzati!
     if (Array.isArray(competition.leagues) && !competition.leagues.includes('ALL')) {
-      return competition.leagues.some(targetLeague => {
-        const tl = String(targetLeague).toLowerCase();
-        // Evita falsi positivi tra "bundesliga-de" e "2-bundesliga-de" o "bundesliga-at"!
-        if (tl === 'bundesliga' || tl === 'bundesliga-de') {
-          return (cardLeague === 'bundesliga' || cardLeague === 'bundesliga-de') && !cardLeague.includes('2-bundesliga') && !cardLeague.includes('at');
-        }
-        if (tl === 'ligue-1' || tl === 'ligue-1-fr') {
-          return (cardLeague === 'ligue-1' || cardLeague === 'ligue-1-fr') && !cardLeague.includes('ligue-2');
-        }
-        return cardLeague === tl || cardLeague.includes(tl);
-      });
+      const allowedCanonicalSet = new Set(
+        competition.leagues.map(l => this.normalizeLeagueSlug(l))
+      );
+      return allowedCanonicalSet.has(canonicalCardLeague);
     }
 
     return true;
@@ -138,11 +230,11 @@ const OptimizerEngine = {
       return Boolean(competition.allowNationalTeams || compId.includes('all_star') || compId.includes('u23'));
     }
 
-    if (competition.isUefaChampions || compId === 'champions_europe_classic_so7' || compId.includes('ucl')) {
+    if (competition.isUefaChampions || compId === 'champions_europe_classic_so7') {
       return gameCompSlug.includes('champions-league') || gameCompSlug.includes('ucl');
     }
 
-    if (competition.isUefaContender || compId === 'contender_europe_classic_so7' || compId.includes('uel')) {
+    if (competition.isUefaContender || compId === 'contender_europe_classic_so7') {
       return gameCompSlug.includes('europa-league') || gameCompSlug.includes('conference-league');
     }
 
@@ -287,12 +379,31 @@ const OptimizerEngine = {
         const isCap = p.id === captainId;
         const baseScore = p.projectedScore > 0 ? p.projectedScore : p.standbyScore;
         const finalScore = isCap ? Number((baseScore * 1.25).toFixed(1)) : baseScore;
+        const capBonusPts = isCap ? Number((finalScore - baseScore).toFixed(1)) : 0;
+
+        // Genera il Dossier Analitico Individuale completo (includendo il ruolo esatto nella formazione e se è Capitano)
+        const bespokeDossier = this.buildBespokeScoutingDossier(
+          p,
+          p.activeMatch,
+          String(strategy || '').toLowerCase() === 'ceiling',
+          manualOverrides[p.playerSlug] || null,
+          finalScore,
+          Boolean(p.activeMatch && p.activeMatch.isNationalTeam),
+          {
+            isCaptain: isCap,
+            capBonusPts: capBonusPts,
+            slotRole: p.slotRole,
+            rank: rank,
+            requiredInSeason: requiredInSeason
+          }
+        );
 
         return {
           ...p,
           isCaptain: isCap,
           isClubOnBreak: !p.activeMatch,
-          projectedScore: finalScore
+          projectedScore: finalScore,
+          matchupInsight: bespokeDossier
         };
       });
 
@@ -317,67 +428,99 @@ const OptimizerEngine = {
     return lineups;
   },
 
-  buildDetailedOptaInsight(card, activeMatch, isCeiling, manualStatus, lfIndex, isNationalMatch) {
-    const traits = card.tacticalTraits || {};
-    const roleMetrics = [];
+  // Dossier Analitico Individuale: costruisce un commento tecnico unico per ogni giocatore basato sui suoi match reali, trend L5-L15, rapporto AA/Decisive e ruolo nella formazione
+  buildBespokeScoutingDossier(card, activeMatch, isCeiling, manualStatus, finalProjScore, isNationalMatch, lineupContext = null) {
+    const stats = isNationalMatch && card.natStats?.playedCount > 0 ? card.natStats : (card.clubStats || {});
+    const logs = Array.isArray(stats.matchLogs) ? stats.matchLogs : [];
 
-    if (card.position === 'GK') {
-      roleMetrics.push(`🧤 Clean Sheet Club (L5): ${traits.cleanSheets || 0}/5`);
-      roleMetrics.push(`👐 Parate totali (L5): ${traits.saves || 0}`);
-      if (traits.shotStopper) roleMetrics.push('🛡️ Alto volume parate AA');
-    } else if (card.position === 'DEF') {
-      roleMetrics.push(`🧤 Clean Sheet Club (L5): ${traits.cleanSheets || 0}/5`);
-      if (traits.aerialDominator) roleMetrics.push('✈️ Dominatore aereo / Pericoloso sui corner a favore');
-      if (traits.defensiveWall) roleMetrics.push('🛡️ Muro difensivo (Contrasti/Intercetti/Respingimenti AA)');
-      if ((traits.goals || 0) + (traits.assists || 0) > 0) {
-        roleMetrics.push(`⚽ Bonus difensivi L5: ${traits.goals || 0}G / ${traits.assists || 0}A`);
-      }
-    } else if (card.position === 'MID') {
-      roleMetrics.push(`⚽ Bonus offensivi (L5): ${traits.goals || 0} Gol • ${traits.assists || 0} Assist`);
-      if (traits.playmakerCreator) roleMetrics.push('🎯 Regia & Passaggi Chiave (Alto indice AA)');
-      if (traits.boxToBoxEngine) roleMetrics.push('⚙️ Motore Box-to-Box (Recuperi + Possesso)');
-      if (traits.clinicalFinisher) roleMetrics.push('⚡ Inserimenti decisivi in zona bonus');
-    } else {
-      roleMetrics.push(`⚽ Produzione offensiva (L5): ${traits.goals || 0} Gol • ${traits.assists || 0} Assist`);
-      if (traits.clinicalFinisher) roleMetrics.push('⚡ Finalizzatore clinico (Alta conversione Decisive)');
-      if (traits.targetPenaltyBox) roleMetrics.push('🔥 Presenza dominante in area & Tiri nello specchio');
-      roleMetrics.push(`📈 Base All-Around offensiva: ${card.avgAas} pt`);
-    }
+    // 1. SEZIONE TITOLARITÀ & STRISCIA MINUTAGGIO REALE
+    const minsHistoryStr = logs.length > 0
+      ? logs.slice(0, 4).map(m => `${m.mins}'`).join(' → ')
+      : `${card.avgMins || 0}' medi`;
 
-    let statusLine = '';
+    let statusSection = '';
     if (manualStatus === 'bench') {
-      statusLine = '🪑 Segnalato IN PANCHINA (escluso dagli 11 titolari)';
+      statusSection = `🪑 STATO: Escluso manualmente (Panchina).`;
     } else if (manualStatus === 'xi') {
-      statusLine = '✅ Confermato nell\'11 TITOLARE UFFICIALE';
+      statusSection = `✅ STATO: Confermato nell'11 Titolare (${minsHistoryStr}).`;
     } else if (isNationalMatch) {
       const ns = card.natStats || {};
-      if (!card.isNationalCallupVerified || card.natFitnessTier === 'bench_nat') {
-        statusLine = `🚫 Non titolare / Non convocato in Nazionale (${ns.starterCount || 0} da titolare in Naz.)`;
-      } else if (card.natFitnessTier === 'starter') {
-        statusLine = `✅ Titolare verificato in Nazionale (${ns.starterCount}/${ns.totalEntries} dal 1' in Naz. • ${ns.avgMins}' medi)`;
+      if (card.natFitnessTier === 'starter') {
+        statusSection = `🌍 NAZIONALE: Titolare fisso (${ns.starterCount}/${ns.totalEntries} dal 1' • Minutaggio: ${minsHistoryStr}).`;
       } else {
-        statusLine = `⚠️ In rotazione in Nazionale (${ns.playedCount}/${ns.totalEntries} presenze in Naz.)`;
+        statusSection = `🌍 NAZIONALE: Impiego in rotazione (${ns.playedCount}/${ns.totalEntries} presenze • Minutaggio: ${minsHistoryStr}).`;
       }
     } else if (card.baseFitnessTier === 'starter') {
-      statusLine = `✅ Titolare fisso nel Club (${card.starterCount}/5 dal 1' • ${card.avgMins}' medi)`;
+      const starterPct = stats.totalEntries > 0 ? Math.round((stats.starterCount / stats.totalEntries) * 100) : 100;
+      statusSection = `✅ TITOLARITÀ (${starterPct}% dal 1'): Perno di ${card.club} (${stats.starterCount}/${stats.totalEntries || 5} da titolare • Minuti: ${minsHistoryStr}).`;
     } else {
-      statusLine = `⚠️ Rotazione nel Club (${card.playedCount}/5 presenze • ${card.avgMins}' medi)`;
+      statusSection = `⚠️ ROTAZIONE: Gestione minutaggio in ${card.club} (${stats.playedCount}/${stats.totalEntries || 5} presenze • Minuti: ${minsHistoryStr}).`;
     }
 
-    const matchContext = activeMatch
-      ? (activeMatch.isNationalTeam
-        ? `🌍 Match Nazionale: ${activeMatch.teamName} (${activeMatch.competitionName})${activeMatch.alreadyPlayedScore !== null ? ` • Già giocata: ${activeMatch.alreadyPlayedScore} pt` : ''}.`
-        : `${activeMatch.isHome ? '🏠 In casa' : '✈️ In trasferta'} vs ${activeMatch.opponentName} (${activeMatch.competitionName})${activeMatch.alreadyPlayedScore !== null ? ` • Già giocata: ${activeMatch.alreadyPlayedScore} pt` : ''}.`)
-      : `⏸️ Sosta Club in questa GW (proiezione basata sul rendimento Club: ${lfIndex} pt).`;
+    // 2. CRONOLOGIA REALE DEGLI ULTIMI MATCH (Avversario, Voto, Minuti e Bonus)
+    let recentLogSection = '';
+    if (logs.length > 0) {
+      const formattedLogs = logs.slice(0, 3).map(m => {
+        const bonusTags = [];
+        if (m.goals > 0) bonusTags.push(`${m.goals}G`);
+        if (m.assists > 0) bonusTags.push(`${m.assists}A`);
+        if (card.position === 'GK' && m.cleanSheet > 0) bonusTags.push('CS');
+        if (card.position === 'GK' && m.saves >= 4) bonusTags.push(`${m.saves} par.`);
+        const bonusStr = bonusTags.length > 0 ? `, ${bonusTags.join('+')}` : '';
+        return `vs ${m.opponent}: ${m.score} pt (${m.mins}'${bonusStr})`;
+      }).join(' • ');
+      recentLogSection = `🗓️ ULTIME GARE: ${formattedLogs}.`;
+    } else {
+      recentLogSection = `🗓️ STORICO: Media L15 ${card.l15} pt • L5 ${card.l5} pt.`;
+    }
 
-    const optaBreakdown = `📊 LineupForge Metriche: L15 ${card.l15} • L5 ${card.l5} • AA ${card.avgAas} pt • Decisive ${card.avgDecisive} pt • Range [${card.minRecentScore}–${card.maxRecentScore}] (σ=${card.stdDev}).`;
-    const roleSpecificLine = `🔍 Lettura Ruolo (${card.position}): ${roleMetrics.join(' • ')}.`;
+    // 3. DNA TATTICO, COMPOSIZIONE DEL VOTO (AA vs DECISIVE) & TREND DI FORMA (L5 vs L15)
+    const totalAvg = (card.avgAas + card.avgDecisive) > 0 ? (card.avgAas + card.avgDecisive) : (card.l5 || 45);
+    const aaSharePct = Math.min(100, Math.round((card.avgAas / totalAvg) * 100));
+    const formDelta = Number((card.l5 - card.l15).toFixed(1));
+    const formTrendStr = formDelta >= 4.5
+      ? `in forte crescita (+${formDelta} pt sulla L15 di ${card.l15})`
+      : (formDelta <= -4.5
+        ? `in flessione (${formDelta} pt rispetto alla L15 di ${card.l15})`
+        : `estremamente regolare (L5 ${card.l5} vs L15 ${card.l15})`);
 
-    const strategyNote = isCeiling
-      ? `🚀 Indice Ceiling (${lfIndex} pt): valorizza picco recente (${card.maxRecentScore} max) + bonus carta +${card.bonusPct}%.`
-      : `🛡️ Indice Floor (${lfIndex} pt): valorizza continuità di minutaggio, base AA (${card.avgAas}) e bassa varianza.`;
+    let tacticalDnaSection = '';
+    if (card.position === 'GK') {
+      tacticalDnaSection = `🧤 PROFILO PORTIERE: Rendimento ${formTrendStr}. Nelle ultime ${stats.playedCount || 5} gare ha registrato ${stats.cleanSheets || 0} Clean Sheet e ${stats.saves || 0} parate complessive (base AA ${card.avgAas} pt, picco a ${card.maxRecentScore} pt).`;
+    } else if (aaSharePct >= 58 && card.avgAas >= 20) {
+      tacticalDnaSection = `🧬 DNA TATTICO (Pavimento Solido - ${aaSharePct}% AA): Giocatore ${formTrendStr}. Genera ${card.avgAas} pt medi di pura attività di gioco (passaggi chiave, possessi vinti e duelli), garantendo voti alti anche senza bisogno di gol o assist.`;
+    } else if (card.avgDecisive >= 22 || (stats.goals + stats.assists) >= 2) {
+      tacticalDnaSection = `⚡ DNA TATTICO (Finalizzatore da Bonus): Forma ${formTrendStr}. Ha prodotto ${stats.goals || 0} gol e ${stats.assists || 0} assist nelle ultime ${stats.playedCount || 5} uscite (${card.avgDecisive} pt Decisive medi + ${card.avgAas} pt AA, picco di ${card.maxRecentScore} pt).`;
+    } else {
+      tacticalDnaSection = `📊 DNA TATTICO (Equilibrato): Rendimento ${formTrendStr} con ${card.avgAas} pt di base All-Around e ${card.avgDecisive} pt da giocate decisive (oscillazione voti [${card.minRecentScore}–${card.maxRecentScore}], σ=${card.stdDev}).`;
+    }
 
-    return `${statusLine}\n${matchContext}\n${optaBreakdown}\n${roleSpecificLine}\n${strategyNote}`;
+    // 4. LETTURA SPECIFICA DEL MATCHUP IN QUESTA GW
+    let matchupSection = '';
+    if (!activeMatch) {
+      matchupSection = `⏸️ CALENDARIO GW: Nessuna gara in programma per ${card.club} in questa finestra (valutazione di riserva: ${finalProjScore} pt).`;
+    } else {
+      const venueStr = activeMatch.isHome ? 'in casa (+4% fattore campo)' : 'in trasferta';
+      const playedNote = activeMatch.alreadyPlayedScore !== null ? ` [Gara già disputata: ${activeMatch.alreadyPlayedScore} pt]` : '';
+      matchupSection = `🏟️ MATCHUP GW: Impegno ${venueStr} contro ${activeMatch.opponentName} (${activeMatch.competitionName})${playedNote}.`;
+    }
+
+    // 5. RUOLO STRATEGICO NELLA FORMAZIONE E SCELTA SLOT
+    let roleInTeamSection = '';
+    if (lineupContext) {
+      const cardTypeTag = card.isInSeason ? `Carta In-Season 26/27 (+${card.bonusPct}% bonus)` : `Slot Classic (+${card.bonusPct}% bonus)`;
+      if (lineupContext.isCaptain) {
+        roleInTeamSection = `👑 RUOLO IN SQUADRA #${lineupContext.rank}: Scelto come CAPITANO (+${lineupContext.capBonusPts} pt extra) per massimizzare la proiezione di ${finalProjScore} pt (${cardTypeTag}).`;
+      } else if (lineupContext.slotRole === 'EXTRA') {
+        roleInTeamSection = `🎯 RUOLO IN SQUADRA #${lineupContext.rank}: Schierato nello slot EXTRA (${cardTypeTag}) con proiezione ${finalProjScore} pt in assetto ${isCeiling ? 'Ceiling (ricerca del picco)' : 'Floor (massima affidabilità)'}.`;
+      } else {
+        roleInTeamSection = `🎯 RUOLO IN SQUADRA #${lineupContext.rank}: Titolare slot ${lineupContext.slotRole} (${cardTypeTag}) • Proiezione attesa: ${finalProjScore} pt.`;
+      }
+    }
+
+    return [statusSection, recentLogSection, tacticalDnaSection, matchupSection, roleInTeamSection]
+      .filter(Boolean)
+      .join('\n');
   },
 
   evaluateCardForGw(card, selectedGw, strategy, competition, manualStatus = null) {
@@ -396,12 +539,12 @@ const OptimizerEngine = {
     const baseL5 = card.l5 > 0 ? card.l5 : baseL15;
     const isCeiling = String(strategy || '').toLowerCase() === 'ceiling';
 
-    let lfBaseProjection = 0;
+    let baseProjection = 0;
     if (card.position === 'GK') {
       const gkForm = (baseL15 * 0.58) + (baseL5 * 0.42);
       const csBonus = (card.tacticalTraits?.cleanSheets || 0) * 1.4;
       const savesBonus = Math.min(4, (card.tacticalTraits?.saves || 0) * 0.25);
-      lfBaseProjection = Math.min(72, Math.max(32, gkForm + csBonus + savesBonus));
+      baseProjection = Math.min(72, Math.max(32, gkForm + csBonus + savesBonus));
     } else {
       const minutesFactor = card.avgMins >= 82
         ? 1.03
@@ -409,19 +552,19 @@ const OptimizerEngine = {
 
       if (isCeiling) {
         const peakRef = card.maxRecentScore > 0 ? Math.min(90, card.maxRecentScore) : baseL5;
-        lfBaseProjection = ((baseL5 * 0.45) + (baseL15 * 0.35) + (peakRef * 0.20)) * minutesFactor;
+        baseProjection = ((baseL5 * 0.45) + (baseL15 * 0.35) + (peakRef * 0.20)) * minutesFactor;
       } else {
         const aaStabilityBonus = Math.min(8, (card.avgAas || 15) * 0.22);
         const volatilityPenalty = Math.min(5, (card.stdDev || 0) * 0.12);
-        lfBaseProjection = ((baseL15 * 0.55) + (baseL5 * 0.45) + aaStabilityBonus - volatilityPenalty) * minutesFactor;
+        baseProjection = ((baseL15 * 0.55) + (baseL5 * 0.45) + aaStabilityBonus - volatilityPenalty) * minutesFactor;
       }
-      lfBaseProjection = Math.min(78, Math.max(22, lfBaseProjection));
+      baseProjection = Math.min(78, Math.max(22, baseProjection));
     }
 
-    const standbyScore = Number(Math.max(18, lfBaseProjection * (card.powerMultiplier || 1)).toFixed(1));
+    const standbyScore = Number(Math.max(18, baseProjection * (card.powerMultiplier || 1)).toFixed(1));
 
     if (!activeMatch || card.isInjuredOrSuspended) {
-      const detailedInsight = this.buildDetailedOptaInsight(card, null, isCeiling, manualStatus, standbyScore, false);
+      const detailedInsight = this.buildBespokeScoutingDossier(card, null, isCeiling, manualStatus, standbyScore, false, null);
       return {
         ...card,
         activeMatch: null,
@@ -447,7 +590,7 @@ const OptimizerEngine = {
     const isUnverifiedOrBenchNat = isNationalMatch && (!card.isNationalCallupVerified || card.natFitnessTier === 'bench_nat') && manualStatus !== 'xi';
 
     if (alreadyDnpInThisGw || isUnverifiedOrBenchNat) {
-      const detailedInsight = this.buildDetailedOptaInsight(card, activeMatch, isCeiling, manualStatus, 0, isNationalMatch);
+      const detailedInsight = this.buildBespokeScoutingDossier(card, activeMatch, isCeiling, manualStatus, 0, isNationalMatch, null);
       return {
         ...card,
         activeMatch: activeMatch,
@@ -468,7 +611,7 @@ const OptimizerEngine = {
     }
 
     const homeAwayMultiplier = activeMatch.isHome === true ? 1.04 : 0.985;
-    let adjustedProjection = lfBaseProjection * homeAwayMultiplier;
+    let adjustedProjection = baseProjection * homeAwayMultiplier;
 
     if (isNationalMatch && card.natFitnessTier === 'rotation' && manualStatus !== 'xi') {
       adjustedProjection *= 0.84;
@@ -476,7 +619,7 @@ const OptimizerEngine = {
 
     if (manualStatus === 'bench') {
       const benchScore = Number(Math.max(12, adjustedProjection * 0.45 * (card.powerMultiplier || 1)).toFixed(1));
-      const detailedInsight = this.buildDetailedOptaInsight(card, activeMatch, isCeiling, 'bench', benchScore, isNationalMatch);
+      const detailedInsight = this.buildBespokeScoutingDossier(card, activeMatch, isCeiling, 'bench', benchScore, isNationalMatch, null);
       return {
         ...card,
         activeMatch: activeMatch,
@@ -497,7 +640,7 @@ const OptimizerEngine = {
     const effectiveTier = isNationalMatch ? card.natFitnessTier : card.baseFitnessTier;
     const priorityTier = (manualStatus === 'xi' || effectiveTier === 'starter') ? 3 : 2;
     const projectedScore = Number(Math.max(18, adjustedProjection * (card.powerMultiplier || 1)).toFixed(1));
-    const detailedInsight = this.buildDetailedOptaInsight(card, activeMatch, isCeiling, manualStatus, projectedScore, isNationalMatch);
+    const detailedInsight = this.buildBespokeScoutingDossier(card, activeMatch, isCeiling, manualStatus, projectedScore, isNationalMatch, null);
 
     return {
       ...card,
