@@ -1,8 +1,9 @@
-// SorareHub - Application Controller (Full Multi-line Opta Tooltips + XI/Bench Instant Toggle + Strict In-Season)
+// SorareHub - Application Controller (Tactical HUD Replacement for Duplicate Boxes + Club Stack Filter + LineupForge UI)
 const App = {
   cards: [],
   gameweeks: [],
   selectedGwIndex: 0,
+  selectedClubSlug: 'ALL',
   manualOverrides: {}, // { [playerSlug]: 'xi' | 'bench' }
   user: null,
   currentScarcity: 'limited',
@@ -60,74 +61,121 @@ const App = {
     }
   },
 
+  // Aggiorna i 4 box KPI in alto E trasforma i 2 box neri ripetitivi ("383" e "Connesso • @XT_matty") in una Plancia Tattica Live utilissima
   updateGalleryCounters(lineupsCount = 0) {
     const total = this.cards.length;
     const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+    const compId = String(this.currentCompetition?.id || '').toLowerCase();
+    const allowNat = compId.includes('all_star') || compId.includes('all-star');
 
     let confirmedXiCount = 0;
+    const roleActiveCounts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
     const seenSlugs = new Set();
+
     this.cards.forEach(c => {
-      if (seenSlugs.has(c.playerSlug)) return;
+      if (c.isInjuredOrSuspended) return;
       if (this.manualOverrides[c.playerSlug] === 'bench') return;
 
       const games = Array.isArray(c.scheduleGames) ? c.scheduleGames : [];
+      const validGames = allowNat ? games : games.filter(g => !g.isNationalTeam);
       let hasGwGame = false;
+
       if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
         const s = new Date(selectedGw.startDate).getTime();
         const e = new Date(selectedGw.endDate).getTime();
-        hasGwGame = games.some(g => g.timestamp >= s && g.timestamp <= e);
-      } else {
-        hasGwGame = games.length > 0;
+        hasGwGame = validGames.some(g => g.timestamp >= s && g.timestamp <= e);
       }
-      if (hasGwGame && (this.manualOverrides[c.playerSlug] === 'xi' || c.baseFitnessTier !== 'last_resort')) {
-        seenSlugs.add(c.playerSlug);
-        confirmedXiCount++;
-      }
-    });
 
-    const idMap = {
-      'gallery-count': total,
-      'total-cards': total,
-      'cards-count': total,
-      'card-count': total,
-      'stat-total-cards': total,
-      'in-season-count': inSeasonTotal,
-      'stat-in-season': inSeasonTotal,
-      'confirmed-xi-count': confirmedXiCount,
-      'titolari-count': confirmedXiCount,
-      'stat-xi': confirmedXiCount,
-      'lineups-count': lineupsCount,
-      'stat-lineups': lineupsCount,
-      'teams-count': lineupsCount
-    };
-
-    Object.entries(idMap).forEach(([id, val]) => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = String(val);
-    });
-
-    const allElements = document.querySelectorAll('div, section, article, li');
-    allElements.forEach(el => {
-      if (el.children.length < 2 || el.children.length > 6) return;
-      const firstChildText = (el.children[0]?.textContent || '').trim().toUpperCase();
-      const valueChild = el.children[1];
-      const subChild = el.children[2];
-      if (!valueChild) return;
-
-      if (firstChildText.includes('CARTE IN GALLERIA')) {
-        valueChild.textContent = String(total);
-        if (subChild && this.user?.nickname) {
-          subChild.textContent = `Connesso • @${this.user.nickname}`;
+      if (hasGwGame && c.scarcity === this.currentScarcity && OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)) {
+        if (!seenSlugs.has(c.playerSlug)) {
+          seenSlugs.add(c.playerSlug);
+          if (c.baseFitnessTier !== 'last_resort') confirmedXiCount++;
+          if (roleActiveCounts[c.position] !== undefined) {
+            roleActiveCounts[c.position]++;
+          }
         }
-      } else if (firstChildText.includes('CARTE IN-SEASON')) {
-        valueChild.textContent = String(inSeasonTotal);
-      } else if (firstChildText.includes('CONFIRMED XI') || firstChildText.includes('TITOLARI')) {
-        valueChild.textContent = String(confirmedXiCount);
-      } else if (firstChildText.includes('SQUADRE GENERATE')) {
-        valueChild.textContent = String(lineupsCount);
       }
     });
+
+    // 1) Aggiorna SOLO i 4 box KPI principali che hanno l'intestazione esatta in children[0]
+    const allContainers = document.querySelectorAll('div, section, article');
+    allContainers.forEach(el => {
+      if (el.children.length === 3) {
+        const label = (el.children[0]?.textContent || '').trim().toUpperCase();
+        const valEl = el.children[1];
+        const subEl = el.children[2];
+
+        if (label === 'CARTE IN GALLERIA') {
+          valEl.textContent = String(total);
+          if (subEl) subEl.textContent = this.user?.nickname ? `Sincronizzato • @${this.user.nickname}` : 'Galleria Pro Attiva';
+        } else if (label === 'CARTE IN-SEASON') {
+          valEl.textContent = String(inSeasonTotal);
+          if (subEl) subEl.textContent = `26/27 pronte (${this.currentScarcity.toUpperCase()})`;
+        } else if (label.includes('CONFIRMED XI') || label.includes('TITOLARI')) {
+          valEl.textContent = String(confirmedXiCount);
+          if (subEl) subEl.textContent = `Con match in ${selectedGw?.label?.split(' ')[0] || 'GW'}`;
+        } else if (label === 'SQUADRE GENERATE') {
+          valEl.textContent = String(lineupsCount);
+          if (subEl) subEl.textContent = `Zero-DNP • ${this.currentStrategy.toUpperCase()}`;
+        }
+      }
+    });
+
+    // 2) Individua i due box secondari che mostravano solo "383" e "Connesso • @XT_matty" (o che hanno 2 box affiancati sotto la barra) e li trasforma in 2 widget tattici utili
+    this.upgradeSecondaryInfoBoxes(selectedGw, roleActiveCounts);
+  },
+
+  upgradeSecondaryInfoBoxes(selectedGw, roleActiveCounts) {
+    const rarityCards = this.cards.filter(c =>
+      c.scarcity === this.currentScarcity &&
+      !c.isInjuredOrSuspended &&
+      OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)
+    );
+    const isCount = rarityCards.filter(c => c.isInSeason).length;
+    const classicCount = rarityCards.length - isCount;
+    const injuredCount = this.cards.filter(c => c.scarcity === this.currentScarcity && c.isInjuredOrSuspended).length;
+
+    // Cerca i box che contengono solo il numero 383 o "Connesso • @" o che sono stati già marcati come HUD
+    const candidates = Array.from(document.querySelectorAll('div')).filter(el => {
+      if (el.dataset.sorarehubHud === 'left' || el.dataset.sorarehubHud === 'right') return true;
+      if (el.children.length > 2) return false;
+      const txt = (el.textContent || '').trim();
+      return txt === String(this.cards.length) || txt.startsWith('Connesso • @') || txt === 'Non connesso';
+    });
+
+    if (candidates.length >= 2) {
+      const leftBox = candidates[0];
+      const rightBox = candidates[1];
+      leftBox.dataset.sorarehubHud = 'left';
+      rightBox.dataset.sorarehubHud = 'right';
+
+      leftBox.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:11px;font-weight:800;color:#f3d266;text-transform:uppercase;letter-spacing:0.5px;">
+              📡 Radar Partite ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
+            </div>
+            <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
+              Giocatori con match in GW: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
+            </div>
+          </div>
+        </div>
+      `;
+
+      rightBox.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:11px;font-weight:800;color:#64b5f6;text-transform:uppercase;letter-spacing:0.5px;">
+              🃏 Bilanciamento Rosa ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})
+            </div>
+            <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
+              <strong>${isCount} In-Season (26/27)</strong> • <strong>${classicCount} Classic</strong> • <span style="color:#ff8a95;">🚑 ${injuredCount} Out/Infortunati esclusi</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
   },
 
   injectTacticalStyles() {
@@ -173,9 +221,9 @@ const App = {
         align-items: stretch !important;
       }
       .sh-lineup-card, .lineup-card {
-        flex: 0 0 385px !important;
-        min-width: 365px !important;
-        max-width: 410px !important;
+        flex: 0 0 390px !important;
+        min-width: 370px !important;
+        max-width: 415px !important;
         background: #141519 !important;
         border: 1px solid rgba(212, 175, 55, 0.42) !important;
         border-radius: 14px !important;
@@ -278,8 +326,8 @@ const App = {
         position: absolute;
         left: 0;
         top: calc(100% + 6px);
-        width: 295px;
-        max-width: 82vw;
+        width: 315px;
+        max-width: 84vw;
         background: #0e0f12;
         border: 1px solid #d4af37;
         border-radius: 9px;
@@ -290,10 +338,17 @@ const App = {
         line-height: 1.5;
         z-index: 9999;
         white-space: pre-line;
-        box-shadow: 0 12px 28px rgba(0,0,0,0.85);
+        box-shadow: 0 12px 28px rgba(0,0,0,0.9);
       }
       .player-info-trigger:hover .tactical-tooltip-box,
       .player-info-trigger.active .tactical-tooltip-box { display: block; }
+      .sh-controls-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+      }
       .gw-selector-pill {
         display: inline-flex;
         align-items: center;
@@ -301,8 +356,7 @@ const App = {
         background: rgba(212, 175, 55, 0.12);
         border: 1px solid rgba(212, 175, 55, 0.45);
         border-radius: 8px;
-        padding: 5px 10px;
-        margin-top: 8px;
+        padding: 6px 11px;
         color: #f3d266;
         font-size: 12px;
         font-weight: 600;
@@ -312,7 +366,7 @@ const App = {
         color: #f3d266;
         border: 1px solid rgba(212, 175, 55, 0.4);
         border-radius: 5px;
-        padding: 3px 6px;
+        padding: 4px 7px;
         font-size: 12px;
         font-weight: 700;
       }
@@ -325,7 +379,7 @@ const App = {
       document.getElementById('comp-select') ||
       document.getElementById('competition-select') ||
       document.getElementById('tournament-select') ||
-      Array.from(document.querySelectorAll('select')).find(s => s.id !== 'gw-select')
+      Array.from(document.querySelectorAll('select')).find(s => s.id !== 'gw-select' && s.id !== 'club-stack-select')
     );
   },
 
@@ -349,7 +403,8 @@ const App = {
     }
   },
 
-  renderGwSelector() {
+  // Renderizza sia il Selettore GW ufficiale Sorare sia il filtro "🏟️ Stack Squadra" (es. SL Benfica)
+  renderGwAndClubSelectors() {
     if (!this.gameweeks || this.gameweeks.length === 0) return;
 
     let container = document.getElementById('gw-selector-container');
@@ -359,23 +414,55 @@ const App = {
       if (!targetParent) return;
       container = document.createElement('div');
       container.id = 'gw-selector-container';
-      container.className = 'gw-selector-pill';
+      container.className = 'sh-controls-bar';
       targetParent.appendChild(container);
     }
 
-    const optionsHtml = this.gameweeks
+    const gwOptionsHtml = this.gameweeks
       .map((gw, idx) => `<option value="${idx}" ${idx === this.selectedGwIndex ? 'selected' : ''}>${gw.label} • ${gw.dateRangeText}</option>`)
       .join('');
 
+    const availableClubs = OptimizerEngine.getAvailableClubsForCompetition(
+      this.cards,
+      this.currentCompetition,
+      this.currentScarcity
+    );
+
+    if (this.selectedClubSlug !== 'ALL' && !availableClubs.some(cl => cl.slug === this.selectedClubSlug)) {
+      this.selectedClubSlug = 'ALL';
+    }
+
+    const clubOptionsHtml = [
+      `<option value="ALL" ${this.selectedClubSlug === 'ALL' ? 'selected' : ''}>Tutte le squadre (Misto)</option>`,
+      ...availableClubs.map(cl => {
+        const fullTag = cl.roles.size >= 4 ? '★ Stack Completo' : `${cl.roles.size}/4 ruoli`;
+        return `<option value="${this.escapeHtml(cl.slug)}" ${cl.slug === this.selectedClubSlug ? 'selected' : ''}>${this.escapeHtml(cl.name)} (${cl.count} carte • ${fullTag})</option>`;
+      })
+    ].join('');
+
     container.innerHTML = `
-      <span>📅 Calendario Sorare:</span>
-      <select id="gw-select">${optionsHtml}</select>
+      <div class="gw-selector-pill">
+        <span>📅 GW Sorare:</span>
+        <select id="gw-select">${gwOptionsHtml}</select>
+      </div>
+      <div class="gw-selector-pill">
+        <span>🏟️ Stack Squadra:</span>
+        <select id="club-stack-select">${clubOptionsHtml}</select>
+      </div>
     `;
 
     const gwSelect = document.getElementById('gw-select');
     if (gwSelect) {
       gwSelect.addEventListener('change', (e) => {
         this.selectedGwIndex = Number(e.target.value) || 0;
+        this.runOptimizer();
+      });
+    }
+
+    const clubSelect = document.getElementById('club-stack-select');
+    if (clubSelect) {
+      clubSelect.addEventListener('change', (e) => {
+        this.selectedClubSlug = e.target.value || 'ALL';
         this.runOptimizer();
       });
     }
@@ -406,7 +493,7 @@ const App = {
         }
 
         this.syncStateFromDOM();
-        this.renderGwSelector();
+        this.renderGwAndClubSelectors();
         this.runOptimizer();
       }
     } catch (err) {
@@ -439,6 +526,8 @@ const App = {
         const found = CONFIG.OFFICIAL_COMPETITIONS.find(c => c.id === e.target.value);
         if (found) {
           this.currentCompetition = found;
+          this.selectedClubSlug = 'ALL';
+          this.renderGwAndClubSelectors();
           this.runOptimizer();
         }
       });
@@ -454,6 +543,8 @@ const App = {
         }
         target.classList.add('active');
         this.currentScarcity = val;
+        this.selectedClubSlug = 'ALL';
+        this.renderGwAndClubSelectors();
         this.runOptimizer();
       });
     });
@@ -545,6 +636,7 @@ const App = {
     }
 
     this.syncStateFromDOM();
+    this.renderGwAndClubSelectors();
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
 
     const lineups = window.OptimizerEngine
@@ -554,7 +646,8 @@ const App = {
           this.currentScarcity,
           this.currentStrategy,
           selectedGw,
-          this.manualOverrides
+          this.manualOverrides,
+          this.selectedClubSlug
         )
       : [];
 
@@ -581,20 +674,19 @@ const App = {
     }
 
     const gwInfoStr = selectedGw ? ` • ${selectedGw.label} (${selectedGw.dateRangeText})` : '';
-    const rarityCards = this.cards.filter(c => c.scarcity === this.currentScarcity.toLowerCase());
-    const inSeasonInRarity = rarityCards.filter(c => c.isInSeason).length;
+    const isStack = this.selectedClubSlug && this.selectedClubSlug !== 'ALL';
 
     if (!lineups || lineups.length === 0) {
-      const reqNote = this.currentCompetition.inSeasonRequired > 0
-        ? `richiede almeno ${this.currentCompetition.inSeasonRequired}/5 carte In-Season 26/27 della lega`
-        : `nessuna rosa completa disponibile in questa lega/rarità`;
-      const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — ${reqNote}.`;
+      const reason = isStack
+        ? `Non hai tutti i ruoli necessari (o 4/5 In-Season) per completare lo stack di questo singolo club.`
+        : `Nessuna formazione completa con tutti i giocatori (incluso GK) dotati di partita reale in ${selectedGw?.label || 'questa GW'} e requisito ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season.`;
+      const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — ${reason}`;
       this.notify(msg, true);
       targetGrid.innerHTML = `<div class="sh-lineup-card"><p>${msg}</p></div>`;
       return;
     }
 
-    this.notify(`✅ Generate ${lineups.length} formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} • In-Season totali: ${inSeasonInRarity}`);
+    this.notify(`✅ Generate ${lineups.length} formazioni LineupForge per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
 
     targetGrid.innerHTML = lineups.map(lineup => {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
@@ -606,11 +698,11 @@ const App = {
           : '<span class="sh-season-badge classic">CLASSIC</span>';
 
         const isNat = p.activeMatch?.isNationalTeam === true;
-        let matchLine = '⏸️ Sosta Club in questa GW';
+        let matchLine = '⏸️ Nessun match in GW';
         if (isNat) {
           matchLine = `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`;
         } else if (p.activeMatch) {
-          matchLine = `${p.activeMatch.isHome === true ? '🏠' : '✈️'} vs ${this.escapeHtml(p.activeMatch.opponentName)}`;
+          matchLine = `${p.activeMatch.isHome === true ? '🏠' : '✈️'} vs ${this.escapeHtml(p.activeMatch.opponentName)} (${this.escapeHtml(p.activeMatch.competitionName)})`;
         }
 
         const isBenched = this.manualOverrides[p.playerSlug] === 'bench';
@@ -628,11 +720,11 @@ const App = {
                   <span class="tactical-tooltip-box">${this.escapeHtml(p.matchupInsight || '')}</span>
                 </span>
               </div>
-              <div class="sh-sub">${this.escapeHtml(p.club)} • ${matchLine} • L15: ${p.l15} • L5: ${p.l5}</div>
+              <div class="sh-sub">${this.escapeHtml(p.club)} • ${matchLine} • L15: ${p.l15} • AA: ${p.avgAas}</div>
             </div>
             <div class="sh-right">
               <div class="sh-pts">${p.projectedScore} pt</div>
-              ${p.activeMatch ? `<button type="button" class="${benchBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Segna in panchina se non è nell'11 ufficiale">${benchBtnLabel}</button>` : ''}
+              ${p.activeMatch ? `<button type="button" class="${benchBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Segna in panchina se non parte nell'11 titolare">${benchBtnLabel}</button>` : ''}
             </div>
           </div>
         `;
@@ -643,7 +735,7 @@ const App = {
           <div>
             <div class="sh-card-head">
               <div>
-                <div class="sh-rank">${lineup.rankLabel}</div>
+                <div class="sh-rank">${this.escapeHtml(lineup.rankLabel)}</div>
                 <div class="sh-comp">${this.currentCompetition.name} (${lineup.format} • ${lineup.inSeasonCount} In-Season)</div>
               </div>
               <div class="sh-score">${lineup.totalProjected} pt</div>
