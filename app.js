@@ -1,10 +1,10 @@
-// SorareHub - Application Controller (Bespoke Player Dossier UI + Confirmed XI Controls)
+// SorareHub - Application Controller (Double Match Badge + Dynamic Opponent Form UI)
 const App = {
   cards: [],
   gameweeks: [],
   selectedGwIndex: 0,
   selectedClubSlug: 'ALL',
-  manualOverrides: {}, // { [playerSlug]: 'xi' | 'bench' }
+  manualOverrides: {},
   user: null,
   currentScarcity: 'limited',
   currentStrategy: 'floor',
@@ -79,23 +79,17 @@ const App = {
 
       const games = Array.isArray(c.scheduleGames) ? c.scheduleGames : [];
       const validGames = games.filter(g => OptimizerEngine.isGameValidForCompetition(g, c, this.currentCompetition));
-      let activeMatch = null;
+      let gwMatches = [];
 
       if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
         const s = new Date(selectedGw.startDate).getTime();
         const e = new Date(selectedGw.endDate).getTime();
-        activeMatch = validGames.find(g => g.timestamp >= s && g.timestamp <= e) || null;
+        gwMatches = validGames.filter(g => g.timestamp >= s && g.timestamp <= e);
       }
 
-      if (activeMatch) {
-        const isDnpZero = activeMatch.alreadyPlayedScore === 0 && (activeMatch.alreadyPlayedMins === 0 || activeMatch.alreadyPlayedMins === null);
-        const isNatBench = activeMatch.isNationalTeam && (!c.isNationalCallupVerified || c.natFitnessTier === 'bench_nat') && this.manualOverrides[c.playerSlug] !== 'xi';
-        if (isDnpZero || isNatBench) activeMatch = null;
-      }
-
-      if (activeMatch && !seenSlugs.has(c.playerSlug)) {
+      if (gwMatches.length > 0 && !seenSlugs.has(c.playerSlug)) {
         seenSlugs.add(c.playerSlug);
-        if (c.baseFitnessTier !== 'last_resort') confirmedXiCount++;
+        confirmedXiCount++;
         if (roleActiveCounts[c.position] !== undefined) {
           roleActiveCounts[c.position]++;
         }
@@ -117,7 +111,7 @@ const App = {
           if (subEl) subEl.textContent = `26/27 pronte (${this.currentScarcity.toUpperCase()})`;
         } else if (label.includes('CONFIRMED XI') || label.includes('TITOLARI')) {
           valEl.textContent = String(confirmedXiCount);
-          if (subEl) subEl.textContent = `Titolari attivi in ${selectedGw?.label?.split(' ')[0] || 'GW'}`;
+          if (subEl) subEl.textContent = `Con match in ${selectedGw?.label?.split(' ')[0] || 'GW'}`;
         } else if (label === 'SQUADRE GENERATE') {
           valEl.textContent = String(lineupsCount);
           if (subEl) subEl.textContent = `SorareHub Engine • ${this.currentStrategy.toUpperCase()}`;
@@ -155,10 +149,10 @@ const App = {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <div>
             <div style="font-size:11px;font-weight:800;color:#f3d266;text-transform:uppercase;letter-spacing:0.5px;">
-              📡 Radar Titolari ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
+              📡 Radar Giocatori con Match in ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
             </div>
             <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
-              Con partita valida nel torneo: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
+              Schierabili nel torneo: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
             </div>
           </div>
         </div>
@@ -222,9 +216,9 @@ const App = {
         align-items: stretch !important;
       }
       .sh-lineup-card, .lineup-card {
-        flex: 0 0 395px !important;
-        min-width: 375px !important;
-        max-width: 420px !important;
+        flex: 0 0 400px !important;
+        min-width: 380px !important;
+        max-width: 425px !important;
         background: #141519 !important;
         border: 1px solid rgba(212, 175, 55, 0.42) !important;
         border-radius: 14px !important;
@@ -310,6 +304,11 @@ const App = {
       }
       .sh-season-badge.in-season { background: rgba(212, 175, 55, 0.25); color: #f3d266; border: 1px solid rgba(212, 175, 55, 0.5); }
       .sh-season-badge.classic { background: rgba(255, 255, 255, 0.08); color: #9aa0a6; }
+      .sh-season-badge.double-gw {
+        background: rgba(255, 87, 34, 0.25);
+        color: #ffab91;
+        border: 1px solid rgba(255, 87, 34, 0.65);
+      }
       .player-info-trigger {
         display: inline-flex;
         align-items: center;
@@ -331,7 +330,7 @@ const App = {
         position: absolute;
         left: 0;
         top: calc(100% + 6px);
-        width: 350px;
+        width: 360px;
         max-width: 86vw;
         background: #0d0e12;
         border: 1px solid #d4af37;
@@ -818,13 +817,25 @@ const App = {
         const seasonTag = p.isInSeason
           ? '<span class="sh-season-badge in-season">26/27</span>'
           : '<span class="sh-season-badge classic">CLASSIC</span>';
+        const doubleGwTag = p.hasDoubleMatch
+          ? `<span class="sh-season-badge double-gw" title="Gioca 2 partite in questa Gameweek!">🔥 2 GARE</span>`
+          : '';
 
-        const isNat = p.activeMatch?.isNationalTeam === true;
+        const gwMatches = Array.isArray(p.gwMatches) ? p.gwMatches : (p.activeMatch ? [p.activeMatch] : []);
         let matchLine = '⏸️ Sosta Club in questa GW';
-        if (isNat) {
-          matchLine = `🌍 ${this.escapeHtml(p.activeMatch.teamName)} (${this.escapeHtml(p.activeMatch.competitionName)})`;
-        } else if (p.activeMatch) {
-          matchLine = `${p.activeMatch.isHome === true ? '🏠' : '✈️'} vs ${this.escapeHtml(p.activeMatch.opponentName)} (${this.escapeHtml(p.activeMatch.competitionName)})`;
+
+        if (gwMatches.length >= 2) {
+          const m1 = gwMatches[0];
+          const m2 = gwMatches[1];
+          const prefix = m1.isNationalTeam ? '🌍' : '🏟️';
+          matchLine = `${prefix} vs ${this.escapeHtml(m1.opponentName)} + vs ${this.escapeHtml(m2.opponentName)}`;
+        } else if (gwMatches.length === 1) {
+          const m1 = gwMatches[0];
+          if (m1.isNationalTeam) {
+            matchLine = `🌍 ${this.escapeHtml(m1.teamName)} (${this.escapeHtml(m1.competitionName)})`;
+          } else {
+            matchLine = `${m1.isHome === true ? '🏠' : '✈️'} vs ${this.escapeHtml(m1.opponentName)} (${this.escapeHtml(m1.competitionName)})`;
+          }
         }
 
         const isConfirmedStarter = p.availabilityTier === 'starter' || this.manualOverrides[p.playerSlug] === 'xi';
@@ -837,7 +848,7 @@ const App = {
             <div class="sh-pos ${roleCls}">${p.displayRole}</div>
             <div class="sh-meta">
               <div class="sh-name">
-                ${this.escapeHtml(p.name)}${capBadge}${seasonTag}
+                ${this.escapeHtml(p.name)}${capBadge}${seasonTag}${doubleGwTag}
                 <span class="player-info-trigger" tabindex="0">?
                   <span class="tactical-tooltip-box">${this.escapeHtml(p.matchupInsight || '')}</span>
                 </span>
