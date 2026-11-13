@@ -1,7 +1,7 @@
-// SorareHub - True Sorare Scoring Math (Base 35 + Net Decisive + True AA) & Full Role Opta Stats
+// SorareHub - Full Match Detection (Single & Double GW) + Dynamic Team Form Tracker + True Opta Math
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v23',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v23', 'sorarehub_gallery_cache_v22', 'sorarehub_gallery_cache_v21'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v24',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v24', 'sorarehub_gallery_cache_v23', 'sorarehub_gallery_cache_v22'],
   CACHE_TTL_MS: 12 * 60 * 1000,
 
   generateRandomString(length = 32) {
@@ -256,6 +256,8 @@ const SorareAPI = {
                     }
                     game {
                       date
+                      homeGoals
+                      awayGoals
                       competition {
                         slug
                         displayName
@@ -281,7 +283,7 @@ const SorareAPI = {
                       slug
                       displayName
                     }
-                    upcomingGames(first: 4) {
+                    upcomingGames(first: 5) {
                       date
                       competition {
                         slug
@@ -304,7 +306,7 @@ const SorareAPI = {
                   activeNationalTeam {
                     name
                     slug
-                    upcomingGames(first: 3) {
+                    upcomingGames(first: 4) {
                       date
                       competition {
                         slug
@@ -387,7 +389,7 @@ const SorareAPI = {
           loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
         }
         if (window.App && App.notify) {
-          App.notify(`📥 Analisi Opta & Profili Tattici: ${allCards.length} carte Pro...`);
+          App.notify(`📥 Analisi Calendario, Doppi Turni & Forma Avversarie: ${allCards.length} carte Pro...`);
         }
 
         const pageInfo = connection?.pageInfo;
@@ -436,8 +438,130 @@ const SorareAPI = {
     };
   },
 
+  // Costruisce in tempo reale un Database Dinamico del momento di forma di tutte le squadre (Club e Nazionali) incrociando tutti i risultati reali registrati nei match dei giocatori
+  buildDynamicTeamFormMap(rawCards) {
+    const teamGamesMap = new Map(); // teamSlug -> Map(gameKey -> { gf, ga, dateMs, playerScoreSum, playerCount })
+
+    const registerTeamGame = (teamSlug, teamName, gameKey, dateMs, gf, ga, playerScore) => {
+      if (!teamSlug) return;
+      const slug = teamSlug.toLowerCase();
+      if (!teamGamesMap.has(slug)) {
+        teamGamesMap.set(slug, { name: teamName || slug, games: new Map() });
+      }
+      const teamEntry = teamGamesMap.get(slug);
+      if (!teamEntry.games.has(gameKey)) {
+        teamEntry.games.set(gameKey, {
+          dateMs,
+          gf: typeof gf === 'number' ? gf : null,
+          ga: typeof ga === 'number' ? ga : null,
+          scoreSum: playerScore > 0 ? playerScore : 0,
+          scoreCount: playerScore > 0 ? 1 : 0
+        });
+      } else if (playerScore > 0) {
+        const g = teamEntry.games.get(gameKey);
+        g.scoreSum += playerScore;
+        g.scoreCount += 1;
+      }
+    };
+
+    (rawCards || []).forEach(card => {
+      const scores = card?.player?.so5Scores;
+      if (!Array.isArray(scores)) return;
+      scores.forEach(s => {
+        const g = s?.game;
+        if (!g || !g.date) return;
+        const dateMs = new Date(g.date).getTime();
+        if (!dateMs) return;
+        const dayKey = new Date(dateMs).toISOString().slice(0, 10);
+        const homeSlug = (g.homeTeam?.slug || '').toLowerCase();
+        const awaySlug = (g.awayTeam?.slug || '').toLowerCase();
+        if (!homeSlug || !awaySlug) return;
+
+        const gameKey = `${dayKey}_${homeSlug}_${awaySlug}`;
+        const hg = typeof g.homeGoals === 'number' ? g.homeGoals : null;
+        const ag = typeof g.awayGoals === 'number' ? g.awayGoals : null;
+        const pScore = typeof s.score === 'number' ? s.score : 0;
+
+        registerTeamGame(homeSlug, g.homeTeam?.name, gameKey, dateMs, hg, ag, pScore);
+        registerTeamGame(awaySlug, g.awayTeam?.name, gameKey, dateMs, ag, hg, pScore);
+      });
+    });
+
+    const computedFormMap = {};
+    teamGamesMap.forEach((entry, slug) => {
+      const sortedGames = Array.from(entry.games.values())
+        .sort((a, b) => b.dateMs - a.dateMs)
+        .slice(0, 5);
+
+      let matchesWithGoals = 0;
+      let wins = 0;
+      let draws = 0;
+      let losses = 0;
+      let gfTotal = 0;
+      let gaTotal = 0;
+      let cleanSheets = 0;
+      let avgPlayerSo5Sum = 0;
+      let avgPlayerSo5Count = 0;
+
+      sortedGames.forEach(g => {
+        if (g.gf !== null && g.ga !== null) {
+          matchesWithGoals++;
+          gfTotal += g.gf;
+          gaTotal += g.ga;
+          if (g.ga === 0) cleanSheets++;
+          if (g.gf > g.ga) wins++;
+          else if (g.gf === g.ga) draws++;
+          else losses++;
+        }
+        if (g.scoreCount > 0) {
+          avgPlayerSo5Sum += (g.scoreSum / g.scoreCount);
+          avgPlayerSo5Count++;
+        }
+      });
+
+      if (matchesWithGoals > 0) {
+        const avgGf = Number((gfTotal / matchesWithGoals).toFixed(2));
+        const avgGa = Number((gaTotal / matchesWithGoals).toFixed(2));
+        const winRate = wins / matchesWithGoals;
+        // Indice di forza dinamico da 0.0 (in crisi profonda) a 1.0 (dominante)
+        const rawStrength = 0.50 + ((winRate - 0.45) * 0.45) + ((avgGf - avgGa) * 0.12);
+        const strengthIndex = Number(Math.max(0.15, Math.min(0.92, rawStrength)).toFixed(2));
+
+        computedFormMap[slug] = {
+          sampleSize: matchesWithGoals,
+          wins,
+          draws,
+          losses,
+          recordStr: `${wins}V-${draws}P-${losses}S`,
+          avgGf,
+          avgGa,
+          cleanSheets,
+          strengthIndex
+        };
+      } else if (avgPlayerSo5Count > 0) {
+        const teamAvgSo5 = avgPlayerSo5Sum / avgPlayerSo5Count;
+        const strengthIndex = Number(Math.max(0.25, Math.min(0.85, teamAvgSo5 / 80)).toFixed(2));
+        computedFormMap[slug] = {
+          sampleSize: avgPlayerSo5Count,
+          wins: null,
+          draws: null,
+          losses: null,
+          recordStr: null,
+          avgGf: null,
+          avgGa: null,
+          cleanSheets: 0,
+          strengthIndex
+        };
+      }
+    });
+
+    return computedFormMap;
+  },
+
   enrichCardsWithRealOptaData(rawCards) {
     const nowMs = Date.now();
+    const dynamicTeamFormMap = this.buildDynamicTeamFormMap(rawCards);
+
     const NATIONAL_COMP_KEYWORDS = [
       'nations-league',
       'world-cup',
@@ -506,11 +630,6 @@ const SorareAPI = {
           if (compSlug) activeClubCompetitionsSet.add(compSlug);
         });
 
-        // Calcola le VERE metriche Sorare:
-        // Su Sorare decisiveScore.totalScore parte da 35 pt (se titolare) o 15 pt (se subentrato).
-        // Quindi:
-        // - All-Around Puro (AA) = score - decisiveScore.totalScore
-        // - Punti Bonus Decisive Netti (oltre il voto base 35/15) = Math.max(0, decisiveScore.totalScore - baseAppearancePts)
         const computeSplitMetrics = (entries, maxWindow = 5) => {
           const slice = entries.slice(0, maxWindow);
           let totalEntries = slice.length;
@@ -532,7 +651,7 @@ const SorareAPI = {
           let saves = 0;
           let totalAccuratePass = 0;
           let totalShotsOnTarget = 0;
-          let totalDefActions = 0; // tackles + intercetti + spazzate
+          let totalDefActions = 0;
           let totalDuelsWon = 0;
 
           slice.forEach(s => {
@@ -544,11 +663,8 @@ const SorareAPI = {
               ? Number(s.decisiveScore.totalScore.toFixed(1))
               : (mins >= 55 ? 35 : (mins > 0 ? 15 : 0));
 
-            // Voto di partenza Sorare: 35 pt per chi parte titolare, 15 pt per chi subentra
             const baseStartingPts = mins >= 45 ? 35 : (mins > 0 ? 15 : 0);
-            // Bonus Decisive NETTO (es. +25 pt per 1 Gol/Assist/CleanSheet oltre i 35 base)
             const netDecisiveBonus = Math.max(0, Number((rawDecisiveTotal - baseStartingPts).toFixed(1)));
-            // All-Around PURO (AA: passaggi, contrasti, tiri, parate, duelli)
             const pureAas = Number((sc - rawDecisiveTotal).toFixed(1));
 
             const g = s.game || {};
@@ -655,9 +771,7 @@ const SorareAPI = {
           };
         };
 
-        // 1) Statistiche complessive sulle ultime 6 gare (Club + Nazionale) per avere SEMPRE 5-6 partite reali nel dossier!
         const combinedStats = computeSplitMetrics(allRecentScores, 6);
-        // 2) Statistiche solo Club e solo Nazionale per verificare titolarità e convocazioni
         const clubStats = computeSplitMetrics(clubScoreEntries.length > 0 ? clubScoreEntries : allRecentScores, 5);
         const natStats = computeSplitMetrics(natScoreEntries, 6);
 
@@ -683,17 +797,13 @@ const SorareAPI = {
           if (seenGameKeys.has(dedupKey)) return;
 
           const isNationalMatch = isGameNational(g, isNatSource);
-
-          if (isNationalMatch && alreadyPlayedScore === null && !isNationalCallupVerified) {
-            return;
-          }
-
           seenGameKeys.add(dedupKey);
 
           if (isNationalMatch) {
             const isHome = natSlug ? (homeSlug === natSlug) : true;
             const myNatName = natName || (isHome ? homeName : awayName);
             const oppName = isHome ? awayName : homeName;
+            const oppSlug = isHome ? awaySlug : homeSlug;
             scheduleGames.push({
               date: g.date,
               timestamp: ts,
@@ -701,7 +811,8 @@ const SorareAPI = {
               competitionName: compName || 'Nazionale',
               isHome: isHome,
               opponentName: oppName,
-              opponentSlug: isHome ? awaySlug : homeSlug,
+              opponentSlug: oppSlug,
+              opponentForm: dynamicTeamFormMap[oppSlug] || null,
               isNationalTeam: true,
               alreadyPlayedScore: alreadyPlayedScore,
               alreadyPlayedMins: alreadyPlayedMins,
@@ -709,14 +820,17 @@ const SorareAPI = {
             });
           } else {
             const isHome = homeSlug === clubSlug;
+            const oppName = isHome ? awayName : homeName;
+            const oppSlug = isHome ? awaySlug : homeSlug;
             scheduleGames.push({
               date: g.date,
               timestamp: ts,
               competitionSlug: compSlug || leagueSlug,
               competitionName: compName || leagueName,
               isHome: isHome,
-              opponentName: isHome ? awayName : homeName,
-              opponentSlug: isHome ? awaySlug : homeSlug,
+              opponentName: oppName,
+              opponentSlug: oppSlug,
+              opponentForm: dynamicTeamFormMap[oppSlug] || null,
               isNationalTeam: false,
               alreadyPlayedScore: alreadyPlayedScore,
               alreadyPlayedMins: alreadyPlayedMins,
@@ -725,6 +839,7 @@ const SorareAPI = {
           }
         };
 
+        // Registra tutte le partite giocate e TUTTE le partite future restituite da Sorare (senza scartare chi ha match di Nazionale in calendario!)
         allRecentScores.forEach(s => {
           if (s && s.game && s.game.date) {
             const sc = typeof s.score === 'number' ? Number(s.score.toFixed(1)) : 0;
@@ -734,9 +849,7 @@ const SorareAPI = {
         });
 
         (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, false, null, null));
-        if (isNationalCallupVerified) {
-          (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, true, null, null));
-        }
+        (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, true, null, null));
 
         scheduleGames.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -775,11 +888,11 @@ const SorareAPI = {
           }
         }
 
-        let natFitnessTier = 'bench_nat';
-        if (!isInjuredOrSuspended && isNationalCallupVerified) {
-          if (natStats.starterCount >= 2 || (natStats.starterCount >= 1 && natStats.dnpZeroCount === 0 && natStats.avgMins >= 60)) {
+        let natFitnessTier = 'unverified_nat';
+        if (!isInjuredOrSuspended) {
+          if (natStats.starterCount >= 2 || (natStats.starterCount >= 1 && natStats.dnpZeroCount === 0 && natStats.avgMins >= 55)) {
             natFitnessTier = 'starter';
-          } else if (natStats.playedCount >= 1) {
+          } else if (natStats.playedCount >= 1 || (clubFitnessTier === 'starter' && l15 >= 50)) {
             natFitnessTier = 'rotation';
           }
         }
