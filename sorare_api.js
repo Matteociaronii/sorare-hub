@@ -1,8 +1,8 @@
-// SorareHub - Data Sync Engine + Detailed Match Logs & Verified National Callups
+// SorareHub - True Sorare Scoring Math (Base 35 + Net Decisive + True AA) & Full Role Opta Stats
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v22',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v22', 'sorarehub_gallery_cache_v21', 'sorarehub_gallery_cache_v20', 'sorarehub_gallery_cache_v19'],
-  CACHE_TTL_MS: 12 * 60 * 1000, // 12 minuti
+  CACHE_KEY: 'sorarehub_gallery_cache_v23',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v23', 'sorarehub_gallery_cache_v22', 'sorarehub_gallery_cache_v21'],
+  CACHE_TTL_MS: 12 * 60 * 1000,
 
   generateRandomString(length = 32) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -121,7 +121,7 @@ const SorareAPI = {
 
     for (let i = 0; i < 24; i++) {
       const d = new Date(cursorMs);
-      const dayOfWeek = d.getUTCDay(); // 2 = Martedì, 5 = Venerdì
+      const dayOfWeek = d.getUTCDay();
       const durationHours = (dayOfWeek === 2) ? 72 : 96;
       const nextMs = cursorMs + durationHours * 3600 * 1000;
 
@@ -247,6 +247,12 @@ const SorareAPI = {
                       goalAssist
                       cleanSheet
                       saves
+                      accuratePass
+                      ontargetScoringAtt
+                      wonTackle
+                      interceptionWon
+                      effectiveClearance
+                      duelWon
                     }
                     game {
                       date
@@ -381,7 +387,7 @@ const SorareAPI = {
           loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
         }
         if (window.App && App.notify) {
-          App.notify(`📥 Analisi Storico Match, Tornei & Nazionali: ${allCards.length} carte Pro...`);
+          App.notify(`📥 Analisi Opta & Profili Tattici: ${allCards.length} carte Pro...`);
         }
 
         const pageInfo = connection?.pageInfo;
@@ -397,7 +403,7 @@ const SorareAPI = {
         const fallbackCache = this.loadAnyAvailableCache(true);
         if (fallbackCache) {
           if (window.App && App.notify) {
-            App.notify('⚠️ Proxy Sorare momentaneamente occupato: caricata galleria salvata in cache.');
+            App.notify('⚠️ Proxy Sorare occupato: caricata galleria salvata in cache.');
           }
           return {
             user: fallbackCache.user,
@@ -500,7 +506,12 @@ const SorareAPI = {
           if (compSlug) activeClubCompetitionsSet.add(compSlug);
         });
 
-        const computeSplitMetrics = (entries, maxWindow = 5, referenceTeamSlug = clubSlug) => {
+        // Calcola le VERE metriche Sorare:
+        // Su Sorare decisiveScore.totalScore parte da 35 pt (se titolare) o 15 pt (se subentrato).
+        // Quindi:
+        // - All-Around Puro (AA) = score - decisiveScore.totalScore
+        // - Punti Bonus Decisive Netti (oltre il voto base 35/15) = Math.max(0, decisiveScore.totalScore - baseAppearancePts)
+        const computeSplitMetrics = (entries, maxWindow = 5) => {
           const slice = entries.slice(0, maxWindow);
           let totalEntries = slice.length;
           let playedCount = 0;
@@ -508,8 +519,8 @@ const SorareAPI = {
           let dnpZeroCount = 0;
           let totalMins = 0;
           let sumScores = 0;
-          let sumAas = 0;
-          let sumDecisive = 0;
+          let sumPureAas = 0;
+          let sumNetDecisiveBonus = 0;
           let maxScore = 0;
           let minScore = 100;
           const validScores = [];
@@ -519,25 +530,44 @@ const SorareAPI = {
           let assists = 0;
           let cleanSheets = 0;
           let saves = 0;
+          let totalAccuratePass = 0;
+          let totalShotsOnTarget = 0;
+          let totalDefActions = 0; // tackles + intercetti + spazzate
+          let totalDuelsWon = 0;
 
           slice.forEach(s => {
             const sc = typeof s.score === 'number' ? Number(s.score.toFixed(1)) : 0;
             const stats = s.playerGameStats || {};
             const mins = typeof stats.minsPlayed === 'number' ? stats.minsPlayed : (sc > 0 ? 60 : 0);
-            const dec = typeof s.decisiveScore?.totalScore === 'number' ? Number(s.decisiveScore.totalScore.toFixed(1)) : 0;
-            const aas = Math.max(0, Number((sc - dec).toFixed(1)));
+
+            const rawDecisiveTotal = typeof s.decisiveScore?.totalScore === 'number'
+              ? Number(s.decisiveScore.totalScore.toFixed(1))
+              : (mins >= 55 ? 35 : (mins > 0 ? 15 : 0));
+
+            // Voto di partenza Sorare: 35 pt per chi parte titolare, 15 pt per chi subentra
+            const baseStartingPts = mins >= 45 ? 35 : (mins > 0 ? 15 : 0);
+            // Bonus Decisive NETTO (es. +25 pt per 1 Gol/Assist/CleanSheet oltre i 35 base)
+            const netDecisiveBonus = Math.max(0, Number((rawDecisiveTotal - baseStartingPts).toFixed(1)));
+            // All-Around PURO (AA: passaggi, contrasti, tiri, parate, duelli)
+            const pureAas = Number((sc - rawDecisiveTotal).toFixed(1));
 
             const g = s.game || {};
             const homeSlug = (g.homeTeam?.slug || '').toLowerCase();
             const homeName = g.homeTeam?.name || 'Casa';
             const awayName = g.awayTeam?.name || 'Trasferta';
-            const isHome = referenceTeamSlug ? (homeSlug === referenceTeamSlug) : true;
+            const isNat = isGameNational(g, false);
+            const refSlug = isNat ? natSlug : clubSlug;
+            const isHome = refSlug ? (homeSlug === refSlug) : true;
             const oppName = isHome ? awayName : homeName;
 
             const gGoals = stats.goals || 0;
             const gAssists = stats.goalAssist || 0;
             const gCs = stats.cleanSheet || 0;
             const gSaves = stats.saves || 0;
+            const gPass = stats.accuratePass || 0;
+            const gSot = stats.ontargetScoringAtt || 0;
+            const gDef = (stats.wonTackle || 0) + (stats.interceptionWon || 0) + (stats.effectiveClearance || 0);
+            const gDuels = stats.duelWon || 0;
 
             if (mins > 0 || sc > 0) {
               playedCount++;
@@ -548,26 +578,35 @@ const SorareAPI = {
               if (sc > maxScore) maxScore = sc;
               if (sc < minScore) minScore = sc;
 
-              sumAas += aas;
-              sumDecisive += dec;
+              sumPureAas += pureAas;
+              sumNetDecisiveBonus += netDecisiveBonus;
 
               goals += gGoals;
               assists += gAssists;
               cleanSheets += gCs;
               saves += gSaves;
+              totalAccuratePass += gPass;
+              totalShotsOnTarget += gSot;
+              totalDefActions += gDef;
+              totalDuelsWon += gDuels;
 
               matchLogs.push({
                 opponent: oppName,
+                isNational: isNat,
                 isHome: isHome,
                 score: Math.round(sc),
                 exactScore: sc,
-                aas: aas,
-                decisive: dec,
+                aas: pureAas,
+                netDecisive: netDecisiveBonus,
                 mins: mins,
                 goals: gGoals,
                 assists: gAssists,
                 cleanSheet: gCs,
-                saves: gSaves
+                saves: gSaves,
+                passes: gPass,
+                defActions: gDef,
+                duelsWon: gDuels,
+                shotsOnTarget: gSot
               });
             } else {
               dnpZeroCount++;
@@ -577,8 +616,13 @@ const SorareAPI = {
           if (validScores.length === 0) minScore = 0;
           const avgScore = playedCount > 0 ? Number((sumScores / playedCount).toFixed(1)) : 0;
           const avgMins = playedCount > 0 ? Math.round(totalMins / playedCount) : 0;
-          const avgAas = playedCount > 0 ? Number((sumAas / playedCount).toFixed(1)) : 0;
-          const avgDecisive = playedCount > 0 ? Number((sumDecisive / playedCount).toFixed(1)) : 0;
+          const avgAas = playedCount > 0 ? Number((sumPureAas / playedCount).toFixed(1)) : 0;
+          const avgNetDecisive = playedCount > 0 ? Number((sumNetDecisiveBonus / playedCount).toFixed(1)) : 0;
+
+          const avgPasses = playedCount > 0 ? Math.round(totalAccuratePass / playedCount) : 0;
+          const avgDefActions = playedCount > 0 ? Number((totalDefActions / playedCount).toFixed(1)) : 0;
+          const avgDuelsWon = playedCount > 0 ? Number((totalDuelsWon / playedCount).toFixed(1)) : 0;
+          const avgShotsOnTarget = playedCount > 0 ? Number((totalShotsOnTarget / playedCount).toFixed(1)) : 0;
 
           let stdDev = 0;
           if (validScores.length > 1) {
@@ -595,7 +639,7 @@ const SorareAPI = {
             avgScore,
             avgMins,
             avgAas,
-            avgDecisive,
+            avgDecisive: avgNetDecisive,
             maxScore: Math.round(maxScore),
             minScore: Math.round(minScore),
             stdDev,
@@ -603,14 +647,20 @@ const SorareAPI = {
             assists,
             cleanSheets,
             saves,
+            avgPasses,
+            avgDefActions,
+            avgDuelsWon,
+            avgShotsOnTarget,
             matchLogs
           };
         };
 
-        const clubStats = computeSplitMetrics(clubScoreEntries.length > 0 ? clubScoreEntries : allRecentScores, 5, clubSlug);
-        const natStats = computeSplitMetrics(natScoreEntries, 6, natSlug);
+        // 1) Statistiche complessive sulle ultime 6 gare (Club + Nazionale) per avere SEMPRE 5-6 partite reali nel dossier!
+        const combinedStats = computeSplitMetrics(allRecentScores, 6);
+        // 2) Statistiche solo Club e solo Nazionale per verificare titolarità e convocazioni
+        const clubStats = computeSplitMetrics(clubScoreEntries.length > 0 ? clubScoreEntries : allRecentScores, 5);
+        const natStats = computeSplitMetrics(natScoreEntries, 6);
 
-        // Verifica reale convocazione in Nazionale: almeno 1 presenza effettiva in Nazionale
         const isNationalCallupVerified = natStats.playedCount >= 1;
 
         const scheduleGames = [];
@@ -706,7 +756,7 @@ const SorareAPI = {
         const isU23 = birthTime > 0 ? birthTime >= u23Cutoff : false;
 
         const apiL5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
-        const l5 = clubStats.avgScore > 0 ? clubStats.avgScore : apiL5;
+        const l5 = combinedStats.avgScore > 0 ? combinedStats.avgScore : apiL5;
         const apiL15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0;
         const l15 = apiL15 > 0 ? apiL15 : l5;
 
@@ -761,24 +811,29 @@ const SorareAPI = {
           isInjuredOrSuspended: isInjuredOrSuspended,
           l5: l5,
           l15: l15,
-          avgAas: clubStats.avgAas,
-          avgDecisive: clubStats.avgDecisive,
-          maxRecentScore: clubStats.maxScore,
-          minRecentScore: clubStats.minScore,
-          stdDev: clubStats.stdDev,
-          playedCount: clubStats.playedCount,
-          starterCount: clubStats.starterCount,
-          avgMins: clubStats.avgMins,
+          avgAas: combinedStats.avgAas,
+          avgDecisive: combinedStats.avgDecisive,
+          maxRecentScore: combinedStats.maxScore,
+          minRecentScore: combinedStats.minScore,
+          stdDev: combinedStats.stdDev,
+          playedCount: combinedStats.playedCount,
+          starterCount: combinedStats.starterCount,
+          avgMins: combinedStats.avgMins,
+          combinedStats: combinedStats,
           clubStats: clubStats,
           natStats: natStats,
           baseFitnessTier: clubFitnessTier,
           natFitnessTier: natFitnessTier,
           baseUnavailableReason: baseUnavailableReason,
           tacticalTraits: {
-            cleanSheets: clubStats.cleanSheets,
-            goals: clubStats.goals,
-            assists: clubStats.assists,
-            saves: clubStats.saves
+            cleanSheets: combinedStats.cleanSheets,
+            goals: combinedStats.goals,
+            assists: combinedStats.assists,
+            saves: combinedStats.saves,
+            avgPasses: combinedStats.avgPasses,
+            avgDefActions: combinedStats.avgDefActions,
+            avgDuelsWon: combinedStats.avgDuelsWon,
+            avgShotsOnTarget: combinedStats.avgShotsOnTarget
           },
           bonusPct: totalBonusPct,
           powerMultiplier: 1 + (totalBonusPct / 100)
