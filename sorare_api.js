@@ -1,7 +1,8 @@
-// SorareHub - Verified National Team Callups + Strict Club Competition Slugs + Real Opta Split
+// SorareHub - Safe GraphQL Complexity (No Failed to Fetch) + Verified National Callups + Club Competition Slugs
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v20',
-  CACHE_TTL_MS: 10 * 60 * 1000, // 10 minuti
+  CACHE_KEY: 'sorarehub_gallery_cache_v21',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v21', 'sorarehub_gallery_cache_v20', 'sorarehub_gallery_cache_v19', 'sorarehub_gallery_cache_v18'],
+  CACHE_TTL_MS: 12 * 60 * 1000, // 12 minuti
 
   generateRandomString(length = 32) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -79,20 +80,33 @@ const SorareAPI = {
     }
   },
 
+  // Gestisce sia HTTP 429/502/503 sia eventuali "Failed to fetch" temporanei del Worker
   async fetchWithRetry(url, options, maxRetries = 3) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const res = await fetch(url, options);
-      if (res.status !== 429) {
-        return res;
-      }
-      if (attempt < maxRetries) {
-        const waitMs = 2500 * (attempt + 1);
-        if (window.App && App.notify) {
-          App.notify(`⏳ Limite richieste Sorare (429): riprovo tra ${Math.round(waitMs / 1000)}s...`);
+      try {
+        const res = await fetch(url, options);
+        if (res.status !== 429 && res.status < 500) {
+          return res;
         }
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-      } else {
-        return res;
+        if (attempt < maxRetries) {
+          const waitMs = 2200 * (attempt + 1);
+          if (window.App && App.notify) {
+            App.notify(`⏳ Sorare occupato (${res.status}): riprovo tra ${Math.round(waitMs / 1000)}s...`);
+          }
+          await new Promise(resolve => setTimeout(resolve, waitMs));
+        } else {
+          return res;
+        }
+      } catch (networkErr) {
+        if (attempt < maxRetries) {
+          const waitMs = 2000 * (attempt + 1);
+          if (window.App && App.notify) {
+            App.notify(`⏳ Riconnessione al proxy Sorare in corso (tentativo ${attempt + 1}/${maxRetries})...`);
+          }
+          await new Promise(resolve => setTimeout(resolve, waitMs));
+        } else {
+          throw networkErr;
+        }
       }
     }
   },
@@ -156,34 +170,47 @@ const SorareAPI = {
     }
   },
 
+  loadAnyAvailableCache(ignoreTtl = false) {
+    for (const key of this.FALLBACK_CACHE_KEYS) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.cards) && parsed.cards.length > 0) {
+          if (ignoreTtl || ((Date.now() - (parsed.timestamp || 0)) < this.CACHE_TTL_MS)) {
+            return parsed;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  },
+
   async fetchCurrentUserGallery(forceRefresh = false) {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
     if (!forceRefresh) {
-      try {
-        const cachedRaw = localStorage.getItem(this.CACHE_KEY);
-        if (cachedRaw) {
-          const cached = JSON.parse(cachedRaw);
-          if (cached && cached.timestamp && (Date.now() - cached.timestamp) < this.CACHE_TTL_MS && Array.isArray(cached.cards) && cached.cards.length > 0) {
-            return {
-              user: cached.user,
-              gameweeks: this.buildOfficialSorareGameweeks(),
-              cards: cached.cards
-            };
-          }
-        }
-      } catch (_) {}
+      const cached = this.loadAnyAvailableCache(false);
+      if (cached) {
+        return {
+          user: cached.user,
+          gameweeks: this.buildOfficialSorareGameweeks(),
+          cards: cached.cards
+        };
+      }
     }
 
-    const workerGraphqlEndpoint = `${CONFIG.TOKEN_ENDPOINT.replace(/\/$/, '')}/graphql`;
+    const baseWorkerUrl = String(CONFIG.TOKEN_ENDPOINT || 'https://sorare-oauth-proxy.matteo-ciaroni03.workers.dev').replace(/\/$/, '');
+    const workerGraphqlEndpoint = baseWorkerUrl.endsWith('/graphql') ? baseWorkerUrl : `${baseWorkerUrl}/graphql`;
 
+    // Query ottimizzata: 30 carte per batch e so5Scores(last: 6) -> resta sempre sotto la soglia di complessità di Sorare e Cloudflare!
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
           slug
           nickname
-          cards(first: 40, after: $after, rarities: [limited, rare, super_rare, unique]) {
+          cards(first: 30, after: $after, rarities: [limited, rare, super_rare, unique]) {
             pageInfo {
               hasNextPage
               endCursor
@@ -211,7 +238,7 @@ const SorareAPI = {
                   activeSuspensions {
                     reason
                   }
-                  so5Scores(last: 12) {
+                  so5Scores(last: 6) {
                     score
                     decisiveScore {
                       totalScore
@@ -250,7 +277,7 @@ const SorareAPI = {
                       slug
                       displayName
                     }
-                    upcomingGames(first: 5) {
+                    upcomingGames(first: 4) {
                       date
                       competition {
                         slug
@@ -273,7 +300,7 @@ const SorareAPI = {
                   activeNationalTeam {
                     name
                     slug
-                    upcomingGames(first: 4) {
+                    upcomingGames(first: 3) {
                       date
                       competition {
                         slug
@@ -307,64 +334,82 @@ const SorareAPI = {
     let userProfile = null;
     let batchIndex = 0;
 
-    while (hasNext && batchIndex < 22) {
-      batchIndex++;
+    try {
+      while (hasNext && batchIndex < 25) {
+        batchIndex++;
 
-      const res = await this.fetchWithRetry(workerGraphqlEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          query: pagedQuery,
-          variables: { after: cursor }
-        })
-      }, 3);
+        const res = await this.fetchWithRetry(workerGraphqlEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            query: pagedQuery,
+            variables: { after: cursor }
+          })
+        }, 3);
 
-      if (!res || !res.ok) {
-        const errBody = res ? await res.text() : 'Nessuna risposta';
-        if (res && res.status === 401) {
-          localStorage.removeItem('sorare_access_token');
+        if (!res || !res.ok) {
+          const errBody = res ? await res.text() : 'Nessuna risposta';
+          if (res && res.status === 401) {
+            localStorage.removeItem('sorare_access_token');
+          }
+          throw new Error(`Errore API Sorare (${res ? res.status : 'NET'}): ${errBody}`);
         }
-        throw new Error(`Errore API Sorare (${res ? res.status : 'NET'}): ${errBody}`);
+
+        const json = await res.json();
+        if (json.errors && json.errors.length > 0) {
+          console.error('Errore GraphQL:', json.errors);
+          throw new Error(json.errors[0].message);
+        }
+
+        const currentUser = json.data?.currentUser;
+        if (!currentUser) break;
+
+        if (!userProfile) {
+          userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
+        }
+
+        const connection = currentUser.cards;
+        const nodes = connection?.nodes || [];
+        if (nodes.length === 0) break;
+
+        const proNodes = nodes.filter(n => String(n?.rarityTyped || '').toLowerCase() !== 'common');
+        allCards = allCards.concat(proNodes);
+
+        const loginBtnText = document.getElementById('login-btn-text');
+        if (loginBtnText) {
+          loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
+        }
+        if (window.App && App.notify) {
+          App.notify(`📥 Sincronizzazione Opta & Tornei: ${allCards.length} carte Pro...`);
+        }
+
+        const pageInfo = connection?.pageInfo;
+        hasNext = Boolean(pageInfo?.hasNextPage) && Boolean(pageInfo?.endCursor);
+        cursor = pageInfo?.endCursor || null;
+
+        if (!hasNext || !cursor) break;
+
+        await new Promise(resolve => setTimeout(resolve, 350));
       }
-
-      const json = await res.json();
-      if (json.errors && json.errors.length > 0) {
-        console.error('Errore GraphQL:', json.errors);
-        throw new Error(json.errors[0].message);
+    } catch (fetchErr) {
+      // Se aveva già scaricato gran parte delle carte o se c'è una cache salvata, non blocca l'utente!
+      if (allCards.length === 0) {
+        const fallbackCache = this.loadAnyAvailableCache(true);
+        if (fallbackCache) {
+          if (window.App && App.notify) {
+            App.notify('⚠️ Proxy Sorare momentaneamente saturo: caricata galleria salvata in cache.');
+          }
+          return {
+            user: fallbackCache.user,
+            gameweeks: this.buildOfficialSorareGameweeks(),
+            cards: fallbackCache.cards
+          };
+        }
+        throw fetchErr;
       }
-
-      const currentUser = json.data?.currentUser;
-      if (!currentUser) break;
-
-      if (!userProfile) {
-        userProfile = { slug: currentUser.slug, nickname: currentUser.nickname };
-      }
-
-      const connection = currentUser.cards;
-      const nodes = connection?.nodes || [];
-      if (nodes.length === 0) break;
-
-      const proNodes = nodes.filter(n => String(n?.rarityTyped || '').toLowerCase() !== 'common');
-      allCards = allCards.concat(proNodes);
-
-      const loginBtnText = document.getElementById('login-btn-text');
-      if (loginBtnText) {
-        loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
-      }
-      if (window.App && App.notify) {
-        App.notify(`📥 Verifica Tornei, Coppe & Convocazioni Nazionali: ${allCards.length} carte Pro...`);
-      }
-
-      const pageInfo = connection?.pageInfo;
-      hasNext = Boolean(pageInfo?.hasNextPage) && Boolean(pageInfo?.endCursor);
-      cursor = pageInfo?.endCursor || null;
-
-      if (!hasNext || !cursor) break;
-
-      await new Promise(resolve => setTimeout(resolve, 420));
     }
 
     const enriched = this.enrichCardsWithRealOptaData(allCards)
@@ -436,7 +481,6 @@ const SorareAPI = {
           return matchesNatTeam || (!matchesClubTeam && isCompNational);
         };
 
-        // 1) Separa rigorosamente lo storico so5Scores tra partite di CLUB e partite di NAZIONALE
         const allRecentScores = Array.isArray(player.so5Scores) ? player.so5Scores : [];
         const clubScoreEntries = [];
         const natScoreEntries = [];
@@ -539,12 +583,10 @@ const SorareAPI = {
         };
 
         const clubStats = computeSplitMetrics(clubScoreEntries.length > 0 ? clubScoreEntries : allRecentScores, 5);
-        const natStats = computeSplitMetrics(natScoreEntries, 8);
+        const natStats = computeSplitMetrics(natScoreEntries, 6);
 
-        // VERIFICA RIGOROSA CONVOCAZIONE IN NAZIONALE:
-        // Un giocatore è considerato realmente convocato/attivo con la sua Nazionale SOLO SE ha almeno 1 presenza effettiva (playedCount >= 1)
-        // nelle partite internazionali registrate in so5Scores!
-        // In questo modo giocatori come Yusuf Demir (che hanno activeNationalTeam = Austria su Sorare ma 0 presenze in Nazionale) NON ricevono i match futuri della Nazionale!
+        // Verifica reale convocazione in Nazionale:
+        // Il calciatore è considerato convocato/attivo in Nazionale SOLO se ha almeno 1 presenza effettiva (playedCount >= 1) in Nazionale!
         const isNationalCallupVerified = natStats.playedCount >= 1;
 
         const scheduleGames = [];
@@ -568,7 +610,6 @@ const SorareAPI = {
 
           const isNationalMatch = isGameNational(g, isNatSource);
 
-          // Se è un match futuro di Nazionale (alreadyPlayedScore === null) ma il calciatore NON è verificato come convocato in Nazionale, IGNORA il match!
           if (isNationalMatch && alreadyPlayedScore === null && !isNationalCallupVerified) {
             return;
           }
@@ -610,7 +651,6 @@ const SorareAPI = {
           }
         };
 
-        // Inserisce prima i match già giocati da so5Scores (con voto e minuti reali)
         allRecentScores.forEach(s => {
           if (s && s.game && s.game.date) {
             const sc = typeof s.score === 'number' ? Number(s.score.toFixed(1)) : 0;
@@ -619,7 +659,6 @@ const SorareAPI = {
           }
         });
 
-        // Poi i match futuri di Club e (solo se convocato!) di Nazionale
         (Array.isArray(club.upcomingGames) ? club.upcomingGames : []).forEach(g => pushUniqueGame(g, false, null, null));
         if (isNationalCallupVerified) {
           (Array.isArray(natTeam.upcomingGames) ? natTeam.upcomingGames : []).forEach(g => pushUniqueGame(g, true, null, null));
@@ -662,7 +701,6 @@ const SorareAPI = {
           }
         }
 
-        // Titolarità rigorosa in NAZIONALE
         let natFitnessTier = 'bench_nat';
         if (!isInjuredOrSuspended && isNationalCallupVerified) {
           if (natStats.starterCount >= 2 || (natStats.starterCount >= 1 && natStats.dnpZeroCount === 0 && natStats.avgMins >= 60)) {
