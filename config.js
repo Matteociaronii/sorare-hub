@@ -127,23 +127,6 @@ const CONFIG = {
       leagues: ['k-league-1-kr', 'k-league-1']
     },
     {
-      id: 'challenger_in_season',
-      name: 'Challenger — In-Season (Liga Portugal, Eredivisie, JPL, Scozia SO5)',
-      format: 'SO5',
-      inSeasonRequired: 4,
-      allowNationalTeams: false,
-      leagues: [
-        'primeira-liga-pt', 'primeira-liga', 'liga-portugal',
-        'eredivisie-nl', 'eredivisie',
-        'jupiler-pro-league-be', 'jupiler-pro-league', 'first-division-a',
-        'premiership-gb-sct', 'scottish-premiership',
-        'super-lig-tr', 'super-lig',
-        'superliga-dk', 'danish-superliga',
-        'super-league-ch', 'swiss-super-league',
-        'eliteserien-no', 'eliteserien'
-      ]
-    },
-    {
       id: 'contender_in_season',
       name: 'Contender — In-Season (Leghe Minori SO5)',
       format: 'SO5',
