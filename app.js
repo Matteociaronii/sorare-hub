@@ -379,7 +379,6 @@ const App = {
       }
     `;
 
-    // 1. Prima legge tramite la sessione web autenticata (estensione Chrome)
     try {
       const extResp = await this.sendToExtension('SH_QUERY_SORARE', { query: taskQuery });
       const webTasks = extResp?.json?.data?.currentUser?.taskGroup?.myTasks;
@@ -388,7 +387,6 @@ const App = {
       }
     } catch (_) {}
 
-    // 2. Fallback sul proxy OAuth
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return [];
     const proxyUrl = (window.CONFIG && CONFIG.SORARE_GRAPHQL_PROXY) || 'https://sorarehub-oauth.matty-ciaroni.workers.dev/graphql';
@@ -519,7 +517,6 @@ const App = {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
       const captainCard = orderedStarters.find(p => p.isCaptain) || orderedStarters[0];
 
-      // Prepara sempre anche il payload per il Bridge HUD di content_sorare.js
       const bridgePayload = {
         title: `${this.currentCompetition.name} (${modeLabel})`,
         players: orderedStarters.map(p => ({
@@ -589,9 +586,27 @@ const App = {
           return;
         }
 
-        // 3. Fallback immediato: carica la formazione nel Bridge HUD dell'estensione e apre la pagina PRO Hot Streak di Sorare
+        // 3. Fallback immediato: carica la formazione nel Bridge HUD dell'estensione e apre la pagina PRO specifica del campionato
         await this.sendToExtension('SH_SET_BRIDGE_LINEUP', bridgePayload);
-        const proHotStreakUrl = 'https://sorare.com/it/football/play/pro/hot-streak';
+
+        const proBoardSlugMap = {
+          'scottish_in_season': 'football-pro-27-scotland',
+          'liga_portugal_in_season': 'football-pro-27-portugal',
+          'jupiler_in_season': 'football-pro-27-jupiler',
+          'eredivisie_in_season': 'football-pro-27-netherlands',
+          'premier_league_in_season': 'football-pro-27-england',
+          'serie_a_in_season': 'football-pro-27-italy',
+          'laliga_in_season': 'football-pro-27-spain',
+          'bundesliga_in_season': 'football-pro-27-germany',
+          'ligue1_in_season': 'football-pro-27-france',
+          'championship_in_season': 'football-pro-27-england-second',
+          'contender_in_season': 'football-pro-27-contender'
+        };
+        const boardSlug = proBoardSlugMap[String(this.currentCompetition.id || '').toLowerCase()];
+        const proHotStreakUrl = boardSlug
+          ? `https://sorare.com/it/football/play/boards/pro/${boardSlug}`
+          : 'https://sorare.com/it/football/play/boards/pro';
+
         if (sorareTab) {
           sorareTab.location.href = proHotStreakUrl;
         } else {
