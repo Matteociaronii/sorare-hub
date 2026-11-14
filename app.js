@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Direct Sorare Submitter (PvP + Universal Hot Streak)
+// SorareHub - Application Controller + Direct Sorare Submitter (PvP + Universal Hot Streak + Bridge Fallback)
 const App = {
   cards: [],
   gameweeks: [],
@@ -268,7 +268,6 @@ const App = {
     return this.usedCardsByGwSlug[fix.slug] || {};
   },
 
-  // Mappatura verificata sugli slug ufficiali Sorare per tutte le competizioni + modalità Standard (PvP) o Hot Streak (_pve)
   matchLeaderboardFromFixture(leaderboards, comp, scarcity, targetMode = 'standard') {
     if (!Array.isArray(leaderboards) || leaderboards.length === 0) return null;
     const targetRarity = String(scarcity || 'limited').toLowerCase();
@@ -284,7 +283,6 @@ const App = {
 
     if (rarityFiltered.length === 0) return null;
 
-    // Esclude sempre le stanze secondarie Arena
     const nonArenaPool = rarityFiltered.filter(lb => {
       const s = String(lb.slug || '').toLowerCase();
       return !s.includes('_arena_');
@@ -361,36 +359,7 @@ const App = {
     return scored[0] ? scored[0].lb : null;
   },
 
-  // Cerca e invia la ThresholdsStreakTask attiva su Sorare per qualsiasi campionato europeo/mondiale
-  async submitUniversalHotStreakTask(comp, scarcity, orderedStarters, captainCard, targetFixture) {
-    const token = localStorage.getItem('sorare_access_token');
-    if (!token) {
-      throw new Error('Token OAuth Sorare mancante: clicca su Connetti Sorare.');
-    }
-
-    const prefixMap = {
-      'premier_league_in_season': ['in_season_england'],
-      'serie_a_in_season': ['in_season_italy'],
-      'laliga_in_season': ['in_season_spain'],
-      'bundesliga_in_season': ['in_season_germany'],
-      'ligue1_in_season': ['in_season_france'],
-      'championship_in_season': ['in_season_england_championship', 'in_season_england_second'],
-      'liga_portugal_in_season': ['in_season_portugal'],
-      'jupiler_in_season': ['in_season_belgium', 'in_season_jupiler'],
-      'eredivisie_in_season': ['in_season_netherlands'],
-      'scottish_in_season': ['in_season_scotland'],
-      'mls_in_season': ['in_season_us'],
-      'j1_league_in_season': ['in_season_japan'],
-      'k_league_in_season': ['in_season_korea'],
-      'contender_in_season': ['in_season_contender', 'in_season_contenders']
-    };
-
-    const compPrefixes = prefixMap[String(comp.id || '').toLowerCase()];
-    if (!compPrefixes) {
-      throw new Error(`La competizione "${comp.name}" non supporta la modalità Hot Streak PRO.`);
-    }
-
-    const proxyUrl = (window.CONFIG && CONFIG.SORARE_GRAPHQL_PROXY) || 'https://sorarehub-oauth.matty-ciaroni.workers.dev/graphql';
+  async fetchAllActiveTasksFromSession() {
     const taskQuery = `
       query GetHotStreakTasks {
         currentUser {
@@ -410,6 +379,19 @@ const App = {
       }
     `;
 
+    // 1. Prima legge tramite la sessione web autenticata (estensione Chrome)
+    try {
+      const extResp = await this.sendToExtension('SH_QUERY_SORARE', { query: taskQuery });
+      const webTasks = extResp?.json?.data?.currentUser?.taskGroup?.myTasks;
+      if (Array.isArray(webTasks) && webTasks.length > 0) {
+        return webTasks;
+      }
+    } catch (_) {}
+
+    // 2. Fallback sul proxy OAuth
+    const token = localStorage.getItem('sorare_access_token');
+    if (!token) return [];
+    const proxyUrl = (window.CONFIG && CONFIG.SORARE_GRAPHQL_PROXY) || 'https://sorarehub-oauth.matty-ciaroni.workers.dev/graphql';
     const res = await fetch(proxyUrl, {
       method: 'POST',
       headers: {
@@ -418,14 +400,37 @@ const App = {
       },
       body: JSON.stringify({ query: taskQuery })
     });
-
     const json = await res.json();
-    const tasks = json?.data?.currentUser?.taskGroup?.myTasks || [];
-    const targetRarity = String(scarcity || 'limited').toLowerCase();
+    return json?.data?.currentUser?.taskGroup?.myTasks || [];
+  },
 
+  async submitUniversalHotStreakTask(comp, scarcity, orderedStarters, captainCard, targetFixture) {
+    const prefixMap = {
+      'premier_league_in_season': ['in_season_england'],
+      'serie_a_in_season': ['in_season_italy'],
+      'laliga_in_season': ['in_season_spain'],
+      'bundesliga_in_season': ['in_season_germany'],
+      'ligue1_in_season': ['in_season_france'],
+      'championship_in_season': ['in_season_england_championship', 'in_season_england_second'],
+      'liga_portugal_in_season': ['in_season_portugal'],
+      'jupiler_in_season': ['in_season_belgium', 'in_season_jupiler'],
+      'eredivisie_in_season': ['in_season_netherlands'],
+      'scottish_in_season': ['in_season_scotland'],
+      'mls_in_season': ['in_season_us'],
+      'j1_league_in_season': ['in_season_japan'],
+      'k_league_in_season': ['in_season_korea'],
+      'contender_in_season': ['in_season_contender', 'in_season_contenders']
+    };
+
+    const compPrefixes = prefixMap[String(comp.id || '').toLowerCase()];
+    if (!compPrefixes) {
+      return { notFound: true, reason: `La competizione "${comp.name}" non usa task Hot Streak PRO.` };
+    }
+
+    const tasks = await this.fetchAllActiveTasksFromSession();
+    const targetRarity = String(scarcity || 'limited').toLowerCase();
     const expectedPrefixes = compPrefixes.map(p => `${p}_${targetRarity}`);
 
-    // Filtra i task compatibili con campionato e rarità
     const matchingTasks = tasks.filter(t => {
       if (t.__typename !== 'ThresholdsStreakTask' || !t.taskConfigSlug) return false;
       const slug = t.taskConfigSlug.toLowerCase();
@@ -433,15 +438,14 @@ const App = {
       return expectedPrefixes.some(pref => slug.startsWith(pref));
     });
 
-    // Cerca prima il task allineato alla Gameweek selezionata (se so5LeagueTrack è valorizzato), altrimenti prende quello attivo
-    let selectedTask = matchingTasks.find(t =>
+    const selectedTask = matchingTasks.find(t =>
       targetFixture?.slug &&
       t.so5LeagueTrack?.slug &&
       t.so5LeagueTrack.slug.startsWith(targetFixture.slug)
     ) || matchingTasks[0];
 
     if (!selectedTask) {
-      throw new Error(`Hot Streak PRO (${comp.name} • ${targetRarity.toUpperCase()}) non ancora aperta o non disponibile per questa Gameweek su Sorare.`);
+      return { notFound: true };
     }
 
     const taskAppearances = orderedStarters.map((p, idx) => ({
@@ -515,6 +519,18 @@ const App = {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
       const captainCard = orderedStarters.find(p => p.isCaptain) || orderedStarters[0];
 
+      // Prepara sempre anche il payload per il Bridge HUD di content_sorare.js
+      const bridgePayload = {
+        title: `${this.currentCompetition.name} (${modeLabel})`,
+        players: orderedStarters.map(p => ({
+          name: p.name,
+          slug: p.id,
+          pos: p.displayRole,
+          isCaptain: Boolean(p.id === captainCard.id),
+          isInSeason: Boolean(p.isInSeason)
+        }))
+      };
+
       // === RAMO HOT STREAK UNIVERSALE ===
       if (targetMode === 'hotstreak') {
         const matchedHotStreakLb = this.matchLeaderboardFromFixture(
@@ -550,12 +566,11 @@ const App = {
 
           await this.syncRealSorareFixturesAndLineups();
           this.runOptimizer();
-          this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedHotStreakLb.displayName || matchedHotStreakLb.slug} (${modeLabel})! • Ricalcolate ${this.lastGeneratedLineups.length} formazioni con le carte rimaste libere.`);
+          this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedHotStreakLb.displayName || matchedHotStreakLb.slug} (${modeLabel})!`);
           return;
         }
 
-        // 2. Altrimenti (Premier, Serie A, LaLiga, Bundesliga, Ligue 1, Championship, Portugal, JPL, Eredivisie, Scozia, Contender)
-        // usa ThresholdsStreakTask + upsertTaskLineup!
+        // 2. Prova ThresholdsStreakTask + upsertTaskLineup dalla sessione web autenticata
         const taskResult = await this.submitUniversalHotStreakTask(
           this.currentCompetition,
           this.currentScarcity,
@@ -564,12 +579,25 @@ const App = {
           targetFixture
         );
 
-        const targetSorareUrl = `https://sorare.com/it/football/play/boards/${targetFixture.slug}`;
-        if (sorareTab) sorareTab.location.href = targetSorareUrl;
+        if (taskResult && taskResult.ok) {
+          const targetSorareUrl = `https://sorare.com/it/football/play/boards/${targetFixture.slug}`;
+          if (sorareTab) sorareTab.location.href = targetSorareUrl;
 
-        await this.syncRealSorareFixturesAndLineups();
-        this.runOptimizer();
-        this.notify(`✅ ${lineup.rankLabel} schierata con successo in Hot Streak PRO (${this.currentCompetition.name} • ${taskResult.taskConfigSlug})!`);
+          await this.syncRealSorareFixturesAndLineups();
+          this.runOptimizer();
+          this.notify(`✅ ${lineup.rankLabel} schierata con successo in Hot Streak PRO (${this.currentCompetition.name} • ${taskResult.taskConfigSlug})!`);
+          return;
+        }
+
+        // 3. Fallback immediato: carica la formazione nel Bridge HUD dell'estensione e apre la pagina PRO Hot Streak di Sorare
+        await this.sendToExtension('SH_SET_BRIDGE_LINEUP', bridgePayload);
+        const proHotStreakUrl = 'https://sorare.com/it/football/play/pro/hot-streak';
+        if (sorareTab) {
+          sorareTab.location.href = proHotStreakUrl;
+        } else {
+          window.open(proHotStreakUrl, '_blank');
+        }
+        this.notify(`🔥 Formazione caricata nel pannello SORAREHUB BRIDGE su Sorare PRO: clicca "⚡ Auto-Compila Ora" nella finestra aperta!`);
         return;
       }
 
