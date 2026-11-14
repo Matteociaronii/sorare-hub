@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Direct Sorare GraphQL Submitter + Dynamic Live Sync
+// SorareHub - Application Controller + Direct Sorare Submitter (PvP + Hot Streak) + Exact Sorare Slug Matcher
 const App = {
   cards: [],
   gameweeks: [],
@@ -88,8 +88,6 @@ const App = {
     });
   },
 
-  // Genera dinamicamente lo slug ufficiale Sorare (es. "football-13-17-nov-2026" o "football-27-nov-1-dec-2026")
-  // per qualsiasi finestra temporale (passata, live o futura) senza mai usare date fisse nel codice
   buildSorareFixtureSlugFromDates(startDateInput, endDateInput) {
     const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
     const s = new Date(startDateInput);
@@ -134,7 +132,6 @@ const App = {
 
       const dynamicSlugs = new Set();
 
-      // 1. Calcola dinamicamente gli slug delle Gameweek attive/prossime in base alle finestre di this.gameweeks
       if (Array.isArray(this.gameweeks)) {
         this.gameweeks.forEach(gw => {
           const computedSlug = this.buildSorareFixtureSlugFromDates(gw.startDate, gw.endDate);
@@ -142,7 +139,6 @@ const App = {
         });
       }
 
-      // 2. Aggiunge tutti gli slug ufficiali restituiti live da Sorare (ordinati dal più vicino al più lontano)
       const sortedNodes = [...rawNodes]
         .filter(n => n && n.slug)
         .sort((a, b) => (a.gameWeek || 0) - (b.gameWeek || 0));
@@ -272,10 +268,12 @@ const App = {
     return this.usedCardsByGwSlug[fix.slug] || {};
   },
 
-  matchLeaderboardFromFixture(leaderboards, comp, scarcity) {
+  // Mappatura verificata sugli slug ufficiali Sorare per tutte le 20 competizioni + modalità Standard (PvP) o Hot Streak (PvE / In-Season)
+  matchLeaderboardFromFixture(leaderboards, comp, scarcity, targetMode = 'standard') {
     if (!Array.isArray(leaderboards) || leaderboards.length === 0) return null;
     const targetRarity = String(scarcity || 'limited').toLowerCase();
     const compId = String(comp.id || '').toLowerCase();
+    const isHotStreakMode = targetMode === 'hotstreak';
 
     const rarityFiltered = leaderboards.filter(lb => {
       const r = String(lb.rarityType || lb.slug || '').toLowerCase();
@@ -284,56 +282,95 @@ const App = {
       return r.includes(targetRarity);
     });
 
-    const pool = rarityFiltered.length > 0 ? rarityFiltered : leaderboards;
+    if (rarityFiltered.length === 0) return null;
 
-    const keywordMap = {
-      'premier_league_in_season': ['premier_league', 'premier-league'],
-      'serie_a_in_season': ['serie_a', 'serie-a'],
-      'laliga_in_season': ['laliga', 'primera_division'],
-      'bundesliga_in_season': ['bundesliga'],
-      'ligue1_in_season': ['ligue_1', 'ligue-1'],
-      'championship_in_season': ['championship', 'efl'],
-      'liga_portugal_in_season': ['primeira_liga', 'portugal'],
-      'jupiler_in_season': ['jupiler', 'belgium', 'first_division_a'],
-      'eredivisie_in_season': ['eredivisie'],
-      'scottish_in_season': ['scottish', 'premiership'],
-      'mls_in_season': ['mls'],
-      'j1_league_in_season': ['j1_league', 'j_league'],
-      'k_league_in_season': ['k_league'],
-      'challenger_in_season': ['challenger'],
-      'contender_in_season': ['contender'],
-      'champions_europe_classic_so7': ['champions_league', 'champions_europe', 'ucl'],
-      'contender_europe_classic_so7': ['europa_league', 'contender_europe'],
-      'champion_europe_classic_so7': ['champion_europe', 'champion'],
-      'u23_classic_so7': ['under_twenty_one', 'u23', 'under_23'],
-      'all_star_classic_so7': ['all_star', 'all-star']
+    // Esclude sempre le stanze secondarie Arena (Cap 260, Cap 220, Beginner, Elite, Uncapped)
+    const nonArenaPool = rarityFiltered.filter(lb => {
+      const s = String(lb.slug || '').toLowerCase();
+      return !s.includes('_arena_');
+    });
+
+    const pool = nonArenaPool.length > 0 ? nonArenaPool : rarityFiltered;
+
+    const exactSorareSlugTokens = {
+      'premier_league_in_season': { primary: ['in_season_england_'], secondary: ['-england-'] },
+      'serie_a_in_season': { primary: ['in_season_italy_'], secondary: ['-italy-'] },
+      'laliga_in_season': { primary: ['in_season_spain_'], secondary: ['-spain-'] },
+      'bundesliga_in_season': { primary: ['in_season_germany_'], secondary: ['-germany-'] },
+      'ligue1_in_season': { primary: ['in_season_france_'], secondary: ['-france-'] },
+      'championship_in_season': { primary: ['in_season_england_second_'], secondary: ['england_second', 'in_season_challenger'] },
+      'liga_portugal_in_season': { primary: ['in_season_portugal_'], secondary: ['-portugal-', 'in_season_challenger'] },
+      'jupiler_in_season': { primary: ['in_season_jupiler_'], secondary: ['-jupiler-', 'in_season_challenger'] },
+      'eredivisie_in_season': { primary: ['in_season_netherlands_'], secondary: ['-netherlands-', 'in_season_challenger'] },
+      'scottish_in_season': { primary: ['in_season_scotland_'], secondary: ['-scotland-', 'spfl', 'in_season_challenger'] },
+      'mls_in_season': { primary: ['in_season_us_'], secondary: ['-us-'] },
+      'j1_league_in_season': { primary: ['in_season_japan_'], secondary: ['-japan-'] },
+      'k_league_in_season': { primary: ['in_season_korea_'], secondary: ['-korea-'] },
+      'challenger_in_season': { primary: ['in_season_challenger', '-challenger-'], secondary: ['in_season_scotland_', 'in_season_jupiler_', 'in_season_netherlands_', 'in_season_portugal_'] },
+      'contender_in_season': { primary: ['in_season_contenders', '-contenders-'], secondary: ['contender'] },
+      'champions_europe_classic_so7': { primary: ['champions_league', 'european_champions', 'ucl'], secondary: ['all_seasons_champions'] },
+      'contender_europe_classic_so7': { primary: ['europa_league', 'contender_europe', 'uel'], secondary: ['all_seasons_contenders'] },
+      'champion_europe_classic_so7': { primary: ['all_seasons_champions'], secondary: ['-champions-'] },
+      'u23_classic_so7': { primary: ['all_seasons_under_twenty_one'], secondary: ['under_twenty_one', 'u23'] },
+      'all_star_classic_so7': { primary: ['all_seasons_all_star'], secondary: ['-all_star-'] }
     };
 
-    const keywords = keywordMap[compId] || [compId.replace(/_in_season|_classic_so7/g, '')];
-    const isClassic = comp.format === 'SO7' || compId.includes('classic');
+    const mapping = exactSorareSlugTokens[compId] || {
+      primary: [compId.replace(/_in_season|_classic_so7/g, '')],
+      secondary: []
+    };
+
+    const isClassicSo7 = comp.format === 'SO7' || compId.includes('classic');
 
     const scored = pool.map(lb => {
       const s = String(lb.slug || '').toLowerCase();
       const dName = String(lb.displayName || '').toLowerCase();
       let score = 0;
 
-      if (keywords.some(k => s.includes(k) || dName.includes(k))) score += 50;
-      if (isClassic && (s.includes('all_seasons') || s.includes('classic'))) score += 20;
-      if (!isClassic && (s.includes('in_season') || s.includes('in-season') || !s.includes('all_seasons'))) score += 20;
-      if (lb.division === 1) score += 5;
+      if (mapping.primary.some(k => k && (s.includes(k) || dName.includes(k)))) {
+        score += 120;
+      } else if (mapping.secondary.some(k => k && (s.includes(k) || dName.includes(k)))) {
+        score += 75;
+      }
+
+      if (score === 0) return { lb, score: 0 };
+
+      const lbIsClassic = s.includes('all_seasons');
+      const lbIsInSeason = s.includes('in_season');
+      const lbIsPveHotStreak = s.endsWith('_pve') || dName.includes('hot streak');
+      const lbIsPvp = s.endsWith('_pvp');
+
+      if (isClassicSo7 && lbIsClassic) score += 30;
+      if (!isClassicSo7 && lbIsInSeason) score += 30;
+
+      // Gestione dedicata Hot Streak vs Torneo Standard
+      if (isHotStreakMode) {
+        if (lbIsPveHotStreak) score += 60;
+        else if (lbIsInSeason && !lbIsPvp) score += 25;
+        else if (lbIsPvp) score -= 40;
+      } else {
+        if (lbIsPveHotStreak) score -= 60;
+        if (lbIsPvp) score += 25;
+      }
+
+      if (lb.division === 1) score += 10;
+      else if (typeof lb.division === 'number') score += Math.max(0, 6 - lb.division);
 
       return { lb, score };
-    }).sort((a, b) => b.score - a.score);
+    }).filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
 
-    return scored[0] ? scored[0].lb : pool[0];
+    return scored[0] ? scored[0].lb : null;
   },
 
-  async submitLineupDirectlyToSorare(lineupIndex, btnEl) {
+  async submitLineupDirectlyToSorare(lineupIndex, btnEl, targetMode = 'standard') {
     const lineup = this.lastGeneratedLineups[lineupIndex];
     if (!lineup || !Array.isArray(lineup.starters) || lineup.starters.length === 0) {
       this.notify('❌ Formazione non trovata.', true);
       return;
     }
+
+    const modeLabel = targetMode === 'hotstreak' ? '🔥 Hot Streak' : '⚡ Torneo';
 
     const sorareTab = window.open('about:blank', '_blank');
     if (sorareTab && sorareTab.document) {
@@ -341,19 +378,19 @@ const App = {
         <html><head><title>Invio formazione a Sorare...</title></head>
         <body style="background:#0d0e12;color:#f3d266;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
           <div style="text-align:center;">
-            <h2>⚡ SorareHub Direct Submitter</h2>
+            <h2>${modeLabel} — SorareHub Direct Submitter</h2>
             <p style="color:#ccc;">Salvataggio di <strong>${this.escapeHtml(lineup.rankLabel)}</strong> su Sorare in corso...</p>
           </div>
         </body></html>
       `);
     }
 
-    const originalText = btnEl ? btnEl.innerHTML : '⚡ Invia Diretto a Sorare';
+    const originalText = btnEl ? btnEl.innerHTML : modeLabel;
     if (btnEl) {
       btnEl.disabled = true;
-      btnEl.innerHTML = '⏳ Invio a Sorare in corso...';
+      btnEl.innerHTML = '⏳ Invio...';
     }
-    this.notify(`⏳ Invio di ${lineup.rankLabel} a Sorare in corso...`);
+    this.notify(`⏳ Invio di ${lineup.rankLabel} (${modeLabel}) a Sorare in corso...`);
 
     try {
       if (Object.keys(this.sorareFixturesBySlug).length === 0) {
@@ -368,11 +405,12 @@ const App = {
       const matchedLb = this.matchLeaderboardFromFixture(
         targetFixture.so5Leaderboards,
         this.currentCompetition,
-        this.currentScarcity
+        this.currentScarcity,
+        targetMode
       );
 
       if (!matchedLb) {
-        throw new Error(`Leaderboard non trovata per ${this.currentCompetition.name}.`);
+        throw new Error(`Il torneo "${this.currentCompetition.name}" (${this.currentScarcity.toUpperCase()}) non è aperto su Sorare in ${targetFixture.slug} (es. sosta o leaderboard non ancora pubblicata da Sorare).`);
       }
 
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
@@ -433,7 +471,7 @@ const App = {
       } else {
         await this.syncRealSorareFixturesAndLineups();
         this.runOptimizer();
-        this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedLb.displayName || matchedLb.slug}! • Ricalcolate ${this.lastGeneratedLineups.length} formazioni con le carte rimaste libere.`);
+        this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedLb.displayName || matchedLb.slug} (${modeLabel})! • Ricalcolate ${this.lastGeneratedLineups.length} formazioni con le carte rimaste libere.`);
       }
     } catch (err) {
       console.error('Errore invio Sorare:', err);
@@ -818,15 +856,19 @@ const App = {
         color: #0d0e12;
         border: none;
         border-radius: 9px;
-        padding: 10px 14px;
-        font-size: 13px;
+        padding: 10px 10px;
+        font-size: 12.5px;
         font-weight: 800;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 6px;
+        gap: 5px;
         transition: transform 0.12s ease, opacity 0.15s ease;
+      }
+      .sh-direct-submit-btn.hotstreak-btn {
+        background: linear-gradient(135deg, #ff7043 0%, #d84315 100%);
+        color: #ffffff;
       }
       .sh-direct-submit-btn:hover {
         transform: translateY(-1px);
@@ -1117,8 +1159,9 @@ const App = {
       if (directSubmitBtn) {
         e.stopPropagation();
         const idx = Number(directSubmitBtn.dataset.directSubmitIdx);
+        const mode = directSubmitBtn.dataset.submitMode || 'standard';
         if (!Number.isNaN(idx)) {
-          this.submitLineupDirectlyToSorare(idx, directSubmitBtn);
+          this.submitLineupDirectlyToSorare(idx, directSubmitBtn, mode);
         }
         return;
       }
@@ -1299,6 +1342,8 @@ const App = {
       this.notify(`✅ Generate ${lineups.length} formazioni ottimali con carte libere per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
     }
 
+    const isInSeasonSo5 = this.currentCompetition.format === 'SO5';
+
     targetGrid.innerHTML = lineups.map((lineup, idx) => {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
 
@@ -1357,6 +1402,12 @@ const App = {
         `;
       }).join('');
 
+      const hotStreakBtnHtml = isInSeasonSo5
+        ? `<button type="button" class="sh-direct-submit-btn hotstreak-btn" data-direct-submit-idx="${idx}" data-submit-mode="hotstreak" title="Invia la formazione nella modalità Hot Streak / In-Season del campionato">
+            🔥 Invia Hot Streak
+          </button>`
+        : '';
+
       return `
         <div class="sh-lineup-card">
           <div>
@@ -1370,9 +1421,10 @@ const App = {
             <div>${playersHtml}</div>
           </div>
           <div class="sh-direct-submit-footer">
-            <button type="button" class="sh-direct-submit-btn" data-direct-submit-idx="${idx}">
-              ⚡ Invia Diretto a Sorare
+            <button type="button" class="sh-direct-submit-btn" data-direct-submit-idx="${idx}" data-submit-mode="standard">
+              ⚡ Invia Torneo
             </button>
+            ${hotStreakBtnHtml}
           </div>
         </div>
       `;
