@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Direct Sorare GraphQL Submitter + Live Used Cards Sync
+// SorareHub - Application Controller + Direct Sorare GraphQL Submitter + Dynamic Live Sync
 const App = {
   cards: [],
   gameweeks: [],
@@ -88,6 +88,30 @@ const App = {
     });
   },
 
+  // Genera dinamicamente lo slug ufficiale Sorare (es. "football-13-17-nov-2026" o "football-27-nov-1-dec-2026")
+  // per qualsiasi finestra temporale (passata, live o futura) senza mai usare date fisse nel codice
+  buildSorareFixtureSlugFromDates(startDateInput, endDateInput) {
+    const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const s = new Date(startDateInput);
+    const e = new Date(endDateInput);
+    if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return null;
+
+    const d1 = s.getUTCDate();
+    const m1 = months[s.getUTCMonth()];
+    const y1 = s.getUTCFullYear();
+    const d2 = e.getUTCDate();
+    const m2 = months[e.getUTCMonth()];
+    const y2 = e.getUTCFullYear();
+
+    if (m1 === m2 && y1 === y2) {
+      return `football-${d1}-${d2}-${m1}-${y1}`;
+    }
+    if (y1 === y2) {
+      return `football-${d1}-${m1}-${d2}-${m2}-${y1}`;
+    }
+    return `football-${d1}-${m1}-${y1}-${d2}-${m2}-${y2}`;
+  },
+
   async syncRealSorareFixturesAndLineups() {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return false;
@@ -102,18 +126,30 @@ const App = {
           'Authorization': 'Bearer ' + token
         },
         body: JSON.stringify({
-          query: '{ so5 { so5Fixtures(first: 6) { nodes { slug gameWeek startDate endDate aasmState } } } }'
+          query: '{ so5 { so5Fixtures(first: 8) { nodes { slug gameWeek startDate endDate aasmState } } } }'
         })
       });
       const listJson = await listRes.json();
       const rawNodes = listJson?.data?.so5?.so5Fixtures?.nodes || [];
 
-      const knownSlugs = new Set(['football-13-17-nov-2026', 'football-17-20-nov-2026', 'football-20-24-nov-2026', 'football-24-27-nov-2026']);
-      rawNodes.forEach(n => {
-        if (n && n.slug) knownSlugs.add(n.slug);
-      });
+      const dynamicSlugs = new Set();
 
-      const slugList = Array.from(knownSlugs).slice(0, 6);
+      // 1. Calcola dinamicamente gli slug delle Gameweek attive/prossime in base alle finestre di this.gameweeks
+      if (Array.isArray(this.gameweeks)) {
+        this.gameweeks.forEach(gw => {
+          const computedSlug = this.buildSorareFixtureSlugFromDates(gw.startDate, gw.endDate);
+          if (computedSlug) dynamicSlugs.add(computedSlug);
+        });
+      }
+
+      // 2. Aggiunge tutti gli slug ufficiali restituiti live da Sorare (ordinati dal più vicino al più lontano)
+      const sortedNodes = [...rawNodes]
+        .filter(n => n && n.slug)
+        .sort((a, b) => (a.gameWeek || 0) - (b.gameWeek || 0));
+
+      sortedNodes.forEach(n => dynamicSlugs.add(n.slug));
+
+      const slugList = Array.from(dynamicSlugs).slice(0, 6);
       if (slugList.length === 0) return false;
 
       const aliasQueries = slugList.map((s, idx) => `
@@ -193,12 +229,17 @@ const App = {
 
       if (realFixturesArray.length > 0 && Array.isArray(this.gameweeks)) {
         this.gameweeks.forEach((gw, idx) => {
+          const computedSlug = this.buildSorareFixtureSlugFromDates(gw.startDate, gw.endDate);
           const gwStart = gw.startDate ? new Date(gw.startDate).getTime() : 0;
-          let matchedFix = realFixturesArray.find(rf => {
-            if (!rf.startDate) return false;
-            const rfStart = new Date(rf.startDate).getTime();
-            return Math.abs(rfStart - gwStart) <= 36 * 3600 * 1000;
-          }) || realFixturesArray[idx];
+
+          let matchedFix =
+            (computedSlug && fixturesMap[computedSlug]) ||
+            realFixturesArray.find(rf => {
+              if (!rf.startDate) return false;
+              const rfStart = new Date(rf.startDate).getTime();
+              return Math.abs(rfStart - gwStart) <= 36 * 3600 * 1000;
+            }) ||
+            realFixturesArray[idx];
 
           if (matchedFix) {
             gw.gameWeek = matchedFix.gameWeek;
@@ -337,27 +378,9 @@ const App = {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
       const captainCard = orderedStarters.find(p => p.isCaptain) || orderedStarters[0];
 
-      const sorarePosMap = {
-        'GK': 'Goalkeeper',
-        'DC': 'Defender',
-        'DEF': 'Defender',
-        'CC': 'Midfielder',
-        'MID': 'Midfielder',
-        'ATT': 'Forward',
-        'FWD': 'Forward',
-        'EXTRA': 'Extra'
-      };
-
-      // Struttura verificata su So5AppearanceInput: so5Appearances: [{ cardSlug, captain }]
       const appearancesClean = orderedStarters.map(p => ({
         cardSlug: p.id,
         captain: Boolean(p.id === captainCard.id)
-      }));
-
-      const appearancesWithPosition = orderedStarters.map(p => ({
-        cardSlug: p.id,
-        captain: Boolean(p.id === captainCard.id),
-        position: sorarePosMap[p.displayRole] || sorarePosMap[p.slotRole] || 'Extra'
       }));
 
       const rawLbUuid = String(matchedLb.id || '').replace(/^So5Leaderboard:/, '');
@@ -372,16 +395,6 @@ const App = {
           so5LeaderboardId: rawLbUuid,
           name: lineup.rankLabel,
           so5Appearances: appearancesClean
-        },
-        {
-          so5LeaderboardId: matchedLb.id,
-          name: lineup.rankLabel,
-          so5Appearances: appearancesWithPosition
-        },
-        {
-          so5LeaderboardId: rawLbUuid,
-          name: lineup.rankLabel,
-          so5Appearances: appearancesWithPosition
         }
       ];
 
@@ -402,7 +415,7 @@ const App = {
         submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', payload);
         errMsg = extractErr(submitResp);
         if (!errMsg) break;
-        if (!/invalid id|not found|position|field is not defined|expected value/i.test(errMsg)) {
+        if (!/invalid id|not found/i.test(errMsg)) {
           break;
         }
       }
@@ -418,9 +431,9 @@ const App = {
         console.warn('Dettaglio risposta CreateOrUpdateSo5Lineup:', submitResp?.json);
         this.notify(`⚠️ Risposta Sorare (${matchedLb.displayName}): "${errMsg}"`, true);
       } else {
-        this.notify(`✅ ${lineup.rankLabel} inviata e schierata con successo in ${matchedLb.displayName || matchedLb.slug}!`);
         await this.syncRealSorareFixturesAndLineups();
         this.runOptimizer();
+        this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedLb.displayName || matchedLb.slug}! • Ricalcolate ${this.lastGeneratedLineups.length} formazioni con le carte rimaste libere.`);
       }
     } catch (err) {
       console.error('Errore invio Sorare:', err);
