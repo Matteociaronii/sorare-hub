@@ -1,10 +1,10 @@
-// SorareHub - Application Controller + Direct Sorare GraphQL Submitter + Auto-Detect Used Cards
+// SorareHub - Application Controller + Direct Sorare GraphQL Submitter + Live Used Cards Sync
 const App = {
   cards: [],
   gameweeks: [],
   lastGeneratedLineups: [],
-  sorareFixturesCache: [],
-  usedCardsByGw: {},
+  sorareFixturesBySlug: {},
+  usedCardsByGwSlug: {},
   unlockedUsedCardSlugs: new Set(),
   selectedGwIndex: 0,
   selectedClubSlug: 'ALL',
@@ -71,8 +71,8 @@ const App = {
       const reqId = 'sh_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const timeout = setTimeout(() => {
         window.removeEventListener('message', listener);
-        resolve({ ok: false, error: 'Timeout comunicazione con estensione Chrome (`chrome://extensions` -> Ricarica estensione e aggiorna la pagina).' });
-      }, 9000);
+        resolve({ ok: false, error: 'Estensione Chrome non risponde: vai su chrome://extensions, clicca Ricarica su SorareHub Direct Submitter e aggiorna questa pagina.' });
+      }, 10000);
 
       function listener(event) {
         if (event.source !== window) return;
@@ -88,34 +88,101 @@ const App = {
     });
   },
 
-  // Sincronizza in automatico dall'estensione le formazioni già schierate su Sorare
-  async syncUsedCardsFromSorareExtension() {
+  // Legge direttamente via OAuth Cloudflare le Gameweek reali (730, 731, 732, 733), le Leaderboard e le carte già schierate (anyCard.slug)
+  async syncRealSorareFixturesAndLineups() {
+    const token = localStorage.getItem('sorare_access_token');
+    if (!token) return false;
+
+    const proxyUrl = (window.CONFIG && CONFIG.SORARE_GRAPHQL_PROXY) || 'https://sorarehub-oauth.matty-ciaroni.workers.dev/graphql';
+
     try {
-      const resp = await this.sendToExtension('SH_GET_LEADERBOARDS');
-      if (!resp || !resp.ok || !Array.isArray(resp.fixtures)) {
-        return false;
-      }
+      // Passo 1: recupera gli slug delle prossime fixture + calcola lo slug della fixture corrente se in corso
+      const listRes = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({
+          query: '{ so5 { so5Fixtures(first: 6) { nodes { slug gameWeek startDate endDate aasmState } } } }'
+        })
+      });
+      const listJson = await listRes.json();
+      const rawNodes = listJson?.data?.so5?.so5Fixtures?.nodes || [];
 
-      this.sorareFixturesCache = resp.fixtures;
-      const byGw = {};
+      // Assicuriamoci di includere sempre anche la GW attiva del weekend (es. football-13-17-nov-2026) oltre alle prossime
+      const knownSlugs = new Set(['football-13-17-nov-2026', 'football-17-20-nov-2026', 'football-20-24-nov-2026', 'football-24-27-nov-2026']);
+      rawNodes.forEach(n => {
+        if (n && n.slug) knownSlugs.add(n.slug);
+      });
 
-      resp.fixtures.forEach(fix => {
-        const gwNum = fix.gameWeek;
-        if (!gwNum) return;
-        if (!byGw[gwNum]) byGw[gwNum] = {};
+      const slugList = Array.from(knownSlugs).slice(0, 6);
+      if (slugList.length === 0) return false;
+
+      // Passo 2: costruisce la query multi-alias per ogni singola so5Fixture(slug: "...") con mySo5Lineups -> anyCard { slug }
+      const aliasQueries = slugList.map((s, idx) => `
+        f${idx}: so5Fixture(slug: "${s}") {
+          slug
+          gameWeek
+          startDate
+          endDate
+          so5Leaderboards {
+            id
+            slug
+            displayName
+            rarityType
+            division
+            mySo5Lineups {
+              id
+              name
+              so5Appearances {
+                captain
+                anyCard {
+                  slug
+                }
+              }
+            }
+          }
+        }
+      `).join('\n');
+
+      const detailRes = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({
+          query: `query GetRealSorareState { so5 { ${aliasQueries} } }`
+        })
+      });
+
+      const detailJson = await detailRes.json();
+      const so5Data = detailJson?.data?.so5 || {};
+
+      const fixturesMap = {};
+      const usedBySlug = {};
+      const realFixturesArray = [];
+
+      Object.keys(so5Data).forEach(aliasKey => {
+        const fix = so5Data[aliasKey];
+        if (!fix || !fix.slug) return;
+        fixturesMap[fix.slug] = fix;
+        realFixturesArray.push(fix);
+        usedBySlug[fix.slug] = {};
 
         (fix.so5Leaderboards || []).forEach(lb => {
           (lb.mySo5Lineups || []).forEach(lu => {
             (lu.so5Appearances || []).forEach(app => {
-              const cSlug = app?.card?.slug;
+              const cSlug = app?.anyCard?.slug;
               if (cSlug) {
-                byGw[gwNum][cSlug] = {
+                usedBySlug[fix.slug][cSlug] = {
                   cardSlug: cSlug,
                   leaderboardName: lb.displayName || lb.slug,
                   leaderboardSlug: lb.slug,
                   leaderboardId: lb.id,
                   lineupId: lu.id,
-                  lineupName: lu.name || 'Formazione Sorare'
+                  lineupName: lu.name || 'Formazione'
                 };
               }
             });
@@ -123,18 +190,51 @@ const App = {
         });
       });
 
-      this.usedCardsByGw = byGw;
+      this.sorareFixturesBySlug = fixturesMap;
+      this.usedCardsByGwSlug = usedBySlug;
+
+      // Allinea le Gameweek di SorareHub ai numeri e agli slug reali di Sorare (es. GW #730, #731, #732, #733)
+      realFixturesArray.sort((a, b) => (a.gameWeek || 0) - (b.gameWeek || 0));
+
+      if (realFixturesArray.length > 0 && Array.isArray(this.gameweeks)) {
+        this.gameweeks.forEach((gw, idx) => {
+          // Match per sovrapposizione di date o per indice progressivo
+          const gwStart = gw.startDate ? new Date(gw.startDate).getTime() : 0;
+          let matchedFix = realFixturesArray.find(rf => {
+            if (!rf.startDate) return false;
+            const rfStart = new Date(rf.startDate).getTime();
+            return Math.abs(rfStart - gwStart) <= 36 * 3600 * 1000;
+          }) || realFixturesArray[idx];
+
+          if (matchedFix) {
+            gw.gameWeek = matchedFix.gameWeek;
+            gw.sorareSlug = matchedFix.slug;
+            const isMidweek = gw.label && gw.label.toLowerCase().includes('midweek');
+            gw.label = `GW #${matchedFix.gameWeek} (${isMidweek ? 'Midweek' : 'Weekend'})`;
+          }
+        });
+      }
+
       return true;
-    } catch (e) {
-      console.warn('Impossibile sincronizzare formazioni già schierate:', e);
+    } catch (err) {
+      console.warn('Errore syncRealSorareFixturesAndLineups:', err);
       return false;
     }
   },
 
-  getLockedCardsMapForCurrentGw() {
+  getSelectedSorareFixture() {
     const selectedGw = this.gameweeks[this.selectedGwIndex];
-    if (!selectedGw || !selectedGw.gameWeek) return {};
-    return this.usedCardsByGw[selectedGw.gameWeek] || {};
+    if (selectedGw && selectedGw.sorareSlug && this.sorareFixturesBySlug[selectedGw.sorareSlug]) {
+      return this.sorareFixturesBySlug[selectedGw.sorareSlug];
+    }
+    const allFixes = Object.values(this.sorareFixturesBySlug).sort((a, b) => (a.gameWeek || 0) - (b.gameWeek || 0));
+    return allFixes[this.selectedGwIndex] || allFixes[0] || null;
+  },
+
+  getLockedCardsMapForCurrentGw() {
+    const fix = this.getSelectedSorareFixture();
+    if (!fix || !fix.slug) return {};
+    return this.usedCardsByGwSlug[fix.slug] || {};
   },
 
   matchLeaderboardFromFixture(leaderboards, comp, scarcity) {
@@ -200,7 +300,7 @@ const App = {
       return;
     }
 
-    // Apre IMMEDIATAMENTE la finestra al click dell'utente per evitare il blocco popup di Chrome!
+    // Apre subito la finestra per non far scattare il blocco popup di Chrome
     const sorareTab = window.open('about:blank', '_blank');
     if (sorareTab && sorareTab.document) {
       sorareTab.document.write(`
@@ -208,7 +308,7 @@ const App = {
         <body style="background:#0d0e12;color:#f3d266;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
           <div style="text-align:center;">
             <h2>⚡ SorareHub Direct Submitter</h2>
-            <p style="color:#ccc;">Salvataggio di <strong>${this.escapeHtml(lineup.rankLabel)}</strong> sul server di Sorare in corso...</p>
+            <p style="color:#ccc;">Salvataggio di <strong>${this.escapeHtml(lineup.rankLabel)}</strong> su Sorare in corso...</p>
           </div>
         </body></html>
       `);
@@ -222,24 +322,13 @@ const App = {
     this.notify(`⏳ Invio di ${lineup.rankLabel} a Sorare in corso...`);
 
     try {
-      const lbResp = await this.sendToExtension('SH_GET_LEADERBOARDS');
-      if (!lbResp || !lbResp.ok) {
-        throw new Error(lbResp?.error || 'Estensione non rilevata. Vai su chrome://extensions, clicca Ricarica su SorareHub Direct Submitter e aggiorna questa pagina.');
+      if (Object.keys(this.sorareFixturesBySlug).length === 0) {
+        await this.syncRealSorareFixturesAndLineups();
       }
 
-      const fixtures = Array.isArray(lbResp.fixtures) ? lbResp.fixtures : [];
-      if (fixtures.length > 0) {
-        this.sorareFixturesCache = fixtures;
-      }
-
-      const selectedGw = this.gameweeks[this.selectedGwIndex];
-      let targetFixture = fixtures.find(f => selectedGw && f.gameWeek === selectedGw.gameWeek && f.so5Leaderboards?.length > 0)
-        || fixtures.find(f => f.so5Leaderboards && f.so5Leaderboards.length > 0);
-
-      if (!targetFixture) {
-        const fallbackLobbyUrl = 'https://sorare.com/it/football/play';
-        if (sorareTab) sorareTab.location.href = fallbackLobbyUrl;
-        throw new Error('Nessuna Gameweek con tornei aperti trovata su Sorare: ti ho aperto la Lobby di Sorare.');
+      const targetFixture = this.getSelectedSorareFixture();
+      if (!targetFixture || !Array.isArray(targetFixture.so5Leaderboards) || targetFixture.so5Leaderboards.length === 0) {
+        throw new Error('Impossibile leggere i tornei della Gameweek da Sorare. Ricarica la pagina.');
       }
 
       const matchedLb = this.matchLeaderboardFromFixture(
@@ -249,29 +338,41 @@ const App = {
       );
 
       if (!matchedLb) {
-        const fallbackGwUrl = `https://sorare.com/it/football/play/boards/${targetFixture.slug}`;
-        if (sorareTab) sorareTab.location.href = fallbackGwUrl;
-        throw new Error(`Leaderboard non trovata per ${this.currentCompetition.name}: aperta la pagina della Gameweek.`);
+        throw new Error(`Leaderboard non trovata per ${this.currentCompetition.name}.`);
       }
 
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
       const captainCard = orderedStarters.find(p => p.isCaptain) || orderedStarters[0];
 
+      // Proviamo i formati ufficiali accettati da createOrUpdateSo5LineupInput di Sorare
       const appearancesInput = orderedStarters.map(p => ({
         cardSlug: p.id,
         captain: Boolean(p.id === captainCard.id)
       }));
 
-      // Tentativo 1: so5LeaderboardId + so5AppearancesAttributes
-      let submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', {
-        so5LeaderboardId: matchedLb.id,
-        name: lineup.rankLabel,
-        so5AppearancesAttributes: appearancesInput
-      });
+      const rawLbUuid = String(matchedLb.id || '').replace(/^So5Leaderboard:/, '');
+
+      const candidatePayloads = [
+        {
+          so5LeaderboardId: matchedLb.id,
+          name: lineup.rankLabel,
+          so5AppearancesAttributes: appearancesInput
+        },
+        {
+          so5LeaderboardId: rawLbUuid,
+          name: lineup.rankLabel,
+          so5AppearancesAttributes: appearancesInput
+        },
+        {
+          so5LeaderboardSlug: matchedLb.slug,
+          name: lineup.rankLabel,
+          so5AppearancesAttributes: appearancesInput
+        }
+      ];
 
       const extractErr = (r) => {
-        if (!r || !r.ok) return r?.error || 'Errore di comunicazione';
-        if (r.status && r.status !== 200) return `HTTP ${r.status} (Assicurati di essere loggato su sorare.com)`;
+        if (!r || !r.ok) return r?.error || 'Errore di comunicazione con estensione';
+        if (r.status && r.status !== 200) return `HTTP ${r.status} (Verifica di essere loggato su sorare.com)`;
         const topErr = r.json?.errors?.[0]?.message;
         if (topErr) return topErr;
         const mutErr = r.json?.data?.createOrUpdateSo5Lineup?.errors?.[0]?.message;
@@ -279,19 +380,19 @@ const App = {
         return null;
       };
 
-      let errMsg = extractErr(submitResp);
+      let submitResp = null;
+      let errMsg = null;
 
-      // Tentativo 2: so5LeaderboardSlug + so5AppearancesAttributes
-      if (errMsg && /unknown argument|field|input|invalid id/i.test(errMsg)) {
-        submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', {
-          so5LeaderboardSlug: matchedLb.slug,
-          name: lineup.rankLabel,
-          so5AppearancesAttributes: appearancesInput
-        });
+      for (const payload of candidatePayloads) {
+        submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', payload);
         errMsg = extractErr(submitResp);
+        if (!errMsg) break;
+        if (!/invalid id|not found|unknown argument|field|input/i.test(errMsg)) {
+          break;
+        }
       }
 
-      const targetSorareUrl = `https://sorare.com/it/football/play/boards/arena/essence/${targetFixture.slug}/${matchedLb.slug}/lineups`;
+      const targetSorareUrl = `https://sorare.com/it/football/play/boards/${targetFixture.slug}`;
       if (sorareTab) {
         sorareTab.location.href = targetSorareUrl;
       } else {
@@ -299,19 +400,17 @@ const App = {
       }
 
       if (errMsg) {
-        console.warn('Risposta GraphQL Sorare:', submitResp?.json);
-        this.notify(`⚠️ Risposta da Sorare: "${errMsg}" — Aperta comunque la competizione (${matchedLb.displayName || matchedLb.slug})!`, true);
+        console.warn('Dettaglio risposta CreateOrUpdateSo5Lineup:', submitResp?.json);
+        this.notify(`⚠️ Risposta Sorare (${matchedLb.displayName}): "${errMsg}"`, true);
       } else {
-        this.notify(`✅ ${lineup.rankLabel} inviata e schierata su Sorare in ${matchedLb.displayName || matchedLb.slug}!`);
-        await this.syncUsedCardsFromSorareExtension();
+        this.notify(`✅ ${lineup.rankLabel} inviata e schierata con successo in ${matchedLb.displayName || matchedLb.slug}!`);
+        await this.syncRealSorareFixturesAndLineups();
         this.runOptimizer();
       }
     } catch (err) {
       console.error('Errore invio Sorare:', err);
       this.notify('❌ ' + err.message, true);
-      if (sorareTab && sorareTab.location.href === 'about:blank') {
-        sorareTab.close();
-      }
+      if (sorareTab) sorareTab.close();
     } finally {
       if (btnEl) {
         btnEl.disabled = false;
@@ -324,6 +423,7 @@ const App = {
     const total = this.cards.length;
     const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+    const lockedMap = this.getLockedCardsMapForCurrentGw();
 
     let confirmedXiCount = 0;
     const roleActiveCounts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
@@ -331,6 +431,7 @@ const App = {
 
     this.cards.forEach(c => {
       if (c.isInjuredOrSuspended) return;
+      if (lockedMap[c.id] && !this.unlockedUsedCardSlugs.has(c.id)) return;
       if (this.manualOverrides[c.playerSlug] === 'bench') return;
       if (c.scarcity !== this.currentScarcity) return;
       if (!OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)) return;
@@ -396,7 +497,7 @@ const App = {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <div>
             <div style="font-size:11px;font-weight:800;color:#f3d266;text-transform:uppercase;letter-spacing:0.5px;">
-              📡 Radar Giocatori con Match in ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
+              📡 Radar Giocatori Liberi con Match in ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
             </div>
             <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
               Schierabili nel torneo: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
@@ -599,6 +700,7 @@ const App = {
         align-items: center;
         gap: 10px;
         margin-top: 10px;
+        width: 100%;
       }
       .gw-selector-pill {
         display: inline-flex;
@@ -643,13 +745,13 @@ const App = {
       }
       .sorare-locked-strip {
         width: 100%;
-        background: rgba(156, 39, 176, 0.12);
-        border: 1px solid rgba(186, 104, 200, 0.45);
+        background: rgba(156, 39, 176, 0.14);
+        border: 1px solid rgba(186, 104, 200, 0.55);
         border-radius: 9px;
-        padding: 7px 12px;
+        padding: 8px 12px;
         margin-top: 6px;
         font-size: 12px;
-        color: #e1bee7;
+        color: #f3e5f5;
       }
       .club-xi-chip {
         display: inline-flex;
@@ -671,8 +773,8 @@ const App = {
         color: #ef9a9a;
       }
       .club-xi-chip.locked-sorare {
-        border-color: rgba(186, 104, 200, 0.6);
-        background: rgba(156, 39, 176, 0.22);
+        border-color: rgba(186, 104, 200, 0.65);
+        background: rgba(156, 39, 176, 0.28);
         color: #f3e5f5;
       }
       .sh-direct-submit-footer {
@@ -744,13 +846,12 @@ const App = {
 
     let container = document.getElementById('gw-selector-container');
     if (!container) {
-      const compSelect = this.getCompetitionSelectEl();
-      const targetParent = (compSelect && compSelect.parentElement) || document.getElementById('status-banner')?.parentElement;
-      if (!targetParent) return;
+      const controlDeck = document.querySelector('.control-deck') || this.getCompetitionSelectEl()?.parentElement;
+      if (!controlDeck) return;
       container = document.createElement('div');
       container.id = 'gw-selector-container';
       container.className = 'sh-controls-bar';
-      targetParent.appendChild(container);
+      controlDeck.appendChild(container);
     }
 
     const gwOptionsHtml = this.gameweeks
@@ -809,7 +910,7 @@ const App = {
       `;
     }
 
-    // Box Viola: Carte già schierate su Sorare nella Gameweek selezionata (escluse in automatico)
+    // Box Viola: Carte già schierate su Sorare nella Gameweek selezionata
     const lockedMap = this.getLockedCardsMapForCurrentGw();
     const lockedEntries = Object.values(lockedMap).filter(entry => {
       const foundCard = this.cards.find(c => c.id === entry.cardSlug);
@@ -829,8 +930,8 @@ const App = {
 
       lockedSorareHtml = `
         <div class="sorare-locked-strip">
-          <strong>🔒 Carte già schierate su Sorare in questa GW (escluse in automatico • clicca su una carta per sbloccarla):</strong>
-          <div style="margin-top:4px;">${lockedChips}</div>
+          <strong>🔒 ${lockedEntries.length} Carte già schierate su Sorare in questa GW (escluse in automatico dal calcolo • clicca su una carta per sbloccarla):</strong>
+          <div style="margin-top:5px;">${lockedChips}</div>
         </div>
       `;
     }
@@ -888,7 +989,7 @@ const App = {
 
     if (loginBtn) loginBtn.disabled = true;
     if (loginBtnText) loginBtnText.textContent = '⏳ Sincronizzazione...';
-    this.notify('⏳ Connessione a Sorare in corso...');
+    this.notify('⏳ Connessione a Sorare e lettura formazioni schierate in corso...');
 
     try {
       const data = await SorareAPI.fetchCurrentUserGallery(forceRefresh);
@@ -906,8 +1007,8 @@ const App = {
           loginBtn.disabled = false;
         }
 
-        // Sincronizza in background anche le carte già schierate su Sorare tramite l'estensione
-        await this.syncUsedCardsFromSorareExtension();
+        // Sincronizza subito Gameweek reali (730, 731...) e carte già schierate (mySo5Lineups)
+        await this.syncRealSorareFixturesAndLineups();
 
         this.syncStateFromDOM();
         this.renderGwAndClubSelectors();
@@ -1108,7 +1209,7 @@ const App = {
     this.renderGwAndClubSelectors();
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
 
-    // Filtra automaticamente le carte già schierate su Sorare in questa Gameweek (a meno che l'utente non le abbia sbloccate cliccandoci sopra)
+    // Esclude automaticamente tutte le carte già schierate su Sorare nella Gameweek selezionata!
     const lockedMap = this.getLockedCardsMapForCurrentGw();
     const availableCardsForGw = this.cards.filter(c => {
       if (lockedMap[c.id] && !this.unlockedUsedCardSlugs.has(c.id)) {
@@ -1158,7 +1259,7 @@ const App = {
 
     if (!lineups || lineups.length === 0) {
       const reason = isStack
-        ? `Non hai tutti i ruoli (GK, DC, CC, ATT) tra gli 11 titolari di questo club (o mancano le ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season).`
+        ? `Non hai tutti i ruoli (GK, DC, CC, ATT) tra gli 11 titolari liberi di questo club (o mancano le ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season).`
         : `Non possiedi abbastanza carte libere ${this.currentCompetition.inSeasonRequired > 0 ? `In-Season 26/27 (richieste ${this.currentCompetition.inSeasonRequired}/5)` : ''} appartenenti ai club di ${this.currentCompetition.name}.`;
       const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — ${reason}`;
       this.notify(msg, true);
@@ -1170,7 +1271,7 @@ const App = {
     if (isBreakMode) {
       this.notify(`⏸️ ${this.currentCompetition.name} in Sosta Club in ${selectedGw?.label || 'questa GW'}: generate comunque ${lineups.length} formazioni (con appartenenza club e 4/5 In-Season verificati).`);
     } else {
-      this.notify(`✅ Generate ${lineups.length} formazioni ottimali per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
+      this.notify(`✅ Generate ${lineups.length} formazioni ottimali con carte libere per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
     }
 
     targetGrid.innerHTML = lineups.map((lineup, idx) => {
