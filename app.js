@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Direct Sorare Submitter (PvP + Universal Hot Streak + Bridge Fallback)
+// SorareHub - Application Controller + Direct Sorare Submitter (PvP + Universal Hot Streak + URL Bridge)
 const App = {
   cards: [],
   gameweeks: [],
@@ -475,6 +475,16 @@ const App = {
     };
   },
 
+  encodeBridgePayloadToHash(payload) {
+    try {
+      const jsonStr = JSON.stringify(payload);
+      const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
+      return encodeURIComponent(b64);
+    } catch (_) {
+      return '';
+    }
+  },
+
   async submitLineupDirectlyToSorare(lineupIndex, btnEl, targetMode = 'standard') {
     const lineup = this.lastGeneratedLineups[lineupIndex];
     if (!lineup || !Array.isArray(lineup.starters) || lineup.starters.length === 0) {
@@ -586,8 +596,8 @@ const App = {
           return;
         }
 
-        // 3. Fallback immediato: carica la formazione nel Bridge HUD dell'estensione e apre la pagina PRO specifica del campionato
-        await this.sendToExtension('SH_SET_BRIDGE_LINEUP', bridgePayload);
+        // 3. Fallback immediato tramite URL Hash + Storage per il Bridge HUD
+        this.sendToExtension('SH_SET_BRIDGE_LINEUP', bridgePayload).catch(() => {});
 
         const proBoardSlugMap = {
           'scottish_in_season': 'football-pro-27-scotland',
@@ -603,9 +613,11 @@ const App = {
           'contender_in_season': 'football-pro-27-contender'
         };
         const boardSlug = proBoardSlugMap[String(this.currentCompetition.id || '').toLowerCase()];
-        const proHotStreakUrl = boardSlug
+        const encodedLineup = this.encodeBridgePayloadToHash(bridgePayload);
+        const baseProUrl = boardSlug
           ? `https://sorare.com/it/football/play/boards/pro/${boardSlug}`
           : 'https://sorare.com/it/football/play/boards/pro';
+        const proHotStreakUrl = encodedLineup ? `${baseProUrl}#sh_lineup=${encodedLineup}` : baseProUrl;
 
         if (sorareTab) {
           sorareTab.location.href = proHotStreakUrl;
