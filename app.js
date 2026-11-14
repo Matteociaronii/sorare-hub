@@ -88,7 +88,6 @@ const App = {
     });
   },
 
-  // Legge direttamente via OAuth Cloudflare le Gameweek reali (730, 731, 732, 733), le Leaderboard e le carte già schierate (anyCard.slug)
   async syncRealSorareFixturesAndLineups() {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return false;
@@ -96,7 +95,6 @@ const App = {
     const proxyUrl = (window.CONFIG && CONFIG.SORARE_GRAPHQL_PROXY) || 'https://sorarehub-oauth.matty-ciaroni.workers.dev/graphql';
 
     try {
-      // Passo 1: recupera gli slug delle prossime fixture + calcola lo slug della fixture corrente se in corso
       const listRes = await fetch(proxyUrl, {
         method: 'POST',
         headers: {
@@ -110,7 +108,6 @@ const App = {
       const listJson = await listRes.json();
       const rawNodes = listJson?.data?.so5?.so5Fixtures?.nodes || [];
 
-      // Assicuriamoci di includere sempre anche la GW attiva del weekend (es. football-13-17-nov-2026) oltre alle prossime
       const knownSlugs = new Set(['football-13-17-nov-2026', 'football-17-20-nov-2026', 'football-20-24-nov-2026', 'football-24-27-nov-2026']);
       rawNodes.forEach(n => {
         if (n && n.slug) knownSlugs.add(n.slug);
@@ -119,7 +116,6 @@ const App = {
       const slugList = Array.from(knownSlugs).slice(0, 6);
       if (slugList.length === 0) return false;
 
-      // Passo 2: costruisce la query multi-alias per ogni singola so5Fixture(slug: "...") con mySo5Lineups -> anyCard { slug }
       const aliasQueries = slugList.map((s, idx) => `
         f${idx}: so5Fixture(slug: "${s}") {
           slug
@@ -193,12 +189,10 @@ const App = {
       this.sorareFixturesBySlug = fixturesMap;
       this.usedCardsByGwSlug = usedBySlug;
 
-      // Allinea le Gameweek di SorareHub ai numeri e agli slug reali di Sorare (es. GW #730, #731, #732, #733)
       realFixturesArray.sort((a, b) => (a.gameWeek || 0) - (b.gameWeek || 0));
 
       if (realFixturesArray.length > 0 && Array.isArray(this.gameweeks)) {
         this.gameweeks.forEach((gw, idx) => {
-          // Match per sovrapposizione di date o per indice progressivo
           const gwStart = gw.startDate ? new Date(gw.startDate).getTime() : 0;
           let matchedFix = realFixturesArray.find(rf => {
             if (!rf.startDate) return false;
@@ -300,7 +294,6 @@ const App = {
       return;
     }
 
-    // Apre subito la finestra per non far scattare il blocco popup di Chrome
     const sorareTab = window.open('about:blank', '_blank');
     if (sorareTab && sorareTab.document) {
       sorareTab.document.write(`
@@ -344,10 +337,27 @@ const App = {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
       const captainCard = orderedStarters.find(p => p.isCaptain) || orderedStarters[0];
 
-      // Proviamo i formati ufficiali accettati da createOrUpdateSo5LineupInput di Sorare
-      const appearancesInput = orderedStarters.map(p => ({
+      const sorarePosMap = {
+        'GK': 'Goalkeeper',
+        'DC': 'Defender',
+        'DEF': 'Defender',
+        'CC': 'Midfielder',
+        'MID': 'Midfielder',
+        'ATT': 'Forward',
+        'FWD': 'Forward',
+        'EXTRA': 'Extra'
+      };
+
+      // Struttura verificata su So5AppearanceInput: so5Appearances: [{ cardSlug, captain }]
+      const appearancesClean = orderedStarters.map(p => ({
         cardSlug: p.id,
         captain: Boolean(p.id === captainCard.id)
+      }));
+
+      const appearancesWithPosition = orderedStarters.map(p => ({
+        cardSlug: p.id,
+        captain: Boolean(p.id === captainCard.id),
+        position: sorarePosMap[p.displayRole] || sorarePosMap[p.slotRole] || 'Extra'
       }));
 
       const rawLbUuid = String(matchedLb.id || '').replace(/^So5Leaderboard:/, '');
@@ -356,17 +366,22 @@ const App = {
         {
           so5LeaderboardId: matchedLb.id,
           name: lineup.rankLabel,
-          so5AppearancesAttributes: appearancesInput
+          so5Appearances: appearancesClean
         },
         {
           so5LeaderboardId: rawLbUuid,
           name: lineup.rankLabel,
-          so5AppearancesAttributes: appearancesInput
+          so5Appearances: appearancesClean
         },
         {
-          so5LeaderboardSlug: matchedLb.slug,
+          so5LeaderboardId: matchedLb.id,
           name: lineup.rankLabel,
-          so5AppearancesAttributes: appearancesInput
+          so5Appearances: appearancesWithPosition
+        },
+        {
+          so5LeaderboardId: rawLbUuid,
+          name: lineup.rankLabel,
+          so5Appearances: appearancesWithPosition
         }
       ];
 
@@ -387,7 +402,7 @@ const App = {
         submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', payload);
         errMsg = extractErr(submitResp);
         if (!errMsg) break;
-        if (!/invalid id|not found|unknown argument|field|input/i.test(errMsg)) {
+        if (!/invalid id|not found|position|field is not defined|expected value/i.test(errMsg)) {
           break;
         }
       }
@@ -910,7 +925,6 @@ const App = {
       `;
     }
 
-    // Box Viola: Carte già schierate su Sorare nella Gameweek selezionata
     const lockedMap = this.getLockedCardsMapForCurrentGw();
     const lockedEntries = Object.values(lockedMap).filter(entry => {
       const foundCard = this.cards.find(c => c.id === entry.cardSlug);
@@ -1007,7 +1021,6 @@ const App = {
           loginBtn.disabled = false;
         }
 
-        // Sincronizza subito Gameweek reali (730, 731...) e carte già schierate (mySo5Lineups)
         await this.syncRealSorareFixturesAndLineups();
 
         this.syncStateFromDOM();
@@ -1209,7 +1222,6 @@ const App = {
     this.renderGwAndClubSelectors();
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
 
-    // Esclude automaticamente tutte le carte già schierate su Sorare nella Gameweek selezionata!
     const lockedMap = this.getLockedCardsMapForCurrentGw();
     const availableCardsForGw = this.cards.filter(c => {
       if (lockedMap[c.id] && !this.unlockedUsedCardSlugs.has(c.id)) {
