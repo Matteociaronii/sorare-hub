@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Target Threshold + Anytime Entry + 4-Lives + Pre-Set Alert + Direct 1-Click Submitter
+// SorareHub - Application Controller + Vault Filter + Collapsible Strips + Target Threshold + Anytime Entry + 4-Lives + Pre-Set Alert
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
   cards: [],
@@ -8,6 +8,8 @@ const App = {
   sorareFixturesBySlug: {},
   usedCardsByGwSlug: {},
   unlockedUsedCardSlugs: new Set(),
+  unlockedVaultCardIds: new Set(),
+  openCollapsiblePanels: new Set(),
   selectedGwIndex: 0,
   selectedClubSlug: 'ALL',
   targetThreshold: 0,
@@ -120,6 +122,11 @@ const App = {
     return set;
   },
 
+  isCardLockedInVault(card) {
+    if (!card) return false;
+    return Boolean(card.isSealedInVault) && !this.unlockedVaultCardIds.has(card.id);
+  },
+
   evaluatePresetDnpAlerts() {
     const alerts = [];
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
@@ -128,6 +135,16 @@ const App = {
       (preset.players || []).forEach(pl => {
         const liveCard = this.cards.find(c => c.id === pl.cardId || c.playerSlug === pl.playerSlug);
         if (!liveCard) return;
+
+        if (this.isCardLockedInVault(liveCard)) {
+          alerts.push({
+            presetId: preset.id,
+            presetLabel: preset.label,
+            playerName: liveCard.name,
+            reason: 'Carta chiusa in Cassaforte (Vault)'
+          });
+          return;
+        }
 
         if (liveCard.isInjuredOrSuspended && this.manualOverrides[liveCard.playerSlug] !== 'xi') {
           alerts.push({
@@ -651,6 +668,7 @@ const App = {
     const seenSlugs = new Set();
 
     this.cards.forEach(c => {
+      if (this.isCardLockedInVault(c)) return;
       if (c.isInjuredOrSuspended && this.manualOverrides[c.playerSlug] !== 'xi') return;
       if (lockedMap[c.id] && !this.unlockedUsedCardSlugs.has(c.id)) return;
       if (presetReservedSet.has(c.id)) return;
@@ -699,6 +717,7 @@ const App = {
   upgradeSecondaryInfoBoxes(selectedGw, roleActiveCounts) {
     const rarityCards = this.cards.filter(c =>
       c.scarcity === this.currentScarcity &&
+      !this.isCardLockedInVault(c) &&
       (!c.isInjuredOrSuspended || this.manualOverrides[c.playerSlug] === 'xi') &&
       OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)
     );
@@ -708,6 +727,10 @@ const App = {
       c.scarcity === this.currentScarcity &&
       c.isInjuredOrSuspended &&
       this.manualOverrides[c.playerSlug] !== 'xi'
+    ).length;
+    const vaultCount = this.cards.filter(c =>
+      c.scarcity === this.currentScarcity &&
+      this.isCardLockedInVault(c)
     ).length;
 
     const candidates = Array.from(document.querySelectorAll('div')).filter(el => {
@@ -736,6 +759,8 @@ const App = {
         </div>
       `;
 
+      const vaultSubNote = vaultCount > 0 ? ` • <span style="color:#b0bec5;">🔐 ${vaultCount} Cassaforte</span>` : '';
+
       rightBox.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <div>
@@ -743,12 +768,31 @@ const App = {
               🃏 Rosa Eleggibile ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})
             </div>
             <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
-              <strong>${isCount} In-Season (26/27)</strong> • <strong>${classicCount} Classic</strong> • <span style="color:#ff8a95;">🚑 ${injuredCount} Indisponibili/Lungodegenti esclusi</span>
+              <strong>${isCount} In-Season (26/27)</strong> • <strong>${classicCount} Classic</strong> • <span style="color:#ff8a95;">🚑 ${injuredCount} Indisponibili</span>${vaultSubNote}
             </div>
           </div>
         </div>
       `;
     }
+  },
+
+  buildCollapsibleStripHtml(panelKey, stripClass, titleHtml, countBadgeText, bodyHtml) {
+    const isOpen = this.openCollapsiblePanels.has(panelKey);
+    const toggleBtnLabel = isOpen ? 'Chiudi ▴' : 'Mostra ▾';
+    return `
+      <div class="${stripClass} sh-collapsible-strip ${isOpen ? 'is-open' : ''}">
+        <div class="sh-collapsible-head" data-toggle-panel="${this.escapeHtml(panelKey)}">
+          <div class="sh-collapsible-title">
+            ${titleHtml}
+            <span class="sh-collapsible-count">${this.escapeHtml(countBadgeText)}</span>
+          </div>
+          <span class="sh-collapsible-toggle">${toggleBtnLabel}</span>
+        </div>
+        <div class="sh-collapsible-body" style="display:${isOpen ? 'block' : 'none'};">
+          ${bodyHtml}
+        </div>
+      </div>
+    `;
   },
 
   injectTacticalStyles() {
@@ -1038,35 +1082,79 @@ const App = {
         font-size: 12px;
         font-weight: 700;
       }
-      .club-xi-strip {
+      .sh-strips-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
         width: 100%;
-        background: rgba(33, 150, 243, 0.08);
-        border: 1px solid rgba(33, 150, 243, 0.35);
+        margin-top: 4px;
+      }
+      .sh-collapsible-strip {
+        flex: 1 1 280px;
         border-radius: 9px;
-        padding: 8px 12px;
-        margin-top: 6px;
+        padding: 7px 11px;
         font-size: 12px;
+        transition: all 0.15s ease;
+        box-sizing: border-box;
+      }
+      .sh-collapsible-strip.is-open {
+        flex: 1 1 100%;
+      }
+      .sh-collapsible-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .sh-collapsible-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-weight: 700;
+        flex-wrap: wrap;
+      }
+      .sh-collapsible-count {
+        font-size: 10.5px;
+        font-weight: 800;
+        padding: 1px 7px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+      }
+      .sh-collapsible-toggle {
+        font-size: 11px;
+        font-weight: 800;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.32);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        white-space: nowrap;
+      }
+      .sh-collapsible-body {
+        margin-top: 8px;
+        padding-top: 7px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .club-xi-strip {
+        background: rgba(33, 150, 243, 0.09);
+        border: 1px solid rgba(33, 150, 243, 0.38);
         color: #e0e0e0;
       }
       .benched-restore-strip {
-        width: 100%;
         background: rgba(244, 67, 54, 0.1);
-        border: 1px solid rgba(244, 67, 54, 0.4);
-        border-radius: 9px;
-        padding: 7px 12px;
-        margin-top: 6px;
-        font-size: 12px;
+        border: 1px solid rgba(244, 67, 54, 0.42);
         color: #ffcdd2;
       }
       .sorare-locked-strip {
-        width: 100%;
         background: rgba(156, 39, 176, 0.14);
         border: 1px solid rgba(186, 104, 200, 0.55);
-        border-radius: 9px;
-        padding: 8px 12px;
-        margin-top: 6px;
-        font-size: 12px;
         color: #f3e5f5;
+      }
+      .vault-locked-strip {
+        background: rgba(96, 125, 139, 0.15);
+        border: 1px solid rgba(144, 164, 174, 0.5);
+        color: #cfd8dc;
       }
       .preset-alert-strip {
         width: 100%;
@@ -1079,13 +1167,8 @@ const App = {
         color: #ffcdd2;
       }
       .preset-active-strip {
-        width: 100%;
         background: rgba(212, 175, 55, 0.12);
         border: 1px solid rgba(212, 175, 55, 0.55);
-        border-radius: 9px;
-        padding: 8px 12px;
-        margin-top: 6px;
-        font-size: 12px;
         color: #f3d266;
       }
       .club-xi-chip {
@@ -1111,6 +1194,11 @@ const App = {
         border-color: rgba(186, 104, 200, 0.65);
         background: rgba(156, 39, 176, 0.28);
         color: #f3e5f5;
+      }
+      .club-xi-chip.locked-vault {
+        border-color: rgba(144, 164, 174, 0.65);
+        background: rgba(96, 125, 139, 0.28);
+        color: #eceff1;
       }
       .sh-direct-submit-footer {
         margin-top: 14px;
@@ -1208,8 +1296,10 @@ const App = {
       .map((gw, idx) => `<option value="${idx}" ${idx === this.selectedGwIndex ? 'selected' : ''}>${gw.label} • ${gw.dateRangeText}</option>`)
       .join('');
 
+    const nonVaultCards = this.cards.filter(c => !this.isCardLockedInVault(c));
+
     const availableClubs = OptimizerEngine.getAvailableClubsForCompetition(
-      this.cards,
+      nonVaultCards,
       this.currentCompetition,
       this.currentScarcity,
       this.manualOverrides
@@ -1269,25 +1359,26 @@ const App = {
       `;
     }
 
-    let presetStripHtml = '';
+    const collapsiblePanelsHtmlList = [];
+
     if (this.presetLineups.length > 0) {
       const presetChips = this.presetLineups.map(pr =>
         `<span class="club-xi-chip" data-remove-preset="${this.escapeHtml(pr.id)}" title="Clicca per sbloccare e rimuovere questo Pre-Set">📌 ${this.escapeHtml(pr.label)} (${pr.totalProjected} pt) ✕</span>`
       ).join('');
-      presetStripHtml = `
-        <div class="preset-active-strip">
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
-            <strong>📌 Pre-Set Step Fissati (carte riservate escluse dal calcolo successivo):</strong>
-            <span class="club-xi-chip benched" data-clear-all-presets="1">Svuota tutti ✕</span>
-          </div>
-          <div style="margin-top:4px;">${presetChips}</div>
+      const bodyHtml = `
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:4px;">
+          <span>Carte riservate escluse dal calcolo successivo:</span>
+          <span class="club-xi-chip benched" data-clear-all-presets="1">Svuota tutti ✕</span>
         </div>
+        <div>${presetChips}</div>
       `;
+      collapsiblePanelsHtmlList.push(
+        this.buildCollapsibleStripHtml('presets', 'preset-active-strip', '📌 Pre-Set Step Fissati', `${this.presetLineups.length} attivi`, bodyHtml)
+      );
     }
 
-    let clubXiStripHtml = '';
     if (this.selectedClubSlug && this.selectedClubSlug !== 'ALL') {
-      const clubCards = this.cards.filter(c =>
+      const clubCards = nonVaultCards.filter(c =>
         c.scarcity === this.currentScarcity &&
         c.clubSlug === this.selectedClubSlug &&
         (!c.isInjuredOrSuspended || this.manualOverrides[c.playerSlug] === 'xi')
@@ -1309,14 +1400,15 @@ const App = {
         return `<span class="${cls}" data-club-xi-slug="${this.escapeHtml(p.playerSlug)}" title="Clicca per confermare nell'11 titolare o spostare in panchina">${icon} ${this.escapeHtml(p.position)}: ${this.escapeHtml(p.name)}</span>`;
       }).join('');
 
-      clubXiStripHtml = `
-        <div class="club-xi-strip">
-          <div style="margin-bottom:4px;font-weight:700;color:#81c784;">
-            🎯 11 Titolari Ufficiali (${this.escapeHtml(uniqueClubPlayers[0]?.club || '')}) — Verde = Titolare XI (✅) • Rosso = Riserva/Panchina (🪑):
-          </div>
-          <div>${chips}</div>
-        </div>
-      `;
+      collapsiblePanelsHtmlList.push(
+        this.buildCollapsibleStripHtml(
+          'club_xi',
+          'club-xi-strip',
+          `🎯 11 Titolari ${this.escapeHtml(uniqueClubPlayers[0]?.club || '')}`,
+          `${uniqueClubPlayers.length} giocatori`,
+          `<div>Verde = Titolare XI (✅) • Rosso = Riserva/Panchina (🪑):</div><div style="margin-top:4px;">${chips}</div>`
+        )
+      );
     }
 
     const lockedMap = this.getLockedCardsMapForCurrentGw();
@@ -1325,7 +1417,6 @@ const App = {
       return !foundCard || foundCard.scarcity === this.currentScarcity;
     });
 
-    let lockedSorareHtml = '';
     if (lockedEntries.length > 0) {
       const lockedChips = lockedEntries.map(entry => {
         const foundCard = this.cards.find(c => c.id === entry.cardSlug);
@@ -1336,12 +1427,15 @@ const App = {
         return `<span class="${chipCls}" data-toggle-sorare-lock="${this.escapeHtml(entry.cardSlug)}" title="Schierato in ${this.escapeHtml(entry.leaderboardName)} (${this.escapeHtml(entry.lineupName)}). Clicca se vuoi sbloccarlo e riusarlo comunque.">${statusIcon} ${this.escapeHtml(pName)} (${this.escapeHtml(entry.leaderboardName)})</span>`;
       }).join('');
 
-      lockedSorareHtml = `
-        <div class="sorare-locked-strip">
-          <strong>🔒 ${lockedEntries.length} Carte già schierate su Sorare in questa GW (escluse in automatico • clicca per sbloccare):</strong>
-          <div style="margin-top:5px;">${lockedChips}</div>
-        </div>
-      `;
+      collapsiblePanelsHtmlList.push(
+        this.buildCollapsibleStripHtml(
+          'locked_sorare',
+          'sorare-locked-strip',
+          '🔒 Già schierate su Sorare in questa GW',
+          `${lockedEntries.length} carte`,
+          `<div>Escluse in automatico (clicca su una carta per sbloccarla temporaneamente):</div><div style="margin-top:4px;">${lockedChips}</div>`
+        )
+      );
     }
 
     const benchedSlugs = Object.keys(this.manualOverrides).filter(slug => this.manualOverrides[slug] === 'bench');
@@ -1350,6 +1444,7 @@ const App = {
     this.cards.forEach(c => {
       if (
         c.scarcity === this.currentScarcity &&
+        !this.isCardLockedInVault(c) &&
         c.isInferredLongTermInactive &&
         this.manualOverrides[c.playerSlug] !== 'xi' &&
         !seenLongTerm.has(c.playerSlug) &&
@@ -1360,8 +1455,8 @@ const App = {
       }
     });
 
-    let benchedRestoreHtml = '';
-    if (benchedSlugs.length > 0 || autoFilteredLongTerm.length > 0) {
+    const totalExcludedCount = benchedSlugs.length + autoFilteredLongTerm.length;
+    if (totalExcludedCount > 0) {
       const manualChips = benchedSlugs.map(slug => {
         const foundCard = this.cards.find(c => c.playerSlug === slug);
         const pName = foundCard ? foundCard.name : slug;
@@ -1369,15 +1464,49 @@ const App = {
       });
 
       const autoLongTermChips = autoFilteredLongTerm.map(c => {
-        return `<span class="club-xi-chip benched" data-restore-slug="${this.escapeHtml(c.playerSlug)}" title="${this.escapeHtml(c.baseUnavailableReason)} — Clicca se il giocatore è tornato disponibile">🚑 ${this.escapeHtml(c.name)} (${this.escapeHtml(c.club)} • Lungodegente/Inattivo — Forza XI ↩)</span>`;
+        return `<span class="club-xi-chip benched" data-restore-slug="${this.escapeHtml(c.playerSlug)}" title="${this.escapeHtml(c.baseUnavailableReason)} — Clicca se il giocatore è tornato disponibile">🚑 ${this.escapeHtml(c.name)} (${this.escapeHtml(c.club)} • Forza XI ↩)</span>`;
       });
 
-      benchedRestoreHtml = `
-        <div class="benched-restore-strip">
-          <strong>🚑 / 🪑 Esclusi dal calcolo (Panchina manuale o Lungodegenti rilevati):</strong> ${[...manualChips, ...autoLongTermChips].join('')}
-        </div>
-      `;
+      collapsiblePanelsHtmlList.push(
+        this.buildCollapsibleStripHtml(
+          'excluded_longterm',
+          'benched-restore-strip',
+          '🚑 / 🪑 Esclusi & Lungodegenti',
+          `${totalExcludedCount} esclusi`,
+          `<div>Clicca su un giocatore se è tornato disponibile e vuoi forzarlo nell'11 titolare:</div><div style="margin-top:4px;">${[...manualChips, ...autoLongTermChips].join('')}</div>`
+        )
+      );
     }
+
+    const vaultCards = this.cards.filter(c =>
+      c.scarcity === this.currentScarcity &&
+      Boolean(c.isSealedInVault) &&
+      OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)
+    );
+
+    if (vaultCards.length > 0) {
+      const vaultChips = vaultCards.map(c => {
+        const isUnlocked = this.unlockedVaultCardIds.has(c.id);
+        const cls = isUnlocked ? 'club-xi-chip' : 'club-xi-chip locked-vault';
+        const icon = isUnlocked ? '🔓 Includi:' : '🔐 Cassaforte:';
+        const seasonLabel = c.isInSeason ? '26/27' : 'Classic';
+        return `<span class="${cls}" data-toggle-vault-card="${this.escapeHtml(c.id)}" title="Carta in Cassaforte su Sorare. Clicca se l'hai appena sbloccata e vuoi includerla nel calcolo.">${icon} ${this.escapeHtml(c.name)} (${this.escapeHtml(c.club)} • ${seasonLabel})</span>`;
+      }).join('');
+
+      collapsiblePanelsHtmlList.push(
+        this.buildCollapsibleStripHtml(
+          'vault_cards',
+          'vault-locked-strip',
+          '🔐 Carte in Cassaforte (Vault Sorare)',
+          `${vaultCards.length} carte`,
+          `<div>Escluse automaticamente dal calcolo (clicca su una carta se l'hai sbloccata su Sorare):</div><div style="margin-top:4px;">${vaultChips}</div>`
+        )
+      );
+    }
+
+    const stripsGridHtml = collapsiblePanelsHtmlList.length > 0
+      ? `<div class="sh-strips-grid">${collapsiblePanelsHtmlList.join('')}</div>`
+      : '';
 
     container.innerHTML = `
       <div class="gw-selector-pill">
@@ -1401,10 +1530,7 @@ const App = {
         <select id="club-stack-select">${clubOptionsHtml}</select>
       </div>
       ${presetAlertsHtml}
-      ${presetStripHtml}
-      ${lockedSorareHtml}
-      ${clubXiStripHtml}
-      ${benchedRestoreHtml}
+      ${stripsGridHtml}
     `;
 
     const gwSelect = document.getElementById('gw-select');
@@ -1552,6 +1678,36 @@ const App = {
     });
 
     document.addEventListener('click', (e) => {
+      const togglePanelHead = e.target.closest('[data-toggle-panel]');
+      if (togglePanelHead) {
+        e.stopPropagation();
+        const key = togglePanelHead.dataset.togglePanel;
+        if (key) {
+          if (this.openCollapsiblePanels.has(key)) {
+            this.openCollapsiblePanels.delete(key);
+          } else {
+            this.openCollapsiblePanels.add(key);
+          }
+          this.renderGwAndClubSelectors();
+        }
+        return;
+      }
+
+      const toggleVaultChip = e.target.closest('[data-toggle-vault-card]');
+      if (toggleVaultChip) {
+        e.stopPropagation();
+        const cardId = toggleVaultChip.dataset.toggleVaultCard;
+        if (cardId) {
+          if (this.unlockedVaultCardIds.has(cardId)) {
+            this.unlockedVaultCardIds.delete(cardId);
+          } else {
+            this.unlockedVaultCardIds.add(cardId);
+          }
+          this.runOptimizer();
+        }
+        return;
+      }
+
       const pinPresetBtn = e.target.closest('[data-pin-preset-idx]');
       if (pinPresetBtn) {
         e.stopPropagation();
@@ -1728,6 +1884,9 @@ const App = {
     const presetReservedSet = this.getPresetReservedCardIdsSet();
 
     const availableCardsForGw = this.cards.filter(c => {
+      if (this.isCardLockedInVault(c)) {
+        return false;
+      }
       if (lockedMap[c.id] && !this.unlockedUsedCardSlugs.has(c.id)) {
         return false;
       }
