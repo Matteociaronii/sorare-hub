@@ -1,7 +1,7 @@
-// SorareHub - Dual Profile Engine (Strict Club Form vs National Form) + Long-Term Injury Radar + Avatar Engine
+// SorareHub - Dual Profile Engine (Strict Club Form vs National Form) + Long-Term Injury Radar + Vault Filter + Avatar Engine
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v26',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v26', 'sorarehub_gallery_cache_v25', 'sorarehub_gallery_cache_v24'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v27',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v27', 'sorarehub_gallery_cache_v26', 'sorarehub_gallery_cache_v25'],
   CACHE_TTL_MS: 12 * 60 * 1000,
 
   // Lungodegenti noti / infortuni chirurgici non sempre segnalati in tempo reale dal feed Opta di Sorare
@@ -182,8 +182,8 @@ const SorareAPI = {
     }
   },
 
-  loadAnyAvailableCache(ignoreTtl = false) {
-    for (const key of this.FALLBACK_CACHE_KEYS) {
+  loadAnyAvailableCache(ignoreTtl = false, allowedKeys = this.FALLBACK_CACHE_KEYS) {
+    for (const key of allowedKeys) {
       try {
         const raw = localStorage.getItem(key);
         if (!raw) continue;
@@ -203,7 +203,8 @@ const SorareAPI = {
     if (!token) return null;
 
     if (!forceRefresh) {
-      const cached = this.loadAnyAvailableCache(false);
+      // Usa solo la v27 per la lettura rapida così da avere sempre il campo `isSealedInVault`
+      const cached = this.loadAnyAvailableCache(false, [this.CACHE_KEY]);
       if (cached) {
         return {
           user: cached.user,
@@ -233,6 +234,7 @@ const SorareAPI = {
               seasonYear
               inSeasonUntil
               power
+              sealed
               anyPositions
               pictureUrl
               ... on Card {
@@ -402,7 +404,7 @@ const SorareAPI = {
           loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
         }
         if (window.App && App.notify) {
-          App.notify(`📥 Analisi Forma, Filtro Lungodegenti & Avatar: ${allCards.length} carte Pro...`);
+          App.notify(`📥 Analisi Forma, Cassaforte & Filtro Lungodegenti: ${allCards.length} carte Pro...`);
         }
 
         const pageInfo = connection?.pageInfo;
@@ -942,6 +944,7 @@ const SorareAPI = {
         const l15 = apiL15 > 0 ? apiL15 : clubL5;
         const natL5 = natStats.avgScore > 0 ? natStats.avgScore : l15;
 
+        const isSealedInVault = Boolean(card.sealed);
         const injuries = Array.isArray(player.activeInjuries) ? player.activeInjuries : [];
         const suspensions = Array.isArray(player.activeSuspensions) ? player.activeSuspensions : [];
         const isInjured = injuries.length > 0;
@@ -997,7 +1000,8 @@ const SorareAPI = {
         }
 
         let baseUnavailableReason = '';
-        if (isInjured) baseUnavailableReason = 'Infortunato (Ufficiale Sorare)';
+        if (isSealedInVault) baseUnavailableReason = 'Carta in Cassaforte (Vault Sorare)';
+        else if (isInjured) baseUnavailableReason = 'Infortunato (Ufficiale Sorare)';
         else if (isSuspended) baseUnavailableReason = 'Squalificato (Ufficiale Sorare)';
         else if (isKnownLongTermInjured) baseUnavailableReason = 'Lungodegente / Infortunio di lungo corso';
         else if (isInferredLongTermInactive) {
@@ -1027,6 +1031,7 @@ const SorareAPI = {
           seasonYear: sYear,
           isInSeason: isInSeason,
           isU23: isU23,
+          isSealedInVault: isSealedInVault,
           isInjuredOrSuspended: isInjuredOrSuspended,
           isInferredLongTermInactive: isInferredLongTermInactive,
           l5: clubL5,
