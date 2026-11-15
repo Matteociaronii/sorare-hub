@@ -72,7 +72,7 @@ const App = {
       const timeout = setTimeout(() => {
         window.removeEventListener('message', listener);
         resolve({ ok: false, error: 'Estensione Chrome non risponde: vai su chrome://extensions, clicca Ricarica su SorareHub Direct API e aggiorna questa pagina.' });
-      }, 20000);
+      }, 25000);
 
       function listener(event) {
         if (event.source !== window) return;
@@ -483,54 +483,31 @@ const App = {
         captain: Boolean(p.id === captainCard.id)
       }));
 
-      const rawLbUuid = String(matchedLb.id || '').replace(/^So5Leaderboard:/, '');
+      const startersMeta = orderedStarters.map(p => ({
+        name: p.name,
+        cardSlug: p.id,
+        playerSlug: p.playerSlug,
+        captain: Boolean(p.id === captainCard.id)
+      }));
+
       const targetSorareUrl = `https://sorare.com/it/football/play/boards/${targetFixture.slug}`;
 
-      const candidatePayloads = [
-        {
-          so5LeaderboardId: matchedLb.id,
-          name: lineup.rankLabel,
-          so5Appearances: appearancesClean,
-          targetUrl: targetSorareUrl
-        },
-        {
-          so5LeaderboardId: rawLbUuid,
-          name: lineup.rankLabel,
-          so5Appearances: appearancesClean,
-          targetUrl: targetSorareUrl
-        }
-      ];
+      const submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', {
+        so5LeaderboardId: matchedLb.id,
+        so5LeaderboardSlug: matchedLb.slug,
+        name: lineup.rankLabel,
+        so5Appearances: appearancesClean,
+        startersMeta,
+        targetUrl: targetSorareUrl
+      });
 
-      const extractErr = (r) => {
-        if (!r || !r.ok) return r?.error || 'Errore di comunicazione con estensione';
-        if (r.status && r.status !== 200) return `HTTP ${r.status} (Verifica di essere loggato su sorare.com)`;
-        const topErr = r.json?.errors?.[0]?.message;
-        if (topErr) return topErr;
-        const mutErr = r.json?.data?.createOrUpdateSo5Lineup?.errors?.[0]?.message;
-        if (mutErr) return mutErr;
-        return null;
-      };
-
-      let submitResp = null;
-      let errMsg = null;
-
-      for (const payload of candidatePayloads) {
-        submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', payload);
-        errMsg = extractErr(submitResp);
-        if (!errMsg) break;
-        if (!/invalid id|not found/i.test(errMsg)) {
-          break;
-        }
+      if (!submitResp || !submitResp.ok) {
+        throw new Error(submitResp?.error || `Errore salvataggio su ${matchedLb.displayName || matchedLb.slug}`);
       }
 
-      if (errMsg) {
-        console.warn('Dettaglio risposta CreateOrUpdateSo5Lineup:', submitResp?.json);
-        this.notify(`⚠️ Risposta Sorare (${matchedLb.displayName}): "${errMsg}"`, true);
-      } else {
-        await this.syncRealSorareFixturesAndLineups();
-        this.runOptimizer();
-        this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedLb.displayName || matchedLb.slug} (${modeLabel})!`);
-      }
+      await this.syncRealSorareFixturesAndLineups();
+      this.runOptimizer();
+      this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedLb.displayName || matchedLb.slug} (${modeLabel})!`);
     } catch (err) {
       console.error('Errore invio Sorare:', err);
       this.notify('❌ ' + err.message, true);
