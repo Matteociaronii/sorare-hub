@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Direct Sorare Submitter (PvP + Universal Hot Streak + URL Bridge)
+// SorareHub - Application Controller + Direct 1-Click Sorare Submitter (PvP + Native Hot Streak PRO)
 const App = {
   cards: [],
   gameweeks: [],
@@ -71,8 +71,8 @@ const App = {
       const reqId = 'sh_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const timeout = setTimeout(() => {
         window.removeEventListener('message', listener);
-        resolve({ ok: false, error: 'Estensione Chrome non risponde: vai su chrome://extensions, clicca Ricarica su SorareHub Direct Submitter e aggiorna questa pagina.' });
-      }, 10000);
+        resolve({ ok: false, error: 'Estensione Chrome non risponde: vai su chrome://extensions, clicca Ricarica su SorareHub Direct API e aggiorna questa pagina.' });
+      }, 15000);
 
       function listener(event) {
         if (event.source !== window) return;
@@ -359,130 +359,24 @@ const App = {
     return scored[0] ? scored[0].lb : null;
   },
 
-  async fetchAllActiveTasksFromSession() {
-    const taskQuery = `
-      query GetHotStreakTasks {
-        currentUser {
-          taskGroup(slug: "play") {
-            myTasks(sport: FOOTBALL) {
-              __typename
-              id
-              taskConfigSlug
-              ... on ThresholdsStreakTask {
-                so5LeagueTrack {
-                  slug
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    try {
-      const extResp = await this.sendToExtension('SH_QUERY_SORARE', { query: taskQuery });
-      const webTasks = extResp?.json?.data?.currentUser?.taskGroup?.myTasks;
-      if (Array.isArray(webTasks) && webTasks.length > 0) {
-        return webTasks;
-      }
-    } catch (_) {}
-
-    const token = localStorage.getItem('sorare_access_token');
-    if (!token) return [];
-    const proxyUrl = (window.CONFIG && CONFIG.SORARE_GRAPHQL_PROXY) || 'https://sorarehub-oauth.matty-ciaroni.workers.dev/graphql';
-    const res = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
-      },
-      body: JSON.stringify({ query: taskQuery })
-    });
-    const json = await res.json();
-    return json?.data?.currentUser?.taskGroup?.myTasks || [];
-  },
-
-  async submitUniversalHotStreakTask(comp, scarcity, orderedStarters, captainCard, targetFixture) {
-    const prefixMap = {
-      'premier_league_in_season': ['in_season_england'],
-      'serie_a_in_season': ['in_season_italy'],
-      'laliga_in_season': ['in_season_spain'],
-      'bundesliga_in_season': ['in_season_germany'],
-      'ligue1_in_season': ['in_season_france'],
-      'championship_in_season': ['in_season_england_championship', 'in_season_england_second'],
-      'liga_portugal_in_season': ['in_season_portugal'],
-      'jupiler_in_season': ['in_season_belgium', 'in_season_jupiler'],
-      'eredivisie_in_season': ['in_season_netherlands'],
-      'scottish_in_season': ['in_season_scotland'],
-      'mls_in_season': ['in_season_us'],
-      'j1_league_in_season': ['in_season_japan'],
-      'k_league_in_season': ['in_season_korea'],
-      'contender_in_season': ['in_season_contender', 'in_season_contenders']
+  getProBoardConfigSlug(compId) {
+    const proBoardSlugMap = {
+      'scottish_in_season': 'football-pro-27-scotland',
+      'liga_portugal_in_season': 'football-pro-27-portugal',
+      'jupiler_in_season': 'football-pro-27-jupiler',
+      'eredivisie_in_season': 'football-pro-27-netherlands',
+      'premier_league_in_season': 'football-pro-27-england',
+      'serie_a_in_season': 'football-pro-27-italy',
+      'laliga_in_season': 'football-pro-27-spain',
+      'bundesliga_in_season': 'football-pro-27-germany',
+      'ligue1_in_season': 'football-pro-27-france',
+      'championship_in_season': 'football-pro-27-england-second',
+      'contender_in_season': 'football-pro-27-contender',
+      'mls_in_season': 'football-pro-27-mls',
+      'j1_league_in_season': 'football-pro-27-japan',
+      'k_league_in_season': 'football-pro-27-korea'
     };
-
-    const compPrefixes = prefixMap[String(comp.id || '').toLowerCase()];
-    if (!compPrefixes) {
-      return { notFound: true, reason: `La competizione "${comp.name}" non usa task Hot Streak PRO.` };
-    }
-
-    const tasks = await this.fetchAllActiveTasksFromSession();
-    const targetRarity = String(scarcity || 'limited').toLowerCase();
-    const expectedPrefixes = compPrefixes.map(p => `${p}_${targetRarity}`);
-
-    const matchingTasks = tasks.filter(t => {
-      if (t.__typename !== 'ThresholdsStreakTask' || !t.taskConfigSlug) return false;
-      const slug = t.taskConfigSlug.toLowerCase();
-      if (slug.includes('new_user')) return false;
-      return expectedPrefixes.some(pref => slug.startsWith(pref));
-    });
-
-    const selectedTask = matchingTasks.find(t =>
-      targetFixture?.slug &&
-      t.so5LeagueTrack?.slug &&
-      t.so5LeagueTrack.slug.startsWith(targetFixture.slug)
-    ) || matchingTasks[0];
-
-    if (!selectedTask) {
-      return { notFound: true };
-    }
-
-    const taskAppearances = orderedStarters.map((p, idx) => ({
-      cardSlug: p.id,
-      captain: Boolean(p.id === captainCard.id),
-      index: idx
-    }));
-
-    const submitResp = await this.sendToExtension('SH_UPSERT_TASK_LINEUP', {
-      taskId: selectedTask.id,
-      taskAppearances
-    });
-
-    if (!submitResp || !submitResp.ok) {
-      throw new Error(submitResp?.error || 'Errore di comunicazione con l\'estensione Chrome.');
-    }
-    if (submitResp.status && submitResp.status !== 200) {
-      throw new Error(`HTTP ${submitResp.status} (Verifica di essere loggato su sorare.com)`);
-    }
-    const topErr = submitResp.json?.errors?.[0]?.message;
-    if (topErr) throw new Error(topErr);
-    const mutErr = submitResp.json?.data?.upsertTaskLineup?.errors?.[0]?.message;
-    if (mutErr) throw new Error(mutErr);
-
-    return {
-      ok: true,
-      taskConfigSlug: selectedTask.taskConfigSlug,
-      trackSlug: selectedTask.so5LeagueTrack?.slug || targetFixture?.slug || ''
-    };
-  },
-
-  encodeBridgePayloadToHash(payload) {
-    try {
-      const jsonStr = JSON.stringify(payload);
-      const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
-      return encodeURIComponent(b64);
-    } catch (_) {
-      return '';
-    }
+    return proBoardSlugMap[String(compId || '').toLowerCase()] || null;
   },
 
   async submitLineupDirectlyToSorare(lineupIndex, btnEl, targetMode = 'standard') {
@@ -501,7 +395,7 @@ const App = {
         <body style="background:#0d0e12;color:#f3d266;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
           <div style="text-align:center;">
             <h2>${modeLabel} — SorareHub Direct Submitter</h2>
-            <p style="color:#ccc;">Salvataggio di <strong>${this.escapeHtml(lineup.rankLabel)}</strong> su Sorare in corso...</p>
+            <p style="color:#ccc;">Salvataggio 1-click di <strong>${this.escapeHtml(lineup.rankLabel)}</strong> su Sorare in corso...</p>
           </div>
         </body></html>
       `);
@@ -512,7 +406,7 @@ const App = {
       btnEl.disabled = true;
       btnEl.innerHTML = '⏳ Invio...';
     }
-    this.notify(`⏳ Invio di ${lineup.rankLabel} (${modeLabel}) a Sorare in corso...`);
+    this.notify(`⏳ Invio diretto di ${lineup.rankLabel} (${modeLabel}) a Sorare in corso...`);
 
     try {
       if (Object.keys(this.sorareFixturesBySlug).length === 0) {
@@ -520,115 +414,81 @@ const App = {
       }
 
       const targetFixture = this.getSelectedSorareFixture();
-      if (!targetFixture || !Array.isArray(targetFixture.so5Leaderboards) || targetFixture.so5Leaderboards.length === 0) {
-        throw new Error('Impossibile leggere i tornei della Gameweek da Sorare. Ricarica la pagina.');
-      }
-
+      const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
       const captainCard = orderedStarters.find(p => p.isCaptain) || orderedStarters[0];
 
-      const bridgePayload = {
-        title: `${this.currentCompetition.name} (${modeLabel})`,
-        players: orderedStarters.map(p => ({
-          name: p.name,
-          slug: p.id,
-          pos: p.displayRole,
-          isCaptain: Boolean(p.id === captainCard.id),
-          isInSeason: Boolean(p.isInSeason)
-        }))
-      };
-
-      // === RAMO HOT STREAK UNIVERSALE ===
+      // === RAMO HOT STREAK PRO 1-CLICK (upsertReplayTaskMutation) ===
       if (targetMode === 'hotstreak') {
-        const matchedHotStreakLb = this.matchLeaderboardFromFixture(
-          targetFixture.so5Leaderboards,
-          this.currentCompetition,
-          this.currentScarcity,
-          'hotstreak'
-        );
+        const configSlug = this.getProBoardConfigSlug(this.currentCompetition.id);
+        if (!configSlug) {
+          throw new Error(`La competizione "${this.currentCompetition.name}" non dispone di una Board Hot Streak PRO.`);
+        }
 
-        // 1. Se la lega ha una leaderboard dedicata _pve (es. MLS, Corea, Giappone), invia su So5Leaderboard
-        if (matchedHotStreakLb && String(matchedHotStreakLb.slug || '').toLowerCase().endsWith('_pve')) {
-          const appearancesClean = orderedStarters.map(p => ({
+        const startersPayload = orderedStarters.map((p) => {
+          const firstMatch = (Array.isArray(p.gwMatches) && p.gwMatches[0]) || p.activeMatch || null;
+          return {
+            name: p.name,
             cardSlug: p.id,
+            playerSlug: p.playerSlug,
+            clubSlug: p.clubSlug,
+            gameId: firstMatch?.id || firstMatch?.gameId || '',
             captain: Boolean(p.id === captainCard.id)
-          }));
+          };
+        });
 
-          const submitResp = await this.sendToExtension('SH_SUBMIT_LINEUP', {
-            so5LeaderboardId: matchedHotStreakLb.id,
-            name: lineup.rankLabel,
-            so5Appearances: appearancesClean
-          });
+        const fromDate = selectedGw?.startDate
+          ? new Date(new Date(selectedGw.startDate).getTime() - 12 * 3600 * 1000).toISOString()
+          : targetFixture?.startDate;
+        const toDate = selectedGw?.endDate
+          ? new Date(new Date(selectedGw.endDate).getTime() + 24 * 3600 * 1000).toISOString()
+          : targetFixture?.endDate;
 
-          const topErr = submitResp?.json?.errors?.[0]?.message;
-          const mutErr = submitResp?.json?.data?.createOrUpdateSo5Lineup?.errors?.[0]?.message;
-          const errMsg = !submitResp?.ok ? (submitResp?.error || 'Errore estensione') : (topErr || mutErr);
+        const proResp = await this.sendToExtension('SH_SUBMIT_PRO_HOTSTREAK', {
+          configSlug,
+          starters: startersPayload,
+          fromDate,
+          toDate
+        });
 
-          const targetSorareUrl = `https://sorare.com/it/football/play/boards/${targetFixture.slug}`;
-          if (sorareTab) sorareTab.location.href = targetSorareUrl;
-
-          if (errMsg) {
-            throw new Error(errMsg);
-          }
-
-          await this.syncRealSorareFixturesAndLineups();
-          this.runOptimizer();
-          this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedHotStreakLb.displayName || matchedHotStreakLb.slug} (${modeLabel})!`);
-          return;
+        if (!proResp || !proResp.ok) {
+          throw new Error(proResp?.error || 'Errore durante il salvataggio della formazione Hot Streak PRO.');
         }
 
-        // 2. Prova ThresholdsStreakTask + upsertTaskLineup dalla sessione web autenticata
-        const taskResult = await this.submitUniversalHotStreakTask(
-          this.currentCompetition,
-          this.currentScarcity,
-          orderedStarters,
-          captainCard,
-          targetFixture
-        );
-
-        if (taskResult && taskResult.ok) {
-          const targetSorareUrl = `https://sorare.com/it/football/play/boards/${targetFixture.slug}`;
-          if (sorareTab) sorareTab.location.href = targetSorareUrl;
-
-          await this.syncRealSorareFixturesAndLineups();
-          this.runOptimizer();
-          this.notify(`✅ ${lineup.rankLabel} schierata con successo in Hot Streak PRO (${this.currentCompetition.name} • ${taskResult.taskConfigSlug})!`);
-          return;
-        }
-
-        // 3. Fallback immediato tramite URL Hash + Storage per il Bridge HUD
-        this.sendToExtension('SH_SET_BRIDGE_LINEUP', bridgePayload).catch(() => {});
-
-        const proBoardSlugMap = {
-          'scottish_in_season': 'football-pro-27-scotland',
-          'liga_portugal_in_season': 'football-pro-27-portugal',
-          'jupiler_in_season': 'football-pro-27-jupiler',
-          'eredivisie_in_season': 'football-pro-27-netherlands',
-          'premier_league_in_season': 'football-pro-27-england',
-          'serie_a_in_season': 'football-pro-27-italy',
-          'laliga_in_season': 'football-pro-27-spain',
-          'bundesliga_in_season': 'football-pro-27-germany',
-          'ligue1_in_season': 'football-pro-27-france',
-          'championship_in_season': 'football-pro-27-england-second',
-          'contender_in_season': 'football-pro-27-contender'
-        };
-        const boardSlug = proBoardSlugMap[String(this.currentCompetition.id || '').toLowerCase()];
-        const encodedLineup = this.encodeBridgePayloadToHash(bridgePayload);
-        const baseProUrl = boardSlug
-          ? `https://sorare.com/it/football/play/boards/pro/${boardSlug}`
-          : 'https://sorare.com/it/football/play/boards/pro';
-        const proHotStreakUrl = encodedLineup ? `${baseProUrl}#sh_lineup=${encodedLineup}` : baseProUrl;
-
+        const finalProUrl = proResp.targetUrl || `https://sorare.com/it/football/play/boards/pro/${configSlug}`;
         if (sorareTab) {
-          sorareTab.location.href = proHotStreakUrl;
+          sorareTab.location.href = finalProUrl;
         } else {
-          window.open(proHotStreakUrl, '_blank');
+          window.open(finalProUrl, '_blank');
         }
-        this.notify(`🔥 Formazione caricata nel pannello SORAREHUB BRIDGE su Sorare PRO: clicca "⚡ Auto-Compila Ora" nella finestra aperta!`);
+
+        // Blocca subito in locale le 5 carte appena schierate per ricalcolare le restanti
+        if (targetFixture && targetFixture.slug) {
+          if (!this.usedCardsByGwSlug[targetFixture.slug]) {
+            this.usedCardsByGwSlug[targetFixture.slug] = {};
+          }
+          orderedStarters.forEach(p => {
+            this.usedCardsByGwSlug[targetFixture.slug][p.id] = {
+              cardSlug: p.id,
+              leaderboardName: `${this.currentCompetition.name} Hot Streak PRO`,
+              leaderboardSlug: configSlug,
+              leaderboardId: proResp.taskId || configSlug,
+              lineupId: proResp.taskLineupId || 'pro',
+              lineupName: lineup.rankLabel
+            };
+          });
+        }
+
+        this.runOptimizer();
+        this.notify(`✅ ${lineup.rankLabel} schierata in 1-Click su Sorare Hot Streak PRO (${this.currentCompetition.name})! • Ricalcolate le formazioni con le carte rimaste libere.`);
         return;
       }
 
       // === RAMO TORNEO STANDARD (PvP / Classic SO7) ===
+      if (!targetFixture || !Array.isArray(targetFixture.so5Leaderboards) || targetFixture.so5Leaderboards.length === 0) {
+        throw new Error('Impossibile leggere i tornei della Gameweek da Sorare. Ricarica la pagina.');
+      }
+
       const matchedLb = this.matchLeaderboardFromFixture(
         targetFixture.so5Leaderboards,
         this.currentCompetition,
@@ -637,7 +497,7 @@ const App = {
       );
 
       if (!matchedLb) {
-        throw new Error(`Il torneo "${this.currentCompetition.name}" (${this.currentScarcity.toUpperCase()}) non è aperto su Sorare in ${targetFixture.slug} (es. sosta o leaderboard non ancora pubblicata da Sorare).`);
+        throw new Error(`Il torneo "${this.currentCompetition.name}" (${this.currentScarcity.toUpperCase()}) non è aperto su Sorare in ${targetFixture.slug}.`);
       }
 
       const appearancesClean = orderedStarters.map(p => ({
@@ -1627,9 +1487,9 @@ const App = {
       }).join('');
 
       const hotStreakBtnHtml = isInSeasonSo5
-        ? `<button type="button" class="sh-direct-submit-btn hotstreak-btn" data-direct-submit-idx="${idx}" data-submit-mode="hotstreak" title="Invia la formazione nella modalità Hot Streak PRO del campionato">
-            🔥 Invia Hot Streak
-          </button>`
+        ? `<button type="button" class="sh-direct-submit-btn hotstreak-btn" data-direct-submit-idx="${idx}" data-submit-mode="hotstreak" title="Invia direttamente con 1 clic la formazione nella modalità Hot Streak PRO">
+             🔥 Invia Hot Streak
+           </button>`
         : '';
 
       return `
