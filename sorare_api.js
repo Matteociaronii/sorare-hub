@@ -1,8 +1,14 @@
-// SorareHub - Dual Profile Engine (Strict Club Form vs National Form) + Official SO5 Filter + Auto-GW Sync
+// SorareHub - Dual Profile Engine (Strict Club Form vs National Form) + Long-Term Injury Radar + Avatar Engine
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v25',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v25', 'sorarehub_gallery_cache_v24', 'sorarehub_gallery_cache_v23'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v26',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v26', 'sorarehub_gallery_cache_v25', 'sorarehub_gallery_cache_v24'],
   CACHE_TTL_MS: 12 * 60 * 1000,
+
+  // Lungodegenti noti / infortuni chirurgici non sempre segnalati in tempo reale dal feed Opta di Sorare
+  KNOWN_LONG_TERM_INJURED_SLUGS: new Set([
+    'mohamed-ali-zoma',
+    'mohamed-zoma'
+  ]),
 
   generateRandomString(length = 32) {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -110,14 +116,11 @@ const SorareAPI = {
     }
   },
 
-  // Calcola dinamicamente e perpetuamente la GW Live, Prossima e Futura in base al giorno/ora corrente in cui si apre il sito
   buildOfficialSorareGameweeks(officialGwNumber = null) {
     const nowMs = Date.now();
-    // Punto di riferimento ufficiale Sorare: Mar 10 Nov 2026 15:00 UTC (16:00 CET) = Apertura GW #524
     let cursorMs = Date.UTC(2026, 10, 10, 15, 0, 0);
     let gwCounter = officialGwNumber || 524;
 
-    // Riavvolge di qualche ciclo per coprire qualsiasi data antecedente o successiva
     for (let back = 0; back < 8; back++) {
       const prevDay = new Date(cursorMs).getUTCDay();
       const prevHours = (prevDay === 5) ? 72 : 96;
@@ -126,10 +129,9 @@ const SorareAPI = {
     }
 
     const boundaries = [];
-    // Genera una finestra scorrevole perpetua fino a superare di almeno 3 settimane la data odierna
     while (boundaries.length < 30 || cursorMs <= nowMs + (21 * 24 * 3600 * 1000)) {
       const d = new Date(cursorMs);
-      const dayOfWeek = d.getUTCDay(); // 2 = Martedì (72h -> Ven), 5 = Venerdì (96h -> Mar)
+      const dayOfWeek = d.getUTCDay();
       const durationHours = (dayOfWeek === 2) ? 72 : 96;
       const nextMs = cursorMs + durationHours * 3600 * 1000;
 
@@ -214,7 +216,6 @@ const SorareAPI = {
     const baseWorkerUrl = String(CONFIG.TOKEN_ENDPOINT || 'https://sorarehub-oauth.matty-ciaroni.workers.dev').replace(/\/$/, '');
     const workerGraphqlEndpoint = baseWorkerUrl.endsWith('/graphql') ? baseWorkerUrl : `${baseWorkerUrl}/graphql`;
 
-    // Scarica fino a 10 so5Scores per avere abbastanza storico sia di Club sia di Nazionale separatamente!
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -401,7 +402,7 @@ const SorareAPI = {
           loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
         }
         if (window.App && App.notify) {
-          App.notify(`📥 Separazione Forma Club vs Nazionale & Filtro SO5: ${allCards.length} carte Pro...`);
+          App.notify(`📥 Analisi Forma, Filtro Lungodegenti & Avatar: ${allCards.length} carte Pro...`);
         }
 
         const pageInfo = connection?.pageInfo;
@@ -450,14 +451,12 @@ const SorareAPI = {
     };
   },
 
-  // Verifica rigorosamente che una partita sia UFFICIALMENTE coperta da Sorare SO5 (esclude amichevoli di club come Hertha Berlin e match senza scoring ufficiale!)
   isOfficialSorareScoredMatch(scoreNode, isNationalMatch = false) {
     if (!scoreNode || !scoreNode.game) return false;
     const g = scoreNode.game;
     const compSlug = String(g.competition?.slug || '').toLowerCase().trim();
     const compName = String(g.competition?.displayName || '').toLowerCase().trim();
 
-    // 1. Esclude SEMPRE le amichevoli di club o gare non competitive
     if (!isNationalMatch) {
       if (
         !compSlug ||
@@ -472,7 +471,6 @@ const SorareAPI = {
       }
     }
 
-    // 2. Se il giocatore è sceso in campo (mins > 0) o ha un voto > 0, su Sorare DEVE avere un decisiveScore ufficiale (>= 15 pt)
     const sc = typeof scoreNode.score === 'number' ? scoreNode.score : null;
     const dec = typeof scoreNode.decisiveScore?.totalScore === 'number' ? scoreNode.decisiveScore.totalScore : null;
     const mins = typeof scoreNode.playerGameStats?.minsPlayed === 'number' ? scoreNode.playerGameStats.minsPlayed : 0;
@@ -540,6 +538,7 @@ const SorareAPI = {
         .sort((a, b) => b.dateMs - a.dateMs)
         .slice(0, 5);
 
+      const latestClubGameMs = sortedGames[0]?.dateMs || 0;
       let matchesWithGoals = 0;
       let wins = 0;
       let draws = 0;
@@ -575,6 +574,7 @@ const SorareAPI = {
 
         computedFormMap[slug] = {
           sampleSize: matchesWithGoals,
+          latestClubGameMs,
           wins,
           draws,
           losses,
@@ -589,6 +589,7 @@ const SorareAPI = {
         const strengthIndex = Number(Math.max(0.25, Math.min(0.85, teamAvgSo5 / 80)).toFixed(2));
         computedFormMap[slug] = {
           sampleSize: avgPlayerSo5Count,
+          latestClubGameMs,
           wins: null,
           draws: null,
           losses: null,
@@ -660,7 +661,6 @@ const SorareAPI = {
         const activeClubCompetitionsSet = new Set();
         if (leagueSlug && leagueSlug !== 'other') activeClubCompetitionsSet.add(leagueSlug);
 
-        // Separa rigorosamente le partite di Club da quelle di Nazionale ed elimina le amichevoli non coperte da Sorare!
         allRecentScores.forEach(s => {
           if (!s || !s.game) return;
           const isNat = isGameNational(s.game, false);
@@ -688,6 +688,10 @@ const SorareAPI = {
           let playedCount = 0;
           let starterCount = 0;
           let dnpZeroCount = 0;
+          let consecutiveRecentDnp = 0;
+          let stillCountingRecentDnp = true;
+          let lastPlayedDateMs = 0;
+          let latestEntryDateMs = 0;
           let totalMins = 0;
           let sumScores = 0;
           let sumPureAas = 0;
@@ -711,6 +715,10 @@ const SorareAPI = {
             const stats = s.playerGameStats || {};
             const mins = typeof stats.minsPlayed === 'number' ? stats.minsPlayed : (sc > 0 ? 60 : 0);
 
+            const g = s.game || {};
+            const gDateMs = g.date ? new Date(g.date).getTime() : 0;
+            if (gDateMs > latestEntryDateMs) latestEntryDateMs = gDateMs;
+
             const rawDecisiveTotal = typeof s.decisiveScore?.totalScore === 'number'
               ? Number(s.decisiveScore.totalScore.toFixed(1))
               : (mins >= 55 ? 35 : (mins > 0 ? 15 : 0));
@@ -719,7 +727,6 @@ const SorareAPI = {
             const netDecisiveBonus = Math.max(0, Number((rawDecisiveTotal - baseStartingPts).toFixed(1)));
             const pureAas = Number((sc - rawDecisiveTotal).toFixed(1));
 
-            const g = s.game || {};
             const homeSlug = (g.homeTeam?.slug || '').toLowerCase();
             const homeName = g.homeTeam?.name || 'Casa';
             const awayName = g.awayTeam?.name || 'Trasferta';
@@ -737,6 +744,8 @@ const SorareAPI = {
             const gDuels = stats.duelWon || 0;
 
             if (mins > 0 || sc > 0) {
+              stillCountingRecentDnp = false;
+              if (gDateMs > lastPlayedDateMs) lastPlayedDateMs = gDateMs;
               playedCount++;
               totalMins += mins;
               if (mins >= 55) starterCount++;
@@ -777,6 +786,7 @@ const SorareAPI = {
               });
             } else {
               dnpZeroCount++;
+              if (stillCountingRecentDnp) consecutiveRecentDnp++;
             }
           });
 
@@ -803,6 +813,9 @@ const SorareAPI = {
             playedCount,
             starterCount,
             dnpZeroCount,
+            consecutiveRecentDnp,
+            lastPlayedDateMs,
+            latestEntryDateMs,
             avgScore,
             avgMins,
             avgAas,
@@ -822,10 +835,7 @@ const SorareAPI = {
           };
         };
 
-        // DUE PROFILI COMPLETAMENTE SEPARATI:
-        // 1) clubStats: calcolato SOLO sulle gare ufficiali col Club (senza Nazionali e senza amichevoli non coperte)
         const clubStats = computeSplitMetrics(clubScoreEntries, 6, clubSlug);
-        // 2) natStats: calcolato SOLO sulle gare giocate con la Nazionale
         const natStats = computeSplitMetrics(natScoreEntries, 6, natSlug);
 
         const isNationalCallupVerified = natStats.playedCount >= 1;
@@ -847,7 +857,6 @@ const SorareAPI = {
 
           const isNationalMatch = isGameNational(g, isNatSource);
 
-          // Esclude le amichevoli di club anche dal calendario partite
           if (!isNationalMatch && (compSlug.includes('friendl') || compName.toLowerCase().includes('friendl'))) {
             return;
           }
@@ -929,7 +938,6 @@ const SorareAPI = {
         const apiL5 = typeof player.l5 === 'number' ? Number(player.l5.toFixed(1)) : 0;
         const apiL15 = typeof player.l15 === 'number' ? Number(player.l15.toFixed(1)) : 0;
 
-        // Forma di base = Forma Club pura (quando gioca in Nazionale, optimizer.js commuta automaticamente su natStats!)
         const clubL5 = clubStats.avgScore > 0 ? clubStats.avgScore : apiL5;
         const l15 = apiL15 > 0 ? apiL15 : clubL5;
         const natL5 = natStats.avgScore > 0 ? natStats.avgScore : l15;
@@ -938,11 +946,41 @@ const SorareAPI = {
         const suspensions = Array.isArray(player.activeSuspensions) ? player.activeSuspensions : [];
         const isInjured = injuries.length > 0;
         const isSuspended = suspensions.length > 0;
-        const isInjuredOrSuspended = isInjured || isSuspended;
+
+        // RADAR LUNGODEGENTI / INATTIVI (Caso Zoma e infortuni non taggati su Opta durante la sosta):
+        const isKnownLongTermInjured =
+          this.KNOWN_LONG_TERM_INJURED_SLUGS.has(canonicalPlayerSlug) ||
+          canonicalPlayerSlug.includes('mohamed-ali-zoma');
+
+        const latestClubMatchKnownMs = Math.max(
+          clubStats.latestEntryDateMs || 0,
+          dynamicTeamFormMap[clubSlug]?.latestClubGameMs || 0
+        );
+
+        const daysSinceLastClubAppearance = clubStats.lastPlayedDateMs > 0
+          ? Math.round((nowMs - clubStats.lastPlayedDateMs) / (24 * 3600 * 1000))
+          : 999;
+
+        const clubPlayedWithoutHimRecently =
+          latestClubMatchKnownMs > 0 &&
+          clubStats.lastPlayedDateMs > 0 &&
+          (latestClubMatchKnownMs - clubStats.lastPlayedDateMs) >= (14 * 24 * 3600 * 1000);
+
+        const isInferredLongTermInactive =
+          isKnownLongTermInjured ||
+          (clubStats.consecutiveRecentDnp >= 3) ||
+          (clubStats.totalEntries >= 3 && clubStats.playedCount === 0) ||
+          (daysSinceLastClubAppearance >= 22 && (clubPlayedWithoutHimRecently || clubStats.consecutiveRecentDnp >= 2 || apiL5 === 0));
+
+        const isInjuredOrSuspended = isInjured || isSuspended || isInferredLongTermInactive;
 
         let clubFitnessTier = 'last_resort';
         if (!isInjuredOrSuspended) {
-          if (clubStats.starterCount >= 3 || (clubStats.playedCount >= 3 && clubStats.avgMins >= 62) || (clubStats.starterCount >= 2 && clubStats.totalEntries <= 3)) {
+          if (
+            (clubStats.starterCount >= 3 && clubStats.consecutiveRecentDnp <= 1) ||
+            (clubStats.playedCount >= 3 && clubStats.avgMins >= 62 && clubStats.consecutiveRecentDnp <= 1) ||
+            (clubStats.starterCount >= 2 && clubStats.totalEntries <= 3 && clubStats.consecutiveRecentDnp === 0)
+          ) {
             clubFitnessTier = 'starter';
           } else if (clubStats.playedCount >= 1 || clubL5 > 0) {
             clubFitnessTier = 'rotation';
@@ -961,6 +999,10 @@ const SorareAPI = {
         let baseUnavailableReason = '';
         if (isInjured) baseUnavailableReason = 'Infortunato (Ufficiale Sorare)';
         else if (isSuspended) baseUnavailableReason = 'Squalificato (Ufficiale Sorare)';
+        else if (isKnownLongTermInjured) baseUnavailableReason = 'Lungodegente / Infortunio di lungo corso';
+        else if (isInferredLongTermInactive) {
+          baseUnavailableReason = `Assente / Inattivo da ${daysSinceLastClubAppearance < 900 ? `${daysSinceLastClubAppearance} giorni` : `${clubStats.consecutiveRecentDnp} gare consecutive`}`;
+        }
 
         const rawPower = parseFloat(card.power) || (isInSeason ? 1.05 : 1.00);
         const totalBonusPct = Math.round((rawPower - 1) * 100);
@@ -969,6 +1011,7 @@ const SorareAPI = {
           id: card.slug || `c_${index}`,
           playerSlug: canonicalPlayerSlug,
           name: playerName,
+          avatarUrl: player.pictureUrl || card.pictureUrl || null,
           pictureUrl: card.pictureUrl || player.pictureUrl || null,
           club: clubName,
           clubSlug: clubSlug,
@@ -985,6 +1028,7 @@ const SorareAPI = {
           isInSeason: isInSeason,
           isU23: isU23,
           isInjuredOrSuspended: isInjuredOrSuspended,
+          isInferredLongTermInactive: isInferredLongTermInactive,
           l5: clubL5,
           clubL5: clubL5,
           natL5: natL5,
