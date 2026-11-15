@@ -68,7 +68,7 @@ const App = {
   patchOAuthFlowGuard() {
     if (!window.SorareAPI || SorareAPI.__shPatched) return;
     const originalStartOAuth = SorareAPI.startOAuthFlow.bind(SorareAPI);
-    SorareAPI.__ rawStartOAuth = originalStartOAuth;
+    SorareAPI.__rawStartOAuth = originalStartOAuth;
     SorareAPI.__shPatched = true;
 
     SorareAPI.startOAuthFlow = async (...args) => {
