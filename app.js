@@ -72,7 +72,7 @@ const App = {
       const timeout = setTimeout(() => {
         window.removeEventListener('message', listener);
         resolve({ ok: false, error: 'Estensione Chrome non risponde: vai su chrome://extensions, clicca Ricarica su SorareHub Direct API e aggiorna questa pagina.' });
-      }, 15000);
+      }, 20000);
 
       function listener(event) {
         if (event.source !== window) return;
@@ -387,20 +387,6 @@ const App = {
     }
 
     const modeLabel = targetMode === 'hotstreak' ? '🔥 Hot Streak PRO' : '⚡ Torneo';
-
-    const sorareTab = window.open('about:blank', '_blank');
-    if (sorareTab && sorareTab.document) {
-      sorareTab.document.write(`
-        <html><head><title>Invio formazione a Sorare...</title></head>
-        <body style="background:#0d0e12;color:#f3d266;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-          <div style="text-align:center;">
-            <h2>${modeLabel} — SorareHub Direct Submitter</h2>
-            <p style="color:#ccc;">Salvataggio 1-click di <strong>${this.escapeHtml(lineup.rankLabel)}</strong> su Sorare in corso...</p>
-          </div>
-        </body></html>
-      `);
-    }
-
     const originalText = btnEl ? btnEl.innerHTML : modeLabel;
     if (btnEl) {
       btnEl.disabled = true;
@@ -455,14 +441,6 @@ const App = {
           throw new Error(proResp?.error || 'Errore durante il salvataggio della formazione Hot Streak PRO.');
         }
 
-        const finalProUrl = proResp.targetUrl || `https://sorare.com/it/football/play/boards/pro/${configSlug}`;
-        if (sorareTab) {
-          sorareTab.location.href = finalProUrl;
-        } else {
-          window.open(finalProUrl, '_blank');
-        }
-
-        // Blocca subito in locale le 5 carte appena schierate per ricalcolare le restanti
         if (targetFixture && targetFixture.slug) {
           if (!this.usedCardsByGwSlug[targetFixture.slug]) {
             this.usedCardsByGwSlug[targetFixture.slug] = {};
@@ -480,7 +458,7 @@ const App = {
         }
 
         this.runOptimizer();
-        this.notify(`✅ ${lineup.rankLabel} schierata in 1-Click su Sorare Hot Streak PRO (${this.currentCompetition.name})! • Ricalcolate le formazioni con le carte rimaste libere.`);
+        this.notify(`✅ ${lineup.rankLabel} schierata in 1-Click su Sorare Hot Streak PRO (${this.currentCompetition.name})!`);
         return;
       }
 
@@ -506,17 +484,20 @@ const App = {
       }));
 
       const rawLbUuid = String(matchedLb.id || '').replace(/^So5Leaderboard:/, '');
+      const targetSorareUrl = `https://sorare.com/it/football/play/boards/${targetFixture.slug}`;
 
       const candidatePayloads = [
         {
           so5LeaderboardId: matchedLb.id,
           name: lineup.rankLabel,
-          so5Appearances: appearancesClean
+          so5Appearances: appearancesClean,
+          targetUrl: targetSorareUrl
         },
         {
           so5LeaderboardId: rawLbUuid,
           name: lineup.rankLabel,
-          so5Appearances: appearancesClean
+          so5Appearances: appearancesClean,
+          targetUrl: targetSorareUrl
         }
       ];
 
@@ -542,25 +523,17 @@ const App = {
         }
       }
 
-      const targetSorareUrl = `https://sorare.com/it/football/play/boards/${targetFixture.slug}`;
-      if (sorareTab) {
-        sorareTab.location.href = targetSorareUrl;
-      } else {
-        window.location.href = targetSorareUrl;
-      }
-
       if (errMsg) {
         console.warn('Dettaglio risposta CreateOrUpdateSo5Lineup:', submitResp?.json);
         this.notify(`⚠️ Risposta Sorare (${matchedLb.displayName}): "${errMsg}"`, true);
       } else {
         await this.syncRealSorareFixturesAndLineups();
         this.runOptimizer();
-        this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedLb.displayName || matchedLb.slug} (${modeLabel})! • Ricalcolate ${this.lastGeneratedLineups.length} formazioni con le carte rimaste libere.`);
+        this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedLb.displayName || matchedLb.slug} (${modeLabel})!`);
       }
     } catch (err) {
       console.error('Errore invio Sorare:', err);
       this.notify('❌ ' + err.message, true);
-      if (sorareTab) sorareTab.close();
     } finally {
       if (btnEl) {
         btnEl.disabled = false;
