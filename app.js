@@ -1,6 +1,7 @@
 // SorareHub - Application Controller + Account Menu (Logout) + Vault Filter + Collapsible Strips + Target Threshold + Anytime Entry + 4-Lives + Pre-Set Alert
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
+  LOGOUT_FLAG_KEY: 'sorarehub_manual_logout',
   cards: [],
   gameweeks: [],
   lastGeneratedLineups: [],
@@ -17,6 +18,7 @@ const App = {
   portfolioMode: 'cascade',
   manualOverrides: {},
   user: null,
+  isLoggingOut: false,
   currentScarcity: 'limited',
   currentStrategy: 'floor',
   currentCompetition: (window.CONFIG && CONFIG.OFFICIAL_COMPETITIONS && CONFIG.OFFICIAL_COMPETITIONS[0]) || {
@@ -34,12 +36,14 @@ const App = {
     this.injectTacticalStyles();
     this.ensureBannerElement();
     this.populateCompetitionDropdown();
+    this.patchOAuthFlowGuard();
     this.bindEvents();
 
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
 
     if (code) {
+      sessionStorage.removeItem(this.LOGOUT_FLAG_KEY);
       this.notify('🔐 Autenticazione Sorare in corso...');
       const token = await SorareAPI.handleOAuthCallback(code);
       if (token) {
@@ -48,11 +52,36 @@ const App = {
       return;
     }
 
+    if (sessionStorage.getItem(this.LOGOUT_FLAG_KEY) === '1') {
+      localStorage.removeItem('sorare_access_token');
+      this.renderEmptyState();
+      return;
+    }
+
     if (localStorage.getItem('sorare_access_token')) {
       await this.loadUserGallery(false);
     } else {
       this.renderEmptyState();
     }
+  },
+
+  patchOAuthFlowGuard() {
+    if (!window.SorareAPI || SorareAPI.__shPatched) return;
+    const originalStartOAuth = SorareAPI.startOAuthFlow.bind(SorareAPI);
+    SorareAPI.__ rawStartOAuth = originalStartOAuth;
+    SorareAPI.__shPatched = true;
+
+    SorareAPI.startOAuthFlow = async (...args) => {
+      if (this.isLoggingOut) return;
+      const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
+      const isConnected = Boolean(localStorage.getItem('sorare_access_token')) || Boolean(this.user) || (this.cards && this.cards.length > 0);
+      if (isConnected) {
+        this.toggleAccountMenu(loginBtn);
+        return;
+      }
+      sessionStorage.removeItem(this.LOGOUT_FLAG_KEY);
+      return originalStartOAuth(...args);
+    };
   },
 
   toggleAccountMenu(anchorBtn) {
@@ -93,6 +122,7 @@ const App = {
     const syncBtn = document.getElementById('sh-btn-sync-now');
     if (syncBtn) {
       syncBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
         ev.stopPropagation();
         popover.remove();
         this.loadUserGallery(true);
@@ -102,6 +132,7 @@ const App = {
     const logoutBtn = document.getElementById('sh-btn-logout');
     if (logoutBtn) {
       logoutBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
         ev.stopPropagation();
         popover.remove();
         this.logoutUser();
@@ -110,12 +141,22 @@ const App = {
   },
 
   logoutUser() {
+    this.isLoggingOut = true;
+    sessionStorage.setItem(this.LOGOUT_FLAG_KEY, '1');
+
     localStorage.removeItem('sorare_access_token');
     localStorage.removeItem('sorare_oauth_state');
     if (window.SorareAPI && Array.isArray(SorareAPI.FALLBACK_CACHE_KEYS)) {
       SorareAPI.FALLBACK_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
     }
     localStorage.removeItem('sorarehub_gallery_cache_v27');
+    localStorage.removeItem('sorarehub_gallery_cache_v26');
+    localStorage.removeItem('sorarehub_gallery_cache_v25');
+
+    if (window.location.search) {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+    }
 
     this.user = null;
     this.cards = [];
@@ -126,6 +167,9 @@ const App = {
     this.unlockedVaultCardIds.clear();
     this.manualOverrides = {};
     this.selectedClubSlug = 'ALL';
+
+    const existingPopover = document.getElementById('sh-account-popover');
+    if (existingPopover) existingPopover.remove();
 
     const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
     const loginBtnText = document.getElementById('login-btn-text') || loginBtn;
@@ -155,7 +199,11 @@ const App = {
     if (elBuilt) elBuilt.textContent = '0';
 
     this.renderEmptyState();
-    this.notify('🚪 Disconnessione effettuata. Clicca su "Connetti Sorare" per accedere di nuovo.');
+    this.notify('🚪 Disconnessione effettuata. Clicca su "Connetti Sorare" quando vorrai ricollegarti.');
+
+    setTimeout(() => {
+      this.isLoggingOut = false;
+    }, 600);
   },
 
   loadSavedPresets() {
@@ -1730,6 +1778,9 @@ const App = {
   },
 
   async loadUserGallery(forceRefresh = false) {
+    if (this.isLoggingOut) return;
+    sessionStorage.removeItem(this.LOGOUT_FLAG_KEY);
+
     const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
     const loginBtnText = document.getElementById('login-btn-text') || loginBtn;
 
@@ -1783,14 +1834,30 @@ const App = {
   },
 
   bindEvents() {
-    const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
+    let loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
     if (loginBtn) {
+      // Rimuove qualsiasi onclick inline o vecchio listener duplicato
+      loginBtn.removeAttribute('onclick');
+      const cleanBtn = loginBtn.cloneNode(true);
+      cleanBtn.removeAttribute('onclick');
+      if (loginBtn.parentNode) {
+        loginBtn.parentNode.replaceChild(cleanBtn, loginBtn);
+      }
+      loginBtn = cleanBtn;
+
       loginBtn.addEventListener('click', (e) => {
+        e.preventDefault();
         e.stopPropagation();
-        if (localStorage.getItem('sorare_access_token') && this.user) {
+        const isConnected = Boolean(localStorage.getItem('sorare_access_token')) || Boolean(this.user) || (this.cards && this.cards.length > 0);
+        if (isConnected) {
           this.toggleAccountMenu(loginBtn);
         } else {
-          SorareAPI.startOAuthFlow();
+          sessionStorage.removeItem(this.LOGOUT_FLAG_KEY);
+          if (window.SorareAPI && SorareAPI.__rawStartOAuth) {
+            SorareAPI.__rawStartOAuth();
+          } else {
+            SorareAPI.startOAuthFlow();
+          }
         }
       });
     }
