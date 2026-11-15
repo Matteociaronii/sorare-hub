@@ -1,4 +1,4 @@
-// SorareHub - Context-Aware Form Switcher + Smart 4+1 Cascade Conservation + Final Depth Fill
+// SorareHub - Context-Aware Form Switcher + Target Threshold + Anytime Entry + 4-Lives Multi-Stack + 4+1 Cascade
 const OptimizerEngine = {
   normalizeLeagueSlug(rawSlug) {
     const s = String(rawSlug || '').toLowerCase().trim();
@@ -223,6 +223,71 @@ const OptimizerEngine = {
     return true;
   },
 
+  matchesAnytimeWindow(game, selectedGw, anytimeWindow = 'ALL') {
+    if (!game || !game.timestamp) return false;
+    const mode = String(anytimeWindow || 'ALL').toUpperCase();
+    if (mode === 'ALL') return true;
+
+    const nowMs = Date.now();
+    const gameTs = game.timestamp;
+
+    if (mode === 'NOT_STARTED') {
+      return gameTs > (nowMs + 10 * 60 * 1000) && game.alreadyPlayedScore === null;
+    }
+
+    const nowDate = new Date(nowMs);
+    const startOfTodayMs = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate(), 0, 0, 0).getTime();
+    const endOfTodayMs = startOfTodayMs + (24 * 3600 * 1000) - 1;
+    const endOfTomorrowMs = startOfTodayMs + (48 * 3600 * 1000) - 1;
+
+    if (mode === 'TODAY') {
+      return gameTs >= startOfTodayMs && gameTs <= endOfTodayMs;
+    }
+
+    if (mode === 'TOMORROW') {
+      return gameTs > endOfTodayMs && gameTs <= endOfTomorrowMs;
+    }
+
+    if (mode === 'LATE_GW') {
+      if (selectedGw && selectedGw.endDate) {
+        const gwEndMs = new Date(selectedGw.endDate).getTime();
+        const lateCutoffMs = gwEndMs - (42 * 3600 * 1000);
+        return gameTs >= lateCutoffMs && gameTs <= gwEndMs;
+      }
+      return gameTs > endOfTomorrowMs;
+    }
+
+    return true;
+  },
+
+  resolveEffectiveStrategy(strategy, targetThreshold = 0) {
+    const threshold = Number(targetThreshold) || 0;
+    if (threshold >= 350) return 'ceiling';
+    if (threshold > 0 && threshold <= 310) return 'floor';
+    return String(strategy || 'floor').toLowerCase();
+  },
+
+  computeThresholdMetrics(totalProjected, starters, targetThreshold = 0) {
+    const threshold = Number(targetThreshold) || 0;
+    if (threshold <= 0) return null;
+
+    const delta = Number((totalProjected - threshold).toFixed(1));
+    const avgStdDev = starters.length > 0
+      ? starters.reduce((acc, s) => acc + (s.stdDev || 11), 0) / starters.length
+      : 11;
+    const lineStdDev = Math.max(18, avgStdDev * Math.sqrt(starters.length || 5));
+    const zScore = delta / lineStdDev;
+    const rawProb = Math.round(50 + (zScore * 34));
+    const probabilityPct = Math.max(8, Math.min(96, rawProb));
+
+    return {
+      threshold,
+      delta,
+      probabilityPct,
+      statusLabel: delta >= 0 ? `+${delta} pt sopra target` : `${delta} pt dal target`
+    };
+  },
+
   analyzeSingleMatchupDifficulty(game, cardPosition) {
     if (!game) {
       return { multiplier: 1.0, difficultyScore: 0.5, summaryText: '' };
@@ -398,7 +463,7 @@ const OptimizerEngine = {
     return allowedXiSlugs;
   },
 
-  buildCascadePortfolio(allCards, competition, scarcity, strategy, selectedGw = null, manualOverrides = {}, selectedClubSlug = 'ALL') {
+  buildCascadePortfolio(allCards, competition, scarcity, strategy, selectedGw = null, manualOverrides = {}, selectedClubSlug = 'ALL', options = {}) {
     if (!Array.isArray(allCards) || allCards.length === 0 || !competition) return [];
 
     const targetScarcity = String(scarcity || 'limited').toLowerCase();
@@ -408,6 +473,11 @@ const OptimizerEngine = {
       : ['GK', 'DEF', 'MID', 'FWD', 'EXTRA'];
     const requiredInSeason = Number(competition.inSeasonRequired || 0);
     const isClubStackActive = Boolean(selectedClubSlug && selectedClubSlug !== 'ALL');
+
+    const targetThreshold = Number(options.targetThreshold || 0);
+    const anytimeWindow = String(options.anytimeWindow || 'ALL');
+    const portfolioMode = String(options.portfolioMode || 'cascade'); // 'cascade' | 'four_lives'
+    const effectiveStrategy = this.resolveEffectiveStrategy(strategy, targetThreshold);
 
     const eligibleCards = allCards.filter(card => {
       if (!card) return false;
@@ -420,7 +490,14 @@ const OptimizerEngine = {
     if (eligibleCards.length < slotsTemplate.length) return [];
 
     const fullEvaluatedPool = eligibleCards.map(card =>
-      this.evaluateCardForGw(card, selectedGw, strategy, competition, manualOverrides[card.playerSlug] || null)
+      this.evaluateCardForGw(
+        card,
+        selectedGw,
+        effectiveStrategy,
+        competition,
+        manualOverrides[card.playerSlug] || null,
+        { targetThreshold, anytimeWindow }
+      )
     );
 
     const clubXiSlugs = isClubStackActive
@@ -438,9 +515,12 @@ const OptimizerEngine = {
       activeRoles.has('MID') &&
       activeRoles.has('FWD');
 
-    const isLeagueOnBreakMode = !canBuildFullActiveTeam;
+    const isLeagueOnBreakMode = !canBuildFullActiveTeam && anytimeWindow === 'ALL';
 
-    // 1. Bacino completo (include sia Titolari XI sia Riserve/Subentranti non messi manualmente in panchina)
+    if (!canBuildFullActiveTeam && anytimeWindow !== 'ALL') {
+      return [];
+    }
+
     const fullWorkingPool = canBuildFullActiveTeam
       ? activePlayableAll
       : fullEvaluatedPool.filter(c => {
@@ -451,45 +531,88 @@ const OptimizerEngine = {
 
     if (fullWorkingPool.length < slotsTemplate.length) return [];
 
-    // 2. Bacino Primario rigoroso (solo gli 11 Titolari XI quando è attivo uno Stack Squadra)
     const strictXiWorkingPool = (isClubStackActive && clubXiSlugs)
       ? fullWorkingPool.filter(c => clubXiSlugs.has(c.playerSlug))
       : fullWorkingPool;
 
+    // Se è attiva la modalità "Piano 4 Vite (Multi-Stack Scaglionato)" senza filtro singolo club,
+    // raggruppa i match per fascia oraria/giorno così i tentativi #1, #2, #3, #4 coprono finestre diverse!
+    const timeBuckets = (portfolioMode === 'four_lives' && !isClubStackActive && canBuildFullActiveTeam)
+      ? this.buildAnytimeKickoffBuckets(fullWorkingPool)
+      : [];
+
     const lineups = [];
     const usedCardIdsGlobal = new Set();
-    const maxLineups = 5; // Sbloccato fino a 5 formazioni anche in modalità Stack Club (es. 3 portieri Benfica!)
+    const usedCoreClubsGlobal = new Set();
+    const maxLineups = portfolioMode === 'four_lives' ? 4 : 5;
 
     for (let rank = 1; rank <= maxLineups; rank++) {
-      const availableStrict = strictXiWorkingPool.filter(c => !usedCardIdsGlobal.has(c.id));
-      const availableFull = fullWorkingPool.filter(c => !usedCardIdsGlobal.has(c.id));
+      let availableStrict = strictXiWorkingPool.filter(c => !usedCardIdsGlobal.has(c.id));
+      let availableFull = fullWorkingPool.filter(c => !usedCardIdsGlobal.has(c.id));
 
       if (availableFull.length < slotsTemplate.length) break;
 
-      // Tenta prima con i soli Titolari XI (inclusi tutti i doppioni In-Season e Classic del portiere titolare)
+      let bucketLabel = '';
+      if (timeBuckets.length > 0) {
+        const bucketIdx = (rank - 1) % timeBuckets.length;
+        const targetBucket = timeBuckets[bucketIdx];
+        const bucketCards = availableFull.filter(c => c.kickoffBucketKey === targetBucket.key);
+        const bRoles = new Set(bucketCards.map(c => c.position));
+        if (
+          bucketCards.length >= slotsTemplate.length &&
+          bRoles.has('GK') && bRoles.has('DEF') && bRoles.has('MID') && bRoles.has('FWD')
+        ) {
+          availableFull = bucketCards;
+          availableStrict = bucketCards;
+          bucketLabel = ` • ${targetBucket.label}`;
+        }
+      }
+
       let picked = null;
       let usedDepthFill = false;
 
+      const selectionCtx = {
+        targetThreshold,
+        effectiveStrategy,
+        portfolioMode,
+        penalizeClubs: portfolioMode === 'four_lives' ? usedCoreClubsGlobal : null
+      };
+
       if (availableStrict.length >= slotsTemplate.length) {
-        picked = this.selectBestLineupForSlots(availableStrict, slotsTemplate, requiredInSeason, isLeagueOnBreakMode);
+        picked = this.selectBestLineupForSlots(availableStrict, slotsTemplate, requiredInSeason, isLeagueOnBreakMode, selectionCtx);
       }
 
-      // Se i soli Titolari XI non bastano più per completare l'ultima formazione ma hai ancora un portiere/base valida in galleria,
-      // allenta il vincolo dell'11 titolare pescando anche le riserve del club pur di darti la formazione extra!
       if ((!picked || picked.length < slotsTemplate.length) && availableFull.length >= slotsTemplate.length) {
-        picked = this.selectBestLineupForSlots(availableFull, slotsTemplate, requiredInSeason, isLeagueOnBreakMode);
+        picked = this.selectBestLineupForSlots(availableFull, slotsTemplate, requiredInSeason, isLeagueOnBreakMode, selectionCtx);
         if (picked && picked.length === slotsTemplate.length) {
           usedDepthFill = true;
         }
       }
 
+      // Fallback generale se il bucket orario singolo non bastava più
+      if ((!picked || picked.length < slotsTemplate.length) && bucketLabel) {
+        const fallbackFull = fullWorkingPool.filter(c => !usedCardIdsGlobal.has(c.id));
+        picked = this.selectBestLineupForSlots(fallbackFull, slotsTemplate, requiredInSeason, isLeagueOnBreakMode, selectionCtx);
+        bucketLabel = '';
+      }
+
       if (!picked || picked.length < slotsTemplate.length) break;
 
-      picked.forEach(p => usedCardIdsGlobal.add(p.id));
+      picked.forEach(p => {
+        usedCardIdsGlobal.add(p.id);
+        if (p.clubSlug && p.clubSlug !== 'no-club') {
+          usedCoreClubsGlobal.add(p.clubSlug);
+        }
+      });
 
       const captainPool = [...picked].sort((a, b) => {
         const aSc = a.projectedScore > 0 ? a.projectedScore : a.standbyScore;
         const bSc = b.projectedScore > 0 ? b.projectedScore : b.standbyScore;
+        if (effectiveStrategy === 'ceiling') {
+          const aCeil = aSc + ((a.maxRecentScore || aSc) * 0.15);
+          const bCeil = bSc + ((b.maxRecentScore || bSc) * 0.15);
+          return bCeil - aCeil;
+        }
         return bSc - aSc;
       });
       const captainId = captainPool[0]?.id;
@@ -503,7 +626,7 @@ const OptimizerEngine = {
         const bespokeDossier = this.buildBespokeScoutingDossier(
           p,
           p.gwMatches || (p.activeMatch ? [p.activeMatch] : []),
-          String(strategy || '').toLowerCase() === 'ceiling',
+          effectiveStrategy === 'ceiling',
           manualOverrides[p.playerSlug] || null,
           finalScore,
           Boolean(p.activeMatch && p.activeMatch.isNationalTeam),
@@ -513,7 +636,8 @@ const OptimizerEngine = {
             slotRole: p.slotRole,
             rank: rank,
             requiredInSeason: requiredInSeason,
-            usedDepthFill: usedDepthFill
+            usedDepthFill: usedDepthFill,
+            targetThreshold: targetThreshold
           }
         );
 
@@ -531,23 +655,57 @@ const OptimizerEngine = {
       );
       const inSeasonCount = finalStarters.filter(p => p.isInSeason).length;
       const activeMatchesCount = finalStarters.filter(p => Boolean(p.activeMatch)).length;
+      const thresholdInfo = this.computeThresholdMetrics(totalProjected, finalStarters, targetThreshold);
+
+      const baseRankTitle = isClubStackActive
+        ? `Stack ${picked[0]?.club || ''} #${rank}${usedDepthFill ? ' (Rosa Completa)' : ''}`
+        : (portfolioMode === 'four_lives' ? `Vita #${rank}${bucketLabel}` : `Squadra #${rank}`);
 
       lineups.push({
         rank: rank,
-        rankLabel: isClubStackActive
-          ? `Stack ${picked[0]?.club || ''} #${rank}${usedDepthFill ? ' (Rosa Completa)' : ''}`
-          : `Squadra #${rank}`,
+        rankLabel: baseRankTitle,
         format: isSO7 ? 'SO7' : 'SO5',
         inSeasonCount: inSeasonCount,
         activeMatchesCount: activeMatchesCount,
         isLeagueOnBreakMode: isLeagueOnBreakMode,
         usedDepthFill: usedDepthFill,
+        thresholdInfo: thresholdInfo,
         totalProjected: totalProjected,
         starters: finalStarters
       });
     }
 
     return lineups;
+  },
+
+  buildAnytimeKickoffBuckets(pool) {
+    const map = new Map();
+    const dayFormatter = new Intl.DateTimeFormat('it-IT', { weekday: 'short', day: '2-digit', month: '2-digit' });
+
+    pool.forEach(c => {
+      const ts = c.activeMatch?.timestamp;
+      if (!ts) return;
+      const d = new Date(ts);
+      const dayPart = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      const slotPart = d.getHours() < 17 ? 'AM' : 'PM';
+      const key = `${dayPart}_${slotPart}`;
+      c.kickoffBucketKey = key;
+
+      if (!map.has(key)) {
+        const niceDay = dayFormatter.format(d);
+        map.set(key, {
+          key,
+          minTs: ts,
+          label: `${niceDay} ${slotPart === 'AM' ? 'Pomeriggio' : 'Sera'}`,
+          count: 0
+        });
+      }
+      map.get(key).count++;
+    });
+
+    return Array.from(map.values())
+      .filter(b => b.count >= 5)
+      .sort((a, b) => a.minTs - b.minTs);
   },
 
   buildBespokeScoutingDossier(card, gwMatches, isCeiling, manualStatus, finalProjScore, isNationalMatch, lineupContext = null) {
@@ -669,12 +827,13 @@ const OptimizerEngine = {
     let roleInTeamSection = '';
     if (lineupContext) {
       const cardTypeTag = card.isInSeason ? `In-Season 26/27 (+${card.bonusPct}%)` : `Slot Classic 4+1 (+${card.bonusPct}%)`;
+      const targetTag = lineupContext.targetThreshold > 0 ? ` • Target ${lineupContext.targetThreshold} pt` : '';
       if (lineupContext.isCaptain) {
-        roleInTeamSection = `👑 SCELTA CAPITANO (Squadra #${lineupContext.rank}): Fascia assegnata per incassare +${lineupContext.capBonusPts} pt extra e spingere la proiezione a ${finalProjScore} pt (${cardTypeTag}).`;
+        roleInTeamSection = `👑 SCELTA CAPITANO (Squadra #${lineupContext.rank}${targetTag}): Fascia assegnata per incassare +${lineupContext.capBonusPts} pt extra e spingere la proiezione a ${finalProjScore} pt (${cardTypeTag}).`;
       } else if (lineupContext.slotRole === 'EXTRA') {
-        roleInTeamSection = `🎯 SLOT EXTRA (Squadra #${lineupContext.rank}): Inserito come uomo in più (${cardTypeTag}) per il suo indice ${isCeiling ? 'Ceiling' : 'Floor'} da ${finalProjScore} pt.`;
+        roleInTeamSection = `🎯 SLOT EXTRA (Squadra #${lineupContext.rank}${targetTag}): Inserito come uomo in più (${cardTypeTag}) per il suo indice ${isCeiling ? 'Ceiling' : 'Floor'} da ${finalProjScore} pt.`;
       } else {
-        roleInTeamSection = `🎯 TITOLARE ${lineupContext.slotRole} (Squadra #${lineupContext.rank}): Copre il reparto con ${finalProjScore} pt attesi (${cardTypeTag}).`;
+        roleInTeamSection = `🎯 TITOLARE ${lineupContext.slotRole} (Squadra #${lineupContext.rank}${targetTag}): Copre il reparto con ${finalProjScore} pt attesi (${cardTypeTag}).`;
       }
     }
 
@@ -683,15 +842,20 @@ const OptimizerEngine = {
       .join('\n');
   },
 
-  evaluateCardForGw(card, selectedGw, strategy, competition, manualStatus = null) {
+  evaluateCardForGw(card, selectedGw, strategy, competition, manualStatus = null, evalOptions = {}) {
     const allGames = Array.isArray(card.scheduleGames) ? card.scheduleGames : [];
     const allowedGames = allGames.filter(g => this.isGameValidForCompetition(g, card, competition));
+    const anytimeWindow = String(evalOptions.anytimeWindow || 'ALL');
 
     let gwMatches = [];
     if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
       const gwStart = new Date(selectedGw.startDate).getTime();
       const gwEnd = new Date(selectedGw.endDate).getTime();
-      gwMatches = allowedGames.filter(g => g.timestamp >= gwStart && g.timestamp <= gwEnd);
+      gwMatches = allowedGames.filter(g =>
+        g.timestamp >= gwStart &&
+        g.timestamp <= gwEnd &&
+        this.matchesAnytimeWindow(g, selectedGw, anytimeWindow)
+      );
     }
 
     const activeMatch = gwMatches[0] || null;
@@ -724,14 +888,15 @@ const OptimizerEngine = {
         : (contextMins >= 68 ? 1.00 : (contextMins >= 45 ? 0.88 : 0.72));
 
       if (isCeiling) {
-        const peakRef = contextMax > 0 ? Math.min(90, contextMax) : contextL5;
-        baseProjection = ((contextL5 * 0.50) + (baseL15 * 0.30) + (peakRef * 0.20)) * minutesFactor;
+        const peakRef = contextMax > 0 ? Math.min(92, contextMax) : contextL5;
+        const decisiveBoost = Math.min(5, (activeProfileStats?.avgDecisive || 0) * 0.22);
+        baseProjection = (((contextL5 * 0.44) + (baseL15 * 0.28) + (peakRef * 0.28)) + decisiveBoost) * minutesFactor;
       } else {
         const aaStabilityBonus = Math.min(8, Math.max(0, contextAas) * 0.22);
         const volatilityPenalty = Math.min(5, contextStdDev * 0.12);
         baseProjection = ((contextL15Weight(baseL15, contextL5, isNationalMatch)) + aaStabilityBonus - volatilityPenalty) * minutesFactor;
       }
-      baseProjection = Math.min(78, Math.max(22, baseProjection));
+      baseProjection = Math.min(80, Math.max(22, baseProjection));
     }
 
     function contextL15Weight(l15Val, ctxL5Val, isNat) {
@@ -880,21 +1045,18 @@ const OptimizerEngine = {
     };
   },
 
-  selectBestLineupForSlots(pool, slotsTemplate, requiredInSeason, isLeagueOnBreakMode = false) {
-    // 1. Verifica se possiamo risparmiare carte In-Season usando la regola 4 In-Season + 1 Classic
-    //    fin dalla Formazione #1, con fallback automatico a 5/5 In-Season se non ci sono Classic valide!
+  selectBestLineupForSlots(pool, slotsTemplate, requiredInSeason, isLeagueOnBreakMode = false, selectionCtx = {}) {
     if (requiredInSeason > 0 && requiredInSeason < slotsTemplate.length) {
       const totalInSeasonInPool = pool.filter(c => c.isInSeason).length;
       const hasClassicInPool = pool.some(c => !c.isInSeason);
-      // Se ci sono più di 5 carte In-Season nel bacino (quindi servono per costruire la 2ª o 3ª formazione in cascata)
-      // e abbiamo almeno una carta Classic valida (es. portiere Classic o top player Classic), prova prima il piano 4+1!
       if (hasClassicInPool && totalInSeasonInPool >= requiredInSeason) {
         const conserved4Plus1 = this.runSlotSelectionPass(
           pool,
           slotsTemplate,
           requiredInSeason,
           isLeagueOnBreakMode,
-          true
+          true,
+          selectionCtx
         );
         if (conserved4Plus1 && conserved4Plus1.length === slotsTemplate.length) {
           return conserved4Plus1;
@@ -902,20 +1064,24 @@ const OptimizerEngine = {
       }
     }
 
-    // 2. Fallback naturale: se non ci sono carte Classic disponibili (o non coprono i ruoli), usa liberamente anche 5/5 In-Season!
     return this.runSlotSelectionPass(
       pool,
       slotsTemplate,
       requiredInSeason,
       isLeagueOnBreakMode,
-      false
+      false,
+      selectionCtx
     );
   },
 
-  runSlotSelectionPass(pool, slotsTemplate, requiredInSeason, isLeagueOnBreakMode = false, preferExact4Plus1 = false) {
+  runSlotSelectionPass(pool, slotsTemplate, requiredInSeason, isLeagueOnBreakMode = false, preferExact4Plus1 = false, selectionCtx = {}) {
     const usedCardIds = new Set();
     const usedPlayerSlugsInTeam = new Set();
     const selectedTeamPositionKeys = new Set();
+    const selectedAttackingClubs = new Set();
+
+    const isHighTarget = (Number(selectionCtx.targetThreshold) || 0) >= 350 || selectionCtx.effectiveStrategy === 'ceiling';
+    const penalizeClubs = selectionCtx.penalizeClubs || null;
 
     const orderedSlotIndices = slotsTemplate
       .map((role, idx) => ({ role, idx }))
@@ -947,7 +1113,6 @@ const OptimizerEngine = {
         if (onlyInSeason.length === 0) return null;
         poolToSort = onlyInSeason;
       } else if (preferExact4Plus1 && inSeasonTargetMet) {
-        // Abbiamo già raggiunto le 4 In-Season: se c'è un Classic disponibile per l'ultimo slot, usalo per risparmiare una In-Season!
         const classicCandidates = roleCandidates.filter(c => !c.isInSeason);
         const classicStarters = classicCandidates.filter(c =>
           (isLeagueOnBreakMode ? (c.clubStandbyPriority || 2) : c.selectionPriority) >= 3
@@ -969,8 +1134,6 @@ const OptimizerEngine = {
         const aPrio = isLeagueOnBreakMode ? (a.clubStandbyPriority || 2) : a.selectionPriority;
         const bPrio = isLeagueOnBreakMode ? (b.clubStandbyPriority || 2) : b.selectionPriority;
 
-        // Se è lo stesso identico giocatore (es. hai sia la copia Classic sia la copia In-Season del portiere titolare)
-        // e non abbiamo ancora usato lo slot Classic 4+1, usa prima la copia Classic così risparmi la In-Season per le altre squadre!
         if (a.playerSlug === b.playerSlug && a.isInSeason !== b.isInSeason) {
           if (preferExact4Plus1 && currentClassic === 0 && !mustPickInSeasonNow) {
             return (a.isInSeason ? 1 : 0) - (b.isInSeason ? 1 : 0);
@@ -981,11 +1144,8 @@ const OptimizerEngine = {
           return (b.isInSeason ? 1 : 0) - (a.isInSeason ? 1 : 0);
         }
 
-        // Priorità alla titolarità (XI prima delle rotazioni)
         if (bPrio !== aPrio) return bPrio - aPrio;
 
-        // Nel piano 4+1: se non abbiamo ancora inserito la carta Classic e uno dei candidati (es. GK titolare Classic) è Classic,
-        // dagli un boost di risparmio In-Season purché gli slot restanti abbiano abbastanza In-Season nel pool
         const aClassicConservationBoost =
           (preferExact4Plus1 && currentClassic === 0 && !mustPickInSeasonNow && !a.isInSeason) ? 6.5 : 0;
         const bClassicConservationBoost =
@@ -1000,11 +1160,19 @@ const OptimizerEngine = {
         const aPenalty = (a.position === 'DEF' || a.position === 'GK') && selectedTeamPositionKeys.has(aTeamKey) ? 10 : 0;
         const bPenalty = (b.position === 'DEF' || b.position === 'GK') && selectedTeamPositionKeys.has(bTeamKey) ? 10 : 0;
 
-        const aSaveBonus = ((inSeasonTargetMet && requiredInSeason > 0 && !a.isInSeason) ? 3.5 : 0) + aClassicConservationBoost;
-        const bSaveBonus = ((inSeasonTargetMet && requiredInSeason > 0 && !b.isInSeason) ? 3.5 : 0) + bClassicConservationBoost;
+        // Bonus correlazione offensiva quando la soglia target è alta (es. MID + FWD dello stesso club favorito)
+        const aStackBonus = (isHighTarget && (a.position === 'MID' || a.position === 'FWD') && selectedAttackingClubs.has(a.clubSlug)) ? 3.2 : 0;
+        const bStackBonus = (isHighTarget && (b.position === 'MID' || b.position === 'FWD') && selectedAttackingClubs.has(b.clubSlug)) ? 3.2 : 0;
 
-        const aScore = (a.projectedScore > 0 ? a.projectedScore : a.standbyScore) - aPenalty + aSaveBonus;
-        const bScore = (b.projectedScore > 0 ? b.projectedScore : b.standbyScore) - bPenalty + bSaveBonus;
+        // Diversificazione club nella modalità Piano 4 Vite
+        const aFourLivesPenalty = (penalizeClubs && penalizeClubs.has(a.clubSlug)) ? 4.5 : 0;
+        const bFourLivesPenalty = (penalizeClubs && penalizeClubs.has(b.clubSlug)) ? 4.5 : 0;
+
+        const aSaveBonus = ((inSeasonTargetMet && requiredInSeason > 0 && !a.isInSeason) ? 3.5 : 0) + aClassicConservationBoost + aStackBonus;
+        const bSaveBonus = ((inSeasonTargetMet && requiredInSeason > 0 && !b.isInSeason) ? 3.5 : 0) + bClassicConservationBoost + bStackBonus;
+
+        const aScore = (a.projectedScore > 0 ? a.projectedScore : a.standbyScore) - aPenalty - aFourLivesPenalty + aSaveBonus;
+        const bScore = (b.projectedScore > 0 ? b.projectedScore : b.standbyScore) - bPenalty - bFourLivesPenalty + bSaveBonus;
         if (bScore !== aScore) return bScore - aScore;
 
         return (b.isInSeason ? 1 : 0) - (a.isInSeason ? 1 : 0);
@@ -1016,6 +1184,9 @@ const OptimizerEngine = {
       usedCardIds.add(chosen.id);
       usedPlayerSlugsInTeam.add(chosen.playerSlug);
       selectedTeamPositionKeys.add(`${chosen.activeMatch?.teamName || chosen.clubSlug}_${chosen.position}`);
+      if (chosen.position === 'MID' || chosen.position === 'FWD') {
+        selectedAttackingClubs.add(chosen.clubSlug);
+      }
 
       tempSelectedByIndex[originalIdx] = {
         ...chosen,
