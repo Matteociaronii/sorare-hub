@@ -1,13 +1,18 @@
-// SorareHub - Application Controller + Custom SorareHub Avatar & Watermark + Direct 1-Click Submitter
+// SorareHub - Application Controller + Target Threshold + Anytime Entry + 4-Lives + Pre-Set Alert + Direct 1-Click Submitter
 const App = {
+  PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
   cards: [],
   gameweeks: [],
   lastGeneratedLineups: [],
+  presetLineups: [],
   sorareFixturesBySlug: {},
   usedCardsByGwSlug: {},
   unlockedUsedCardSlugs: new Set(),
   selectedGwIndex: 0,
   selectedClubSlug: 'ALL',
+  targetThreshold: 0,
+  anytimeWindow: 'ALL',
+  portfolioMode: 'cascade',
   manualOverrides: {},
   user: null,
   currentScarcity: 'limited',
@@ -22,6 +27,7 @@ const App = {
   },
 
   async init() {
+    this.loadSavedPresets();
     this.injectFavicon();
     this.injectTacticalStyles();
     this.ensureBannerElement();
@@ -45,6 +51,122 @@ const App = {
     } else {
       this.renderEmptyState();
     }
+  },
+
+  loadSavedPresets() {
+    try {
+      const raw = localStorage.getItem(this.PRESET_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) this.presetLineups = parsed;
+      }
+    } catch (_) {
+      this.presetLineups = [];
+    }
+  },
+
+  savePresetsToStorage() {
+    try {
+      localStorage.setItem(this.PRESET_STORAGE_KEY, JSON.stringify(this.presetLineups));
+    } catch (_) {}
+  },
+
+  pinLineupAsPreset(lineupIndex) {
+    const lineup = this.lastGeneratedLineups[lineupIndex];
+    if (!lineup || !Array.isArray(lineup.starters)) return;
+
+    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+    const presetEntry = {
+      id: 'preset_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      label: `Pre-Set Step ${this.presetLineups.length + 1} • ${lineup.rankLabel}`,
+      competitionName: this.currentCompetition.name,
+      scarcity: this.currentScarcity,
+      gwLabel: selectedGw ? selectedGw.label : 'GW Attiva',
+      totalProjected: lineup.totalProjected,
+      cardIds: lineup.starters.map(s => s.id),
+      players: lineup.starters.map(s => ({
+        cardId: s.id,
+        playerSlug: s.playerSlug,
+        name: s.name,
+        club: s.club,
+        position: s.displayRole || s.position
+      }))
+    };
+
+    this.presetLineups.push(presetEntry);
+    this.savePresetsToStorage();
+    this.notify(`📌 ${presetEntry.label} fissata! Le sue ${presetEntry.cardIds.length} carte sono ora riservate mentre prepari lo step successivo.`);
+    this.runOptimizer();
+  },
+
+  removePreset(presetId) {
+    this.presetLineups = this.presetLineups.filter(p => p.id !== presetId);
+    this.savePresetsToStorage();
+    this.runOptimizer();
+  },
+
+  clearAllPresets() {
+    this.presetLineups = [];
+    this.savePresetsToStorage();
+    this.runOptimizer();
+  },
+
+  getPresetReservedCardIdsSet() {
+    const set = new Set();
+    (this.presetLineups || []).forEach(p => {
+      if (p.scarcity && p.scarcity !== this.currentScarcity) return;
+      (p.cardIds || []).forEach(id => set.add(id));
+    });
+    return set;
+  },
+
+  evaluatePresetDnpAlerts() {
+    const alerts = [];
+    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+
+    (this.presetLineups || []).forEach(preset => {
+      (preset.players || []).forEach(pl => {
+        const liveCard = this.cards.find(c => c.id === pl.cardId || c.playerSlug === pl.playerSlug);
+        if (!liveCard) return;
+
+        if (liveCard.isInjuredOrSuspended && this.manualOverrides[liveCard.playerSlug] !== 'xi') {
+          alerts.push({
+            presetId: preset.id,
+            presetLabel: preset.label,
+            playerName: liveCard.name,
+            reason: liveCard.baseUnavailableReason || 'Infortunato / Squalificato'
+          });
+          return;
+        }
+
+        if (this.manualOverrides[liveCard.playerSlug] === 'bench') {
+          alerts.push({
+            presetId: preset.id,
+            presetLabel: preset.label,
+            playerName: liveCard.name,
+            reason: 'Spostato manualmente in Panchina'
+          });
+          return;
+        }
+
+        if (selectedGw && selectedGw.startDate && selectedGw.endDate && Array.isArray(liveCard.scheduleGames)) {
+          const s = new Date(selectedGw.startDate).getTime();
+          const e = new Date(selectedGw.endDate).getTime();
+          const gwGames = liveCard.scheduleGames.filter(g => g.timestamp >= s && g.timestamp <= e);
+          const hasZeroDnp = gwGames.length > 0 && gwGames.every(g => g.alreadyPlayedScore === 0 && (g.alreadyPlayedMins === 0 || g.alreadyPlayedMins === null));
+          if (hasZeroDnp) {
+            alerts.push({
+              presetId: preset.id,
+              presetLabel: preset.label,
+              playerName: liveCard.name,
+              reason: '0 pt DNP nel match già disputato in questa GW'
+            });
+          }
+        }
+      });
+    });
+
+    return alerts;
   },
 
   injectFavicon() {
@@ -404,7 +526,6 @@ const App = {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
       const captainCard = orderedStarters.find(p => p.isCaptain) || orderedStarters[0];
 
-      // === RAMO HOT STREAK PRO 1-CLICK (upsertReplayTaskMutation) ===
       if (targetMode === 'hotstreak') {
         const configSlug = this.getProBoardConfigSlug(this.currentCompetition.id);
         if (!configSlug) {
@@ -462,7 +583,6 @@ const App = {
         return;
       }
 
-      // === RAMO TORNEO STANDARD (PvP / Classic SO7) ===
       if (!targetFixture || !Array.isArray(targetFixture.so5Leaderboards) || targetFixture.so5Leaderboards.length === 0) {
         throw new Error('Impossibile leggere i tornei della Gameweek da Sorare. Ricarica la pagina.');
       }
@@ -524,6 +644,7 @@ const App = {
     const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
     const lockedMap = this.getLockedCardsMapForCurrentGw();
+    const presetReservedSet = this.getPresetReservedCardIdsSet();
 
     let confirmedXiCount = 0;
     const roleActiveCounts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
@@ -532,6 +653,7 @@ const App = {
     this.cards.forEach(c => {
       if (c.isInjuredOrSuspended && this.manualOverrides[c.playerSlug] !== 'xi') return;
       if (lockedMap[c.id] && !this.unlockedUsedCardSlugs.has(c.id)) return;
+      if (presetReservedSet.has(c.id)) return;
       if (this.manualOverrides[c.playerSlug] === 'bench') return;
       if (c.scarcity !== this.currentScarcity) return;
       if (!OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)) return;
@@ -543,7 +665,11 @@ const App = {
       if (selectedGw && selectedGw.startDate && selectedGw.endDate) {
         const s = new Date(selectedGw.startDate).getTime();
         const e = new Date(selectedGw.endDate).getTime();
-        gwMatches = validGames.filter(g => g.timestamp >= s && g.timestamp <= e);
+        gwMatches = validGames.filter(g =>
+          g.timestamp >= s &&
+          g.timestamp <= e &&
+          OptimizerEngine.matchesAnytimeWindow(g, selectedGw, this.anytimeWindow)
+        );
       }
 
       if (gwMatches.length > 0 && !seenSlugs.has(c.playerSlug)) {
@@ -601,10 +727,10 @@ const App = {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <div>
             <div style="font-size:11px;font-weight:800;color:#f3d266;text-transform:uppercase;letter-spacing:0.5px;">
-              📡 Radar Giocatori Liberi con Match in ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
+              📡 Radar Giocatori Liberi in ${selectedGw ? selectedGw.label : 'GW Attiva'} (${selectedGw ? selectedGw.dateRangeText : ''})
             </div>
             <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
-              Schierabili nel torneo: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
+              Schierabili nella finestra attiva: <strong>GK: ${roleActiveCounts.GK}</strong> • <strong>DC: ${roleActiveCounts.DEF}</strong> • <strong>CC: ${roleActiveCounts.MID}</strong> • <strong>ATT: ${roleActiveCounts.FWD}</strong>
             </div>
           </div>
         </div>
@@ -668,9 +794,9 @@ const App = {
         align-items: stretch !important;
       }
       .sh-lineup-card, .lineup-card {
-        flex: 0 0 415px !important;
-        min-width: 395px !important;
-        max-width: 440px !important;
+        flex: 0 0 420px !important;
+        min-width: 400px !important;
+        max-width: 445px !important;
         background: #141519 !important;
         border: 1px solid rgba(212, 175, 55, 0.42) !important;
         border-radius: 14px !important;
@@ -684,14 +810,34 @@ const App = {
       .sh-card-head {
         display: flex;
         justify-content: space-between;
-        align-items: center;
+        align-items: flex-start;
         border-bottom: 1px solid rgba(255,255,255,0.09);
         padding-bottom: 10px;
         margin-bottom: 10px;
+        gap: 8px;
       }
       .sh-rank { color: #f3d266; font-weight: 800; font-size: 16px; }
       .sh-comp { color: #9aa0a6; font-size: 12px; margin-top: 2px; }
       .sh-score { color: #f3d266; font-weight: 800; font-size: 21px; text-align: right; }
+      .sh-target-pill {
+        display: inline-block;
+        margin-top: 4px;
+        padding: 2px 7px;
+        border-radius: 5px;
+        font-size: 10px;
+        font-weight: 800;
+        text-align: right;
+      }
+      .sh-target-pill.target-pass {
+        background: rgba(46, 125, 50, 0.28);
+        border: 1px solid rgba(76, 175, 80, 0.65);
+        color: #81c784;
+      }
+      .sh-target-pill.target-warn {
+        background: rgba(255, 152, 0, 0.22);
+        border: 1px solid rgba(255, 152, 0, 0.6);
+        color: #ffb74d;
+      }
       .sh-brand-watermark {
         display: inline-flex;
         align-items: center;
@@ -752,12 +898,8 @@ const App = {
         justify-content: center;
         box-shadow: 0 3px 8px rgba(0, 0, 0, 0.65);
       }
-      .sh-avatar-ring.ring-inseason {
-        border: 2px solid #f3d266;
-      }
-      .sh-avatar-ring.ring-classic {
-        border: 2px solid #90a4ae;
-      }
+      .sh-avatar-ring.ring-inseason { border: 2px solid #f3d266; }
+      .sh-avatar-ring.ring-classic { border: 2px solid #90a4ae; }
       .sh-avatar-img {
         width: 100%;
         height: 100%;
@@ -871,7 +1013,7 @@ const App = {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 10px;
+        gap: 9px;
         margin-top: 10px;
         width: 100%;
       }
@@ -882,7 +1024,7 @@ const App = {
         background: rgba(212, 175, 55, 0.12);
         border: 1px solid rgba(212, 175, 55, 0.45);
         border-radius: 8px;
-        padding: 6px 11px;
+        padding: 6px 10px;
         color: #f3d266;
         font-size: 12px;
         font-weight: 600;
@@ -892,7 +1034,7 @@ const App = {
         color: #f3d266;
         border: 1px solid rgba(212, 175, 55, 0.4);
         border-radius: 5px;
-        padding: 4px 7px;
+        padding: 4px 6px;
         font-size: 12px;
         font-weight: 700;
       }
@@ -926,6 +1068,26 @@ const App = {
         font-size: 12px;
         color: #f3e5f5;
       }
+      .preset-alert-strip {
+        width: 100%;
+        background: rgba(211, 47, 47, 0.22);
+        border: 1px solid rgba(244, 67, 54, 0.85);
+        border-radius: 9px;
+        padding: 8px 12px;
+        margin-top: 6px;
+        font-size: 12px;
+        color: #ffcdd2;
+      }
+      .preset-active-strip {
+        width: 100%;
+        background: rgba(212, 175, 55, 0.12);
+        border: 1px solid rgba(212, 175, 55, 0.55);
+        border-radius: 9px;
+        padding: 8px 12px;
+        margin-top: 6px;
+        font-size: 12px;
+        color: #f3d266;
+      }
       .club-xi-chip {
         display: inline-flex;
         align-items: center;
@@ -955,27 +1117,37 @@ const App = {
         padding-top: 12px;
         border-top: 1px solid rgba(212, 175, 55, 0.22);
         display: flex;
-        gap: 8px;
+        flex-wrap: wrap;
+        gap: 7px;
       }
       .sh-direct-submit-btn {
         flex: 1;
+        min-width: 115px;
         background: linear-gradient(135deg, #f3d266 0%, #d4af37 100%);
         color: #0d0e12;
         border: none;
         border-radius: 9px;
-        padding: 10px 10px;
-        font-size: 12.5px;
+        padding: 9px 9px;
+        font-size: 12px;
         font-weight: 800;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 5px;
+        gap: 4px;
         transition: transform 0.12s ease, opacity 0.15s ease;
       }
       .sh-direct-submit-btn.hotstreak-btn {
         background: linear-gradient(135deg, #ff7043 0%, #d84315 100%);
         color: #ffffff;
+      }
+      .sh-direct-submit-btn.preset-btn {
+        flex: 0 0 auto;
+        min-width: auto;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(212, 175, 55, 0.5);
+        color: #f3d266;
+        padding: 9px 10px;
       }
       .sh-direct-submit-btn:hover {
         transform: translateY(-1px);
@@ -990,11 +1162,12 @@ const App = {
   },
 
   getCompetitionSelectEl() {
+    const customIds = new Set(['gw-select', 'club-stack-select', 'target-threshold-select', 'anytime-window-select', 'portfolio-mode-select']);
     return (
       document.getElementById('comp-select') ||
       document.getElementById('competition-select') ||
       document.getElementById('tournament-select') ||
-      Array.from(document.querySelectorAll('select')).find(s => s.id !== 'gw-select' && s.id !== 'club-stack-select')
+      Array.from(document.querySelectorAll('select')).find(s => !customIds.has(s.id))
     );
   },
 
@@ -1054,6 +1227,64 @@ const App = {
       })
     ].join('');
 
+    const thresholdOptions = [
+      { val: 0, label: 'Libera (Usa Floor/Ceiling)' },
+      { val: 260, label: '260 pt (Step 1 • Floor)' },
+      { val: 300, label: '300 pt (Step 2 • Equilibrata)' },
+      { val: 340, label: '340 pt (Step 3 • Spinta)' },
+      { val: 380, label: '380 pt (Step 4 • Ceiling)' },
+      { val: 420, label: '420+ pt (All-In Ceiling)' }
+    ];
+    const thresholdOptionsHtml = thresholdOptions
+      .map(opt => `<option value="${opt.val}" ${Number(this.targetThreshold) === opt.val ? 'selected' : ''}>${opt.label}</option>`)
+      .join('');
+
+    const anytimeOptions = [
+      { val: 'ALL', label: 'Tutte le gare GW' },
+      { val: 'NOT_STARTED', label: 'Solo non ancora iniziate' },
+      { val: 'TODAY', label: 'Solo partite di Oggi' },
+      { val: 'TOMORROW', label: 'Solo partite di Domani' },
+      { val: 'LATE_GW', label: 'Solo Posticipi / Ultime gare GW' }
+    ];
+    const anytimeOptionsHtml = anytimeOptions
+      .map(opt => `<option value="${opt.val}" ${this.anytimeWindow === opt.val ? 'selected' : ''}>${opt.label}</option>`)
+      .join('');
+
+    const portfolioModeHtml = `
+      <option value="cascade" ${this.portfolioMode === 'cascade' ? 'selected' : ''}>Cascata Classica (4+1)</option>
+      <option value="four_lives" ${this.portfolioMode === 'four_lives' ? 'selected' : ''}>Piano 4 Vite (Multi-Stack)</option>
+    `;
+
+    let presetAlertsHtml = '';
+    const dnpAlerts = this.evaluatePresetDnpAlerts();
+    if (dnpAlerts.length > 0) {
+      const alertLines = dnpAlerts.map(a =>
+        `<div>⚠️ <strong>${this.escapeHtml(a.playerName)}</strong> in <em>${this.escapeHtml(a.presetLabel)}</em>: ${this.escapeHtml(a.reason)}</div>`
+      ).join('');
+      presetAlertsHtml = `
+        <div class="preset-alert-strip">
+          <strong>🚨 ALERT DNP / INDISPONIBILI SU PRE-SET SALVATI:</strong>
+          ${alertLines}
+        </div>
+      `;
+    }
+
+    let presetStripHtml = '';
+    if (this.presetLineups.length > 0) {
+      const presetChips = this.presetLineups.map(pr =>
+        `<span class="club-xi-chip" data-remove-preset="${this.escapeHtml(pr.id)}" title="Clicca per sbloccare e rimuovere questo Pre-Set">📌 ${this.escapeHtml(pr.label)} (${pr.totalProjected} pt) ✕</span>`
+      ).join('');
+      presetStripHtml = `
+        <div class="preset-active-strip">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+            <strong>📌 Pre-Set Step Fissati (carte riservate escluse dal calcolo successivo):</strong>
+            <span class="club-xi-chip benched" data-clear-all-presets="1">Svuota tutti ✕</span>
+          </div>
+          <div style="margin-top:4px;">${presetChips}</div>
+        </div>
+      `;
+    }
+
     let clubXiStripHtml = '';
     if (this.selectedClubSlug && this.selectedClubSlug !== 'ALL') {
       const clubCards = this.cards.filter(c =>
@@ -1081,7 +1312,7 @@ const App = {
       clubXiStripHtml = `
         <div class="club-xi-strip">
           <div style="margin-bottom:4px;font-weight:700;color:#81c784;">
-            🎯 11 Titolari Ufficiali (${this.escapeHtml(uniqueClubPlayers[0]?.club || '')}) — Verde = Titolare XI (✅) • Rosso = Riserva/Panchina (🪑, usata solo come riempimento nell'ultima formazione):
+            🎯 11 Titolari Ufficiali (${this.escapeHtml(uniqueClubPlayers[0]?.club || '')}) — Verde = Titolare XI (✅) • Rosso = Riserva/Panchina (🪑):
           </div>
           <div>${chips}</div>
         </div>
@@ -1107,13 +1338,12 @@ const App = {
 
       lockedSorareHtml = `
         <div class="sorare-locked-strip">
-          <strong>🔒 ${lockedEntries.length} Carte già schierate su Sorare in questa GW (escluse in automatico dal calcolo • clicca su una carta per sbloccarla):</strong>
+          <strong>🔒 ${lockedEntries.length} Carte già schierate su Sorare in questa GW (escluse in automatico • clicca per sbloccare):</strong>
           <div style="margin-top:5px;">${lockedChips}</div>
         </div>
       `;
     }
 
-    // Mostra sia i giocatori messi in panchina manualmente sia i lungodegenti rilevati automaticamente nel torneo attivo (per eventuale sblocco)
     const benchedSlugs = Object.keys(this.manualOverrides).filter(slug => this.manualOverrides[slug] === 'bench');
     const autoFilteredLongTerm = [];
     const seenLongTerm = new Set();
@@ -1151,13 +1381,27 @@ const App = {
 
     container.innerHTML = `
       <div class="gw-selector-pill">
-        <span>📅 GW Sorare:</span>
+        <span>📅 GW:</span>
         <select id="gw-select">${gwOptionsHtml}</select>
       </div>
       <div class="gw-selector-pill">
-        <span>🏟️ Stack Squadra:</span>
+        <span>🎯 Soglia:</span>
+        <select id="target-threshold-select">${thresholdOptionsHtml}</select>
+      </div>
+      <div class="gw-selector-pill">
+        <span>⏱️ Anytime:</span>
+        <select id="anytime-window-select">${anytimeOptionsHtml}</select>
+      </div>
+      <div class="gw-selector-pill">
+        <span>🃏 Piano:</span>
+        <select id="portfolio-mode-select">${portfolioModeHtml}</select>
+      </div>
+      <div class="gw-selector-pill">
+        <span>🏟️ Club:</span>
         <select id="club-stack-select">${clubOptionsHtml}</select>
       </div>
+      ${presetAlertsHtml}
+      ${presetStripHtml}
       ${lockedSorareHtml}
       ${clubXiStripHtml}
       ${benchedRestoreHtml}
@@ -1167,6 +1411,30 @@ const App = {
     if (gwSelect) {
       gwSelect.addEventListener('change', (e) => {
         this.selectedGwIndex = Number(e.target.value) || 0;
+        this.runOptimizer();
+      });
+    }
+
+    const thresholdSelect = document.getElementById('target-threshold-select');
+    if (thresholdSelect) {
+      thresholdSelect.addEventListener('change', (e) => {
+        this.targetThreshold = Number(e.target.value) || 0;
+        this.runOptimizer();
+      });
+    }
+
+    const anytimeSelect = document.getElementById('anytime-window-select');
+    if (anytimeSelect) {
+      anytimeSelect.addEventListener('change', (e) => {
+        this.anytimeWindow = e.target.value || 'ALL';
+        this.runOptimizer();
+      });
+    }
+
+    const modeSelect = document.getElementById('portfolio-mode-select');
+    if (modeSelect) {
+      modeSelect.addEventListener('change', (e) => {
+        this.portfolioMode = e.target.value || 'cascade';
         this.runOptimizer();
       });
     }
@@ -1278,11 +1546,35 @@ const App = {
         }
         target.classList.add('active');
         this.currentStrategy = val;
+        this.targetThreshold = 0;
         this.runOptimizer();
       });
     });
 
     document.addEventListener('click', (e) => {
+      const pinPresetBtn = e.target.closest('[data-pin-preset-idx]');
+      if (pinPresetBtn) {
+        e.stopPropagation();
+        const idx = Number(pinPresetBtn.dataset.pinPresetIdx);
+        if (!Number.isNaN(idx)) this.pinLineupAsPreset(idx);
+        return;
+      }
+
+      const removePresetChip = e.target.closest('[data-remove-preset]');
+      if (removePresetChip) {
+        e.stopPropagation();
+        const pId = removePresetChip.dataset.removePreset;
+        if (pId) this.removePreset(pId);
+        return;
+      }
+
+      const clearAllPresetsBtn = e.target.closest('[data-clear-all-presets]');
+      if (clearAllPresetsBtn) {
+        e.stopPropagation();
+        this.clearAllPresets();
+        return;
+      }
+
       const directSubmitBtn = e.target.closest('[data-direct-submit-idx]');
       if (directSubmitBtn) {
         e.stopPropagation();
@@ -1356,7 +1648,7 @@ const App = {
       }
 
       const btn = e.target.closest('button');
-      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn' && !btn.hasAttribute('data-direct-submit-idx')) {
+      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn' && !btn.hasAttribute('data-direct-submit-idx') && !btn.hasAttribute('data-pin-preset-idx')) {
         const txt = (btn.textContent || '').toLowerCase();
         if (txt.includes('genera') || txt.includes('ottimizz') || txt.includes('calcola') || btn.id === 'generate-btn' || btn.id === 'optimize-btn' || btn.id === 'run-optimizer-btn') {
           this.syncStateFromDOM();
@@ -1433,8 +1725,13 @@ const App = {
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
 
     const lockedMap = this.getLockedCardsMapForCurrentGw();
+    const presetReservedSet = this.getPresetReservedCardIdsSet();
+
     const availableCardsForGw = this.cards.filter(c => {
       if (lockedMap[c.id] && !this.unlockedUsedCardSlugs.has(c.id)) {
+        return false;
+      }
+      if (presetReservedSet.has(c.id)) {
         return false;
       }
       return true;
@@ -1448,7 +1745,12 @@ const App = {
           this.currentStrategy,
           selectedGw,
           this.manualOverrides,
-          this.selectedClubSlug
+          this.selectedClubSlug,
+          {
+            targetThreshold: this.targetThreshold,
+            anytimeWindow: this.anytimeWindow,
+            portfolioMode: this.portfolioMode
+          }
         )
       : [];
 
@@ -1480,9 +1782,11 @@ const App = {
     const isStack = this.selectedClubSlug && this.selectedClubSlug !== 'ALL';
 
     if (!lineups || lineups.length === 0) {
-      const reason = isStack
-        ? `Non hai tutti i ruoli (GK, DC, CC, ATT) tra i giocatori liberi di questo club (o mancano le ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season).`
-        : `Non possiedi abbastanza carte libere ${this.currentCompetition.inSeasonRequired > 0 ? `In-Season 26/27 (richieste ${this.currentCompetition.inSeasonRequired}/5)` : ''} appartenenti ai club di ${this.currentCompetition.name}.`;
+      const reason = this.anytimeWindow !== 'ALL'
+        ? `Nessuna formazione completa trovata nella finestra temporale selezionata (${this.anytimeWindow}). Prova a rimettere "Tutte le gare GW".`
+        : (isStack
+          ? `Non hai tutti i ruoli (GK, DC, CC, ATT) tra i giocatori liberi di questo club (o mancano le ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season).`
+          : `Non possiedi abbastanza carte libere ${this.currentCompetition.inSeasonRequired > 0 ? `In-Season 26/27 (richieste ${this.currentCompetition.inSeasonRequired}/5)` : ''} appartenenti ai club di ${this.currentCompetition.name}.`);
       const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — ${reason}`;
       this.notify(msg, true);
       targetGrid.innerHTML = `<div class="sh-lineup-card"><p>${msg}</p></div>`;
@@ -1491,9 +1795,10 @@ const App = {
 
     const isBreakMode = lineups.some(l => l.isLeagueOnBreakMode);
     if (isBreakMode) {
-      this.notify(`⏸️ ${this.currentCompetition.name} in Sosta Club in ${selectedGw?.label || 'questa GW'}: generate comunque ${lineups.length} formazioni (ottimizzate 4 In-Season + 1 Classic con fallback automatico).`);
+      this.notify(`⏸️ ${this.currentCompetition.name} in Sosta Club in ${selectedGw?.label || 'questa GW'}: generate comunque ${lineups.length} formazioni (4 In-Season + 1 Classic con fallback automatico).`);
     } else {
-      this.notify(`✅ Generate ${lineups.length} formazioni ottimali con carte libere per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
+      const targetStr = this.targetThreshold > 0 ? ` • Target Soglia: ${this.targetThreshold} pt` : '';
+      this.notify(`✅ Generate ${lineups.length} formazioni ottimali per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}${targetStr}`);
     }
 
     const isInSeasonSo5 = this.currentCompetition.format === 'SO5';
@@ -1504,6 +1809,12 @@ const App = {
       const mixLabel = isInSeasonSo5
         ? `${lineup.inSeasonCount} In-Season${classicCount > 0 ? ` + ${classicCount} Classic` : ''}`
         : `${lineup.inSeasonCount} In-Season`;
+
+      const targetBadgeHtml = lineup.thresholdInfo
+        ? `<div class="sh-target-pill ${lineup.thresholdInfo.delta >= 0 ? 'target-pass' : 'target-warn'}">
+             ${lineup.thresholdInfo.statusLabel} (${lineup.thresholdInfo.probabilityPct}%)
+           </div>`
+        : '';
 
       const playersHtml = orderedStarters.map(p => {
         const capBadge = p.isCaptain ? ' <strong>[C]</strong>' : '';
@@ -1564,7 +1875,7 @@ const App = {
 
       const hotStreakBtnHtml = isInSeasonSo5
         ? `<button type="button" class="sh-direct-submit-btn hotstreak-btn" data-direct-submit-idx="${idx}" data-submit-mode="hotstreak" title="Invia direttamente con 1 clic la formazione nella modalità Hot Streak PRO">
-             🔥 Invia Hot Streak
+             🔥 Hot Streak
            </button>`
         : '';
 
@@ -1577,7 +1888,10 @@ const App = {
                 <div class="sh-comp">${this.currentCompetition.name} (${lineup.format} • ${mixLabel})</div>
                 <div class="sh-brand-watermark">⚽ SorareHub • Pro Optimizer</div>
               </div>
-              <div class="sh-score">${lineup.totalProjected} pt</div>
+              <div style="text-align:right;">
+                <div class="sh-score">${lineup.totalProjected} pt</div>
+                ${targetBadgeHtml}
+              </div>
             </div>
             <div>${playersHtml}</div>
           </div>
@@ -1586,6 +1900,9 @@ const App = {
               ⚡ Invia Torneo
             </button>
             ${hotStreakBtnHtml}
+            <button type="button" class="sh-direct-submit-btn preset-btn" data-pin-preset-idx="${idx}" title="Fissa questa formazione come Pre-Set Step e riserva le sue 5 carte">
+              📌 Pre-Set
+            </button>
           </div>
         </div>
       `;
