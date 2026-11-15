@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Vault Filter + Collapsible Strips + Target Threshold + Anytime Entry + 4-Lives + Pre-Set Alert
+// SorareHub - Application Controller + Account Menu (Logout) + Vault Filter + Collapsible Strips + Target Threshold + Anytime Entry + 4-Lives + Pre-Set Alert
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
   cards: [],
@@ -53,6 +53,109 @@ const App = {
     } else {
       this.renderEmptyState();
     }
+  },
+
+  toggleAccountMenu(anchorBtn) {
+    const existing = document.getElementById('sh-account-popover');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    if (!anchorBtn) return;
+
+    const rect = anchorBtn.getBoundingClientRect();
+    const popover = document.createElement('div');
+    popover.id = 'sh-account-popover';
+    popover.className = 'sh-account-popover';
+    popover.style.top = `${Math.round(rect.bottom + window.scrollY + 8)}px`;
+    popover.style.left = `${Math.max(12, Math.round(rect.right + window.scrollX - 210))}px`;
+
+    popover.innerHTML = `
+      <div class="sh-account-header">
+        Account connesso: <strong>@${this.escapeHtml(this.user?.nickname || 'Manager')}</strong>
+      </div>
+      <button type="button" class="sh-account-item" id="sh-btn-sync-now">
+        <span>🔄</span>
+        <span>Sincronizza Galleria</span>
+      </button>
+      <button type="button" class="sh-account-item logout" id="sh-btn-logout">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+          <polyline points="16 17 21 12 16 7"></polyline>
+          <line x1="21" y1="12" x2="9" y2="12"></line>
+        </svg>
+        <span>Log out</span>
+      </button>
+    `;
+
+    document.body.appendChild(popover);
+
+    const syncBtn = document.getElementById('sh-btn-sync-now');
+    if (syncBtn) {
+      syncBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        popover.remove();
+        this.loadUserGallery(true);
+      });
+    }
+
+    const logoutBtn = document.getElementById('sh-btn-logout');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        popover.remove();
+        this.logoutUser();
+      });
+    }
+  },
+
+  logoutUser() {
+    localStorage.removeItem('sorare_access_token');
+    localStorage.removeItem('sorare_oauth_state');
+    if (window.SorareAPI && Array.isArray(SorareAPI.FALLBACK_CACHE_KEYS)) {
+      SorareAPI.FALLBACK_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
+    }
+    localStorage.removeItem('sorarehub_gallery_cache_v27');
+
+    this.user = null;
+    this.cards = [];
+    this.lastGeneratedLineups = [];
+    this.sorareFixturesBySlug = {};
+    this.usedCardsByGwSlug = {};
+    this.unlockedUsedCardSlugs.clear();
+    this.unlockedVaultCardIds.clear();
+    this.manualOverrides = {};
+    this.selectedClubSlug = 'ALL';
+
+    const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
+    const loginBtnText = document.getElementById('login-btn-text') || loginBtn;
+    if (loginBtn) {
+      loginBtn.classList.remove('connected');
+      loginBtn.disabled = false;
+    }
+    if (loginBtnText) {
+      loginBtnText.textContent = 'Connetti Sorare';
+    }
+
+    const controlsContainer = document.getElementById('gw-selector-container');
+    if (controlsContainer) {
+      controlsContainer.innerHTML = '';
+    }
+
+    const elTotal = document.getElementById('stat-total-cards');
+    const elUser = document.getElementById('stat-user-slug');
+    const elInSeason = document.getElementById('stat-inseason-cards');
+    const elStarters = document.getElementById('stat-starters');
+    const elBuilt = document.getElementById('stat-lineups-built');
+
+    if (elTotal) elTotal.textContent = '0';
+    if (elUser) elUser.textContent = 'Non connesso';
+    if (elInSeason) elInSeason.textContent = '0';
+    if (elStarters) elStarters.textContent = '0';
+    if (elBuilt) elBuilt.textContent = '0';
+
+    this.renderEmptyState();
+    this.notify('🚪 Disconnessione effettuata. Clicca su "Connetti Sorare" per accedere di nuovo.');
   },
 
   loadSavedPresets() {
@@ -800,6 +903,58 @@ const App = {
     const style = document.createElement('style');
     style.id = 'sorarehub-tactical-styles';
     style.textContent = `
+      .sh-account-popover {
+        position: absolute;
+        width: 215px;
+        background: #141519;
+        border: 1px solid rgba(212, 175, 55, 0.65);
+        border-radius: 11px;
+        padding: 8px;
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.9);
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .sh-account-header {
+        font-size: 11px;
+        color: #9aa0a6;
+        padding: 4px 8px 6px 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 2px;
+      }
+      .sh-account-header strong {
+        color: #f3d266;
+      }
+      .sh-account-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid transparent;
+        border-radius: 7px;
+        padding: 8px 10px;
+        color: #e0e0e0;
+        font-size: 12.5px;
+        font-weight: 700;
+        cursor: pointer;
+        text-align: left;
+        transition: all 0.15s ease;
+      }
+      .sh-account-item:hover {
+        background: rgba(212, 175, 55, 0.14);
+        border-color: rgba(212, 175, 55, 0.45);
+        color: #f3d266;
+      }
+      .sh-account-item.logout {
+        color: #ff8a95;
+      }
+      .sh-account-item.logout:hover {
+        background: rgba(244, 67, 54, 0.18);
+        border-color: rgba(244, 67, 54, 0.55);
+        color: #ffcdd2;
+      }
       #status-banner {
         display: none;
         width: 100%;
@@ -1591,7 +1746,7 @@ const App = {
         this.selectedGwIndex = 0;
 
         if (loginBtnText) {
-          loginBtnText.textContent = `✅ @${this.user?.nickname || 'Manager'} (${this.cards.length} carte)`;
+          loginBtnText.textContent = `✅ @${this.user?.nickname || 'Manager'} (${this.cards.length} carte) ▾`;
         }
         if (loginBtn) {
           loginBtn.classList.add('connected');
@@ -1630,7 +1785,14 @@ const App = {
   bindEvents() {
     const loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
     if (loginBtn) {
-      loginBtn.addEventListener('click', () => SorareAPI.startOAuthFlow());
+      loginBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (localStorage.getItem('sorare_access_token') && this.user) {
+          this.toggleAccountMenu(loginBtn);
+        } else {
+          SorareAPI.startOAuthFlow();
+        }
+      });
     }
 
     const compSelect = this.getCompetitionSelectEl();
@@ -1678,6 +1840,11 @@ const App = {
     });
 
     document.addEventListener('click', (e) => {
+      const existingPopover = document.getElementById('sh-account-popover');
+      if (existingPopover && !e.target.closest('#sh-account-popover') && !e.target.closest('#login-btn') && !e.target.closest('#connect-btn')) {
+        existingPopover.remove();
+      }
+
       const togglePanelHead = e.target.closest('[data-toggle-panel]');
       if (togglePanelHead) {
         e.stopPropagation();
@@ -1804,7 +1971,7 @@ const App = {
       }
 
       const btn = e.target.closest('button');
-      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn' && !btn.hasAttribute('data-direct-submit-idx') && !btn.hasAttribute('data-pin-preset-idx')) {
+      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn' && !btn.closest('#sh-account-popover') && !btn.hasAttribute('data-direct-submit-idx') && !btn.hasAttribute('data-pin-preset-idx')) {
         const txt = (btn.textContent || '').toLowerCase();
         if (txt.includes('genera') || txt.includes('ottimizz') || txt.includes('calcola') || btn.id === 'generate-btn' || btn.id === 'optimize-btn' || btn.id === 'run-optimizer-btn') {
           this.syncStateFromDOM();
