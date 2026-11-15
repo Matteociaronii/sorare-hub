@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Direct 1-Click Sorare Submitter (PvP + Native Hot Streak PRO)
+// SorareHub - Application Controller + Custom SorareHub Avatar & Watermark + Direct 1-Click Submitter
 const App = {
   cards: [],
   gameweeks: [],
@@ -530,7 +530,7 @@ const App = {
     const seenSlugs = new Set();
 
     this.cards.forEach(c => {
-      if (c.isInjuredOrSuspended) return;
+      if (c.isInjuredOrSuspended && this.manualOverrides[c.playerSlug] !== 'xi') return;
       if (lockedMap[c.id] && !this.unlockedUsedCardSlugs.has(c.id)) return;
       if (this.manualOverrides[c.playerSlug] === 'bench') return;
       if (c.scarcity !== this.currentScarcity) return;
@@ -573,12 +573,16 @@ const App = {
   upgradeSecondaryInfoBoxes(selectedGw, roleActiveCounts) {
     const rarityCards = this.cards.filter(c =>
       c.scarcity === this.currentScarcity &&
-      !c.isInjuredOrSuspended &&
+      (!c.isInjuredOrSuspended || this.manualOverrides[c.playerSlug] === 'xi') &&
       OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)
     );
     const isCount = rarityCards.filter(c => c.isInSeason).length;
     const classicCount = rarityCards.length - isCount;
-    const injuredCount = this.cards.filter(c => c.scarcity === this.currentScarcity && c.isInjuredOrSuspended).length;
+    const injuredCount = this.cards.filter(c =>
+      c.scarcity === this.currentScarcity &&
+      c.isInjuredOrSuspended &&
+      this.manualOverrides[c.playerSlug] !== 'xi'
+    ).length;
 
     const candidates = Array.from(document.querySelectorAll('div')).filter(el => {
       if (el.dataset.sorarehubHud === 'left' || el.dataset.sorarehubHud === 'right') return true;
@@ -613,7 +617,7 @@ const App = {
               🃏 Rosa Eleggibile ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})
             </div>
             <div style="font-size:12.5px;color:#e0e0e0;margin-top:4px;">
-              <strong>${isCount} In-Season (26/27)</strong> • <strong>${classicCount} Classic</strong> • <span style="color:#ff8a95;">🚑 ${injuredCount} Infortunati esclusi</span>
+              <strong>${isCount} In-Season (26/27)</strong> • <strong>${classicCount} Classic</strong> • <span style="color:#ff8a95;">🚑 ${injuredCount} Indisponibili/Lungodegenti esclusi</span>
             </div>
           </div>
         </div>
@@ -664,9 +668,9 @@ const App = {
         align-items: stretch !important;
       }
       .sh-lineup-card, .lineup-card {
-        flex: 0 0 400px !important;
-        min-width: 380px !important;
-        max-width: 425px !important;
+        flex: 0 0 415px !important;
+        min-width: 395px !important;
+        max-width: 440px !important;
         background: #141519 !important;
         border: 1px solid rgba(212, 175, 55, 0.42) !important;
         border-radius: 14px !important;
@@ -688,6 +692,21 @@ const App = {
       .sh-rank { color: #f3d266; font-weight: 800; font-size: 16px; }
       .sh-comp { color: #9aa0a6; font-size: 12px; margin-top: 2px; }
       .sh-score { color: #f3d266; font-weight: 800; font-size: 21px; text-align: right; }
+      .sh-brand-watermark {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 9.5px;
+        font-weight: 800;
+        letter-spacing: 0.7px;
+        text-transform: uppercase;
+        color: #d4af37;
+        background: rgba(212, 175, 55, 0.12);
+        border: 1px solid rgba(212, 175, 55, 0.35);
+        border-radius: 4px;
+        padding: 2px 6px;
+        margin-top: 4px;
+      }
       .sh-row {
         display: flex;
         align-items: center;
@@ -697,11 +716,11 @@ const App = {
       }
       .sh-row:last-child { border-bottom: none; }
       .sh-pos {
-        min-width: 48px;
+        min-width: 44px;
         text-align: center;
-        padding: 4px 6px;
+        padding: 4px 5px;
         border-radius: 6px;
-        font-size: 11px;
+        font-size: 10.5px;
         font-weight: 800;
         letter-spacing: 0.4px;
         background: rgba(212, 175, 55, 0.18);
@@ -713,6 +732,60 @@ const App = {
       .sh-pos.pos-cc { background: rgba(33, 150, 243, 0.2); color: #64b5f6; }
       .sh-pos.pos-att { background: rgba(244, 67, 54, 0.2); color: #e57373; }
       .sh-pos.pos-extra { background: rgba(171, 71, 188, 0.2); color: #ce93d8; }
+      .sh-avatar-box {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        width: 42px;
+        flex-shrink: 0;
+      }
+      .sh-avatar-ring {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        overflow: hidden;
+        position: relative;
+        background: radial-gradient(circle at 30% 30%, #2a2d37, #121318);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.65);
+      }
+      .sh-avatar-ring.ring-inseason {
+        border: 2px solid #f3d266;
+      }
+      .sh-avatar-ring.ring-classic {
+        border: 2px solid #90a4ae;
+      }
+      .sh-avatar-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top center;
+        display: block;
+      }
+      .sh-avatar-initials {
+        font-size: 11px;
+        font-weight: 800;
+        color: #f3d266;
+        letter-spacing: 0.4px;
+      }
+      .sh-avatar-tag {
+        margin-top: -5px;
+        z-index: 2;
+        background: linear-gradient(135deg, #1b1d24 0%, #0d0e12 100%);
+        border: 1px solid rgba(212, 175, 55, 0.65);
+        color: #f3d266;
+        font-size: 6.5px;
+        font-weight: 900;
+        letter-spacing: 0.45px;
+        padding: 1px 4px;
+        border-radius: 3px;
+        text-transform: uppercase;
+        white-space: nowrap;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.8);
+      }
       .sh-meta { flex: 1; min-width: 0; }
       .sh-name { font-weight: 700; font-size: 13.5px; color: #fff; line-height: 1.3; }
       .sh-sub { font-size: 11.5px; color: #b0b6be; margin-top: 3px; line-height: 1.35; }
@@ -965,7 +1038,8 @@ const App = {
     const availableClubs = OptimizerEngine.getAvailableClubsForCompetition(
       this.cards,
       this.currentCompetition,
-      this.currentScarcity
+      this.currentScarcity,
+      this.manualOverrides
     );
 
     if (this.selectedClubSlug !== 'ALL' && !availableClubs.some(cl => cl.slug === this.selectedClubSlug)) {
@@ -985,7 +1059,7 @@ const App = {
       const clubCards = this.cards.filter(c =>
         c.scarcity === this.currentScarcity &&
         c.clubSlug === this.selectedClubSlug &&
-        !c.isInjuredOrSuspended
+        (!c.isInjuredOrSuspended || this.manualOverrides[c.playerSlug] === 'xi')
       );
       const xiSlugs = OptimizerEngine.getClubStartingXiPool(clubCards, this.manualOverrides);
       const uniqueClubPlayers = [];
@@ -1007,7 +1081,7 @@ const App = {
       clubXiStripHtml = `
         <div class="club-xi-strip">
           <div style="margin-bottom:4px;font-weight:700;color:#81c784;">
-            🎯 11 Titolari Ufficiali (${this.escapeHtml(uniqueClubPlayers[0]?.club || '')}) — Verde = Titolare XI (✅) • Rosso = Panchina (🪑):
+            🎯 11 Titolari Ufficiali (${this.escapeHtml(uniqueClubPlayers[0]?.club || '')}) — Verde = Titolare XI (✅) • Rosso = Riserva/Panchina (🪑, usata solo come riempimento nell'ultima formazione):
           </div>
           <div>${chips}</div>
         </div>
@@ -1039,18 +1113,38 @@ const App = {
       `;
     }
 
+    // Mostra sia i giocatori messi in panchina manualmente sia i lungodegenti rilevati automaticamente nel torneo attivo (per eventuale sblocco)
     const benchedSlugs = Object.keys(this.manualOverrides).filter(slug => this.manualOverrides[slug] === 'bench');
+    const autoFilteredLongTerm = [];
+    const seenLongTerm = new Set();
+    this.cards.forEach(c => {
+      if (
+        c.scarcity === this.currentScarcity &&
+        c.isInferredLongTermInactive &&
+        this.manualOverrides[c.playerSlug] !== 'xi' &&
+        !seenLongTerm.has(c.playerSlug) &&
+        OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)
+      ) {
+        seenLongTerm.add(c.playerSlug);
+        autoFilteredLongTerm.push(c);
+      }
+    });
+
     let benchedRestoreHtml = '';
-    if (benchedSlugs.length > 0) {
-      const benchedChips = benchedSlugs.map(slug => {
+    if (benchedSlugs.length > 0 || autoFilteredLongTerm.length > 0) {
+      const manualChips = benchedSlugs.map(slug => {
         const foundCard = this.cards.find(c => c.playerSlug === slug);
         const pName = foundCard ? foundCard.name : slug;
         return `<span class="club-xi-chip benched" data-restore-slug="${this.escapeHtml(slug)}" title="Clicca per rimettere subito tra i Titolari XI">🪑 ${this.escapeHtml(pName)} (Ripristina XI ↩)</span>`;
-      }).join('');
+      });
+
+      const autoLongTermChips = autoFilteredLongTerm.map(c => {
+        return `<span class="club-xi-chip benched" data-restore-slug="${this.escapeHtml(c.playerSlug)}" title="${this.escapeHtml(c.baseUnavailableReason)} — Clicca se il giocatore è tornato disponibile">🚑 ${this.escapeHtml(c.name)} (${this.escapeHtml(c.club)} • Lungodegente/Inattivo — Forza XI ↩)</span>`;
+      });
 
       benchedRestoreHtml = `
         <div class="benched-restore-strip">
-          <strong>🪑 Giocatori esclusi manualmente (Panchina):</strong> ${benchedChips}
+          <strong>🚑 / 🪑 Esclusi dal calcolo (Panchina manuale o Lungodegenti rilevati):</strong> ${[...manualChips, ...autoLongTermChips].join('')}
         </div>
       `;
     }
@@ -1302,6 +1396,32 @@ const App = {
       }));
   },
 
+  getInitials(name) {
+    const parts = String(name || 'SH').trim().split(/\s+/);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  },
+
+  buildCustomAvatarHtml(player) {
+    const ringCls = player.isInSeason ? 'ring-inseason' : 'ring-classic';
+    const initials = this.escapeHtml(this.getInitials(player.name));
+    const imgUrl = player.avatarUrl || player.pictureUrl || '';
+
+    const innerVisual = imgUrl
+      ? `<img src="${this.escapeHtml(imgUrl)}" alt="${this.escapeHtml(player.name)}" class="sh-avatar-img" loading="lazy" decoding="async" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+         <span class="sh-avatar-initials" style="display:none;">${initials}</span>`
+      : `<span class="sh-avatar-initials">${initials}</span>`;
+
+    return `
+      <div class="sh-avatar-box" title="${this.escapeHtml(player.name)} • SorareHub Verified">
+        <div class="sh-avatar-ring ${ringCls}">
+          ${innerVisual}
+        </div>
+        <span class="sh-avatar-tag">SORAREHUB</span>
+      </div>
+    `;
+  },
+
   runOptimizer() {
     if (!this.cards || this.cards.length === 0) {
       this.notify('⚠️ Nessuna carta sincronizzata: clicca su Connetti Sorare.', true);
@@ -1361,7 +1481,7 @@ const App = {
 
     if (!lineups || lineups.length === 0) {
       const reason = isStack
-        ? `Non hai tutti i ruoli (GK, DC, CC, ATT) tra gli 11 titolari liberi di questo club (o mancano le ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season).`
+        ? `Non hai tutti i ruoli (GK, DC, CC, ATT) tra i giocatori liberi di questo club (o mancano le ${this.currentCompetition.inSeasonRequired || 0}/5 In-Season).`
         : `Non possiedi abbastanza carte libere ${this.currentCompetition.inSeasonRequired > 0 ? `In-Season 26/27 (richieste ${this.currentCompetition.inSeasonRequired}/5)` : ''} appartenenti ai club di ${this.currentCompetition.name}.`;
       const msg = `⚠️ 0 formazioni per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr} — ${reason}`;
       this.notify(msg, true);
@@ -1371,7 +1491,7 @@ const App = {
 
     const isBreakMode = lineups.some(l => l.isLeagueOnBreakMode);
     if (isBreakMode) {
-      this.notify(`⏸️ ${this.currentCompetition.name} in Sosta Club in ${selectedGw?.label || 'questa GW'}: generate comunque ${lineups.length} formazioni (con appartenenza club e 4/5 In-Season verificati).`);
+      this.notify(`⏸️ ${this.currentCompetition.name} in Sosta Club in ${selectedGw?.label || 'questa GW'}: generate comunque ${lineups.length} formazioni (ottimizzate 4 In-Season + 1 Classic con fallback automatico).`);
     } else {
       this.notify(`✅ Generate ${lineups.length} formazioni ottimali con carte libere per ${this.currentCompetition.name} (${this.currentScarcity.toUpperCase()})${gwInfoStr}`);
     }
@@ -1380,6 +1500,10 @@ const App = {
 
     targetGrid.innerHTML = lineups.map((lineup, idx) => {
       const orderedStarters = this.sortStartersByCanonicalOrder(lineup.starters);
+      const classicCount = orderedStarters.length - lineup.inSeasonCount;
+      const mixLabel = isInSeasonSo5
+        ? `${lineup.inSeasonCount} In-Season${classicCount > 0 ? ` + ${classicCount} Classic` : ''}`
+        : `${lineup.inSeasonCount} In-Season`;
 
       const playersHtml = orderedStarters.map(p => {
         const capBadge = p.isCaptain ? ' <strong>[C]</strong>' : '';
@@ -1415,10 +1539,12 @@ const App = {
         const formTagLabel = p.contextFormLabel || 'Forma';
         const formTagVal = p.contextFormScore !== undefined ? p.contextFormScore : p.l5;
         const aasTagVal = p.contextAas !== undefined ? p.contextAas : p.avgAas;
+        const avatarHtml = this.buildCustomAvatarHtml(p);
 
         return `
           <div class="sh-row">
             <div class="sh-pos ${roleCls}">${p.displayRole}</div>
+            ${avatarHtml}
             <div class="sh-meta">
               <div class="sh-name">
                 ${this.escapeHtml(p.name)}${capBadge}${seasonTag}${doubleGwTag}
@@ -1448,7 +1574,8 @@ const App = {
             <div class="sh-card-head">
               <div>
                 <div class="sh-rank">${this.escapeHtml(lineup.rankLabel)}</div>
-                <div class="sh-comp">${this.currentCompetition.name} (${lineup.format} • ${lineup.inSeasonCount} In-Season)</div>
+                <div class="sh-comp">${this.currentCompetition.name} (${lineup.format} • ${mixLabel})</div>
+                <div class="sh-brand-watermark">⚽ SorareHub • Pro Optimizer</div>
               </div>
               <div class="sh-score">${lineup.totalProjected} pt</div>
             </div>
