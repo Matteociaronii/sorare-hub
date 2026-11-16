@@ -1,4 +1,4 @@
-// SorareHub - Context-Aware Form Switcher + Target Threshold + Anytime Entry + 4-Lives Multi-Stack + 4+1 Cascade
+// SorareHub - Context-Aware Form Switcher + Starting Odds (A-F / %) + Live Official Lineup (-1h) + 4-Lives + 4+1 Cascade
 const OptimizerEngine = {
   normalizeLeagueSlug(rawSlug) {
     const s = String(rawSlug || '').toLowerCase().trim();
@@ -288,6 +288,128 @@ const OptimizerEngine = {
     };
   },
 
+  // Calcola la Fascia A-F, la percentuale esatta e il moltiplicatore di titolarità
+  resolveStartingOddsProfile(card, isNationalMatch, manualStatus = null) {
+    if (manualStatus === 'xi') {
+      return {
+        pct: 100,
+        grade: 'A',
+        officialStatus: 'starter',
+        scoreMultiplier: 1.0,
+        priorityTier: 3,
+        badgeLabel: '✅ XI (Forzato)'
+      };
+    }
+
+    if (manualStatus === 'bench') {
+      return {
+        pct: 0,
+        grade: 'F',
+        officialStatus: 'bench',
+        scoreMultiplier: 0.45,
+        priorityTier: 0,
+        badgeLabel: '🪑 Panchina'
+      };
+    }
+
+    // 1. Controlla se il pulsante Sync Titolari Live (-1h) ha ricevuto la distinta ufficiale Opta
+    if (card.liveLineupStatus === 'starter') {
+      return {
+        pct: 100,
+        grade: 'A',
+        officialStatus: 'starter',
+        scoreMultiplier: 1.0,
+        priorityTier: 4, // Massima priorità assoluta: titolare ufficiale confermato a -1h
+        badgeLabel: '🟢 UFF. XI'
+      };
+    }
+
+    if (card.liveLineupStatus === 'bench' || card.liveLineupStatus === 'out') {
+      return {
+        pct: 0,
+        grade: 'F',
+        officialStatus: card.liveLineupStatus,
+        scoreMultiplier: 0.35,
+        priorityTier: 0, // Escluso in automatico se in panchina ufficiale
+        badgeLabel: '🔴 PANC. UFF.'
+      };
+    }
+
+    // 2. Pre-Partita: usa i dati live di startingOdds (se presenti) oppure il profilo A-F calcolato
+    const contextOdds = isNationalMatch ? (card.natStartingOdds || card.clubStartingOdds) : card.clubStartingOdds;
+    const pct = typeof card.liveStartingOddsPct === 'number'
+      ? card.liveStartingOddsPct
+      : (typeof contextOdds?.pct === 'number' ? contextOdds.pct : 70);
+
+    const grade = card.liveStartingGrade || contextOdds?.grade || (
+      pct >= 85 ? 'A' : (pct >= 75 ? 'B' : (pct >= 65 ? 'C' : (pct >= 50 ? 'D' : (pct >= 20 ? 'E' : 'F'))))
+    );
+
+    if (grade === 'A' || pct >= 85) {
+      return {
+        pct,
+        grade: 'A',
+        officialStatus: null,
+        scoreMultiplier: 1.0,
+        priorityTier: 3,
+        badgeLabel: `✅ XI (A • ${pct}%)`
+      };
+    }
+
+    if (grade === 'B' || pct >= 75) {
+      return {
+        pct,
+        grade: 'B',
+        officialStatus: null,
+        scoreMultiplier: 0.97,
+        priorityTier: 3,
+        badgeLabel: `✅ XI (B • ${pct}%)`
+      };
+    }
+
+    if (grade === 'C' || pct >= 65) {
+      return {
+        pct,
+        grade: 'C',
+        officialStatus: null,
+        scoreMultiplier: 0.94,
+        priorityTier: 3,
+        badgeLabel: `✅ XI (C • ${pct}%)`
+      };
+    }
+
+    if (grade === 'D' || pct >= 50) {
+      return {
+        pct,
+        grade: 'D',
+        officialStatus: null,
+        scoreMultiplier: 0.88,
+        priorityTier: 2,
+        badgeLabel: `⚠️ Rot. (D • ${pct}%)`
+      };
+    }
+
+    if (grade === 'E' || pct >= 20) {
+      return {
+        pct,
+        grade: 'E',
+        officialStatus: null,
+        scoreMultiplier: 0.65, // Penalizzazione netta per chi è al 30% (es. Vitinha)
+        priorityTier: 1,
+        badgeLabel: `⚠️ Rot. (E • ${pct}%)`
+      };
+    }
+
+    return {
+      pct: Math.max(0, pct),
+      grade: 'F',
+      officialStatus: null,
+      scoreMultiplier: 0.35,
+      priorityTier: 0,
+      badgeLabel: `🔴 Out (F • ${pct}%)`
+    };
+  },
+
   analyzeSingleMatchupDifficulty(game, cardPosition) {
     if (!game) {
       return { multiplier: 1.0, difficultyScore: 0.5, summaryText: '' };
@@ -430,6 +552,7 @@ const OptimizerEngine = {
     clubCards.forEach(c => {
       if (c.isInjuredOrSuspended && manualOverrides[c.playerSlug] !== 'xi') return;
       if (manualOverrides[c.playerSlug] === 'bench') return;
+      if (c.liveLineupStatus === 'bench' || c.liveLineupStatus === 'out') return;
       if (c.activeMatch && c.activeMatch.alreadyPlayedScore === 0 && (c.activeMatch.alreadyPlayedMins === 0 || c.activeMatch.alreadyPlayedMins === null)) {
         return;
       }
@@ -441,13 +564,13 @@ const OptimizerEngine = {
 
     const uniquePlayers = Array.from(uniquePlayersMap.values());
     uniquePlayers.sort((a, b) => {
-      const aXi = manualOverrides[a.playerSlug] === 'xi' ? 1 : 0;
-      const bXi = manualOverrides[b.playerSlug] === 'xi' ? 1 : 0;
+      const aXi = (manualOverrides[a.playerSlug] === 'xi' || a.liveLineupStatus === 'starter') ? 1 : 0;
+      const bXi = (manualOverrides[b.playerSlug] === 'xi' || b.liveLineupStatus === 'starter') ? 1 : 0;
       if (bXi !== aXi) return bXi - aXi;
 
-      const aTier = a.baseFitnessTier === 'starter' ? 2 : (a.baseFitnessTier === 'rotation' ? 1 : 0);
-      const bTier = b.baseFitnessTier === 'starter' ? 2 : (b.baseFitnessTier === 'rotation' ? 1 : 0);
-      if (bTier !== aTier) return bTier - aTier;
+      const aPct = a.startingOddsPct ?? 70;
+      const bPct = b.startingOddsPct ?? 70;
+      if (bPct !== aPct) return bPct - aPct;
 
       if ((b.avgMins || 0) !== (a.avgMins || 0)) return (b.avgMins || 0) - (a.avgMins || 0);
       return (b.l15 || 0) - (a.l15 || 0);
@@ -476,7 +599,7 @@ const OptimizerEngine = {
 
     const targetThreshold = Number(options.targetThreshold || 0);
     const anytimeWindow = String(options.anytimeWindow || 'ALL');
-    const portfolioMode = String(options.portfolioMode || 'cascade'); // 'cascade' | 'four_lives'
+    const portfolioMode = String(options.portfolioMode || 'cascade');
     const effectiveStrategy = this.resolveEffectiveStrategy(strategy, targetThreshold);
 
     const eligibleCards = allCards.filter(card => {
@@ -535,8 +658,6 @@ const OptimizerEngine = {
       ? fullWorkingPool.filter(c => clubXiSlugs.has(c.playerSlug))
       : fullWorkingPool;
 
-    // Se è attiva la modalità "Piano 4 Vite (Multi-Stack Scaglionato)" senza filtro singolo club,
-    // raggruppa i match per fascia oraria/giorno così i tentativi #1, #2, #3, #4 coprono finestre diverse!
     const timeBuckets = (portfolioMode === 'four_lives' && !isClubStackActive && canBuildFullActiveTeam)
       ? this.buildAnytimeKickoffBuckets(fullWorkingPool)
       : [];
@@ -589,7 +710,6 @@ const OptimizerEngine = {
         }
       }
 
-      // Fallback generale se il bucket orario singolo non bastava più
       if ((!picked || picked.length < slotsTemplate.length) && bucketLabel) {
         const fallbackFull = fullWorkingPool.filter(c => !usedCardIdsGlobal.has(c.id));
         picked = this.selectBestLineupForSlots(fallbackFull, slotsTemplate, requiredInSeason, isLeagueOnBreakMode, selectionCtx);
@@ -724,21 +844,26 @@ const OptimizerEngine = {
       ? logs.slice(0, 5).map(m => `${m.mins}'`).join(' → ')
       : `${activeStats.avgMins || 0}' medi`;
 
+    const oddsGrade = card.startingOddsGrade || 'B';
+    const oddsPct = card.startingOddsPct !== undefined ? card.startingOddsPct : 75;
+
     let statusSection = '';
     if (manualStatus === 'bench') {
       statusSection = `🪑 STATO: Escluso manualmente (Panchina).`;
+    } else if (card.liveLineupStatus === 'starter') {
+      statusSection = `🟢 DISTINTA UFFICIALE (-1h): Confermato nell'11 Titolare Ufficiale (${contextLabel} • Minutaggi: ${minsHistoryStr}).`;
+    } else if (card.liveLineupStatus === 'bench' || card.liveLineupStatus === 'out') {
+      statusSection = `🔴 DISTINTA UFFICIALE (-1h): Parte in Panchina / Non nell'11 iniziale.`;
     } else if (manualStatus === 'xi') {
-      statusSection = `✅ STATO: Confermato nell'11 Titolare (${contextLabel} • Minutaggi: ${minsHistoryStr}).`;
+      statusSection = `✅ STATO: Confermato manualmente nell'11 Titolare (${contextLabel} • Minutaggi: ${minsHistoryStr}).`;
     } else if (isNationalMatch) {
       if (nStats.playedCount > 0) {
-        statusSection = `🌍 FORMA & TITOLARITÀ NAZIONALE: ${nStats.starterCount}/${nStats.totalEntries} dal 1' con la Nazionale (Minutaggi in Nazionale: ${minsHistoryStr} • Media Naz: ${nStats.avgScore} pt).`;
+        statusSection = `🌍 STIMA TITOLARITÀ NAZIONALE [Fascia ${oddsGrade} • ${oddsPct}%]: ${nStats.starterCount}/${nStats.totalEntries} dal 1' con la Nazionale (Minutaggi: ${minsHistoryStr} • Media Naz: ${nStats.avgScore} pt).`;
       } else {
-        statusSection = `🌍 IMPIEGO NAZIONALE: Nessuna gara recente in Nazionale registrata su SO5 (Riferimento Club ${card.club}: ${cStats.starterCount || 0}/${cStats.totalEntries || 5} dal 1', L5 Club ${cStats.avgScore || card.l5} pt).`;
+        statusSection = `🌍 STIMA TITOLARITÀ NAZIONALE [Fascia ${oddsGrade} • ${oddsPct}%]: Riferimento Club ${card.club} (${cStats.starterCount || 0}/${cStats.totalEntries || 5} dal 1', L5 Club ${cStats.avgScore || card.l5} pt).`;
       }
-    } else if (card.baseFitnessTier === 'starter') {
-      statusSection = `✅ TITOLARITÀ CLUB (${card.club}): ${cStats.starterCount}/${cStats.totalEntries || 5} gare ufficiali dal 1' (Minutaggi Club: ${minsHistoryStr}).`;
     } else {
-      statusSection = `⚠️ ROTAZIONE / OPZIONE DI ROSA (${card.club}): ${cStats.playedCount}/${cStats.totalEntries || 5} presenze ufficiali SO5 (Minutaggi Club: ${minsHistoryStr}).`;
+      statusSection = `📊 STIMA TITOLARITÀ PRE-GARA [Fascia ${oddsGrade} • ${oddsPct}%] (${card.club}): ${cStats.starterCount}/${cStats.totalEntries || 5} gare ufficiali dal 1' (Minutaggi Club: ${minsHistoryStr}).`;
     }
 
     let recentLogSection = '';
@@ -903,14 +1028,22 @@ const OptimizerEngine = {
       return isNat ? ((ctxL5Val * 0.65) + (l15Val * 0.35)) : ((ctxL5Val * 0.52) + (l15Val * 0.48));
     }
 
+    const oddsProfile = this.resolveStartingOddsProfile(card, isNationalMatch, manualStatus);
+    const enrichedCardWithOdds = {
+      ...card,
+      startingOddsPct: oddsProfile.pct,
+      startingOddsGrade: oddsProfile.grade,
+      startingOddsBadge: oddsProfile.badgeLabel
+    };
+
     const isEffectivelyInjured = card.isInjuredOrSuspended && manualStatus !== 'xi';
     const standbyScore = Number(Math.max(18, baseProjection * (card.powerMultiplier || 1)).toFixed(1));
 
     if (!activeMatch || isEffectivelyInjured) {
-      const detailedInsight = this.buildBespokeScoutingDossier(card, [], isCeiling, manualStatus, standbyScore, false, null);
+      const detailedInsight = this.buildBespokeScoutingDossier(enrichedCardWithOdds, [], isCeiling, manualStatus, standbyScore, false, null);
       const isStarterFlag = manualStatus === 'xi' || card.baseFitnessTier === 'starter';
       return {
-        ...card,
+        ...enrichedCardWithOdds,
         activeMatch: null,
         gwMatches: [],
         hasDoubleMatch: false,
@@ -937,10 +1070,13 @@ const OptimizerEngine = {
       (m.alreadyPlayedMins === 0 || m.alreadyPlayedMins === null)
     );
 
-    if (allPlayedAreDnpZero) {
-      const detailedInsight = this.buildBespokeScoutingDossier(card, gwMatches, isCeiling, manualStatus, 0, isNationalMatch, null);
+    if (allPlayedAreDnpZero || ((card.liveLineupStatus === 'bench' || card.liveLineupStatus === 'out') && manualStatus !== 'xi')) {
+      const reasonStr = (card.liveLineupStatus === 'bench' || card.liveLineupStatus === 'out')
+        ? '🔴 Panchina / Escluso dalle distinte ufficiali (-1h)'
+        : '0 pt (Panchina/DNP) nel match già disputato in questa GW';
+      const detailedInsight = this.buildBespokeScoutingDossier(enrichedCardWithOdds, gwMatches, isCeiling, manualStatus, 0, isNationalMatch, null);
       return {
-        ...card,
+        ...enrichedCardWithOdds,
         activeMatch: activeMatch,
         gwMatches: gwMatches,
         hasDoubleMatch: hasDoubleMatch,
@@ -952,7 +1088,7 @@ const OptimizerEngine = {
         availabilityTier: 'dnp',
         manualStatus: manualStatus,
         isLastResort: true,
-        unavailableReason: '0 pt (Panchina/DNP) nel match già disputato in questa GW',
+        unavailableReason: reasonStr,
         projectedScore: 0,
         standbyScore: 0,
         selectionPriority: 0,
@@ -962,43 +1098,18 @@ const OptimizerEngine = {
     }
 
     const matchPkg = this.evaluateGwMatchesPackage(gwMatches, card.position);
-    let adjustedProjection = baseProjection * matchPkg.combinedMultiplier;
+    let adjustedProjection = baseProjection * matchPkg.combinedMultiplier * oddsProfile.scoreMultiplier;
 
-    let priorityTier = 3;
-    let availabilityLabel = 'starter';
-
-    if (manualStatus === 'xi') {
-      priorityTier = 3;
-      availabilityLabel = 'starter';
-    } else if (isNationalMatch) {
-      if (card.natFitnessTier === 'starter') {
-        priorityTier = 3;
-        availabilityLabel = 'starter';
-      } else if (card.natFitnessTier === 'rotation') {
-        priorityTier = 2;
-        availabilityLabel = 'rotation';
-        adjustedProjection *= 0.90;
-      } else {
-        priorityTier = 1;
-        availabilityLabel = 'rotation';
-        adjustedProjection *= 0.80;
-      }
-    } else {
-      if (card.baseFitnessTier === 'starter') {
-        priorityTier = 3;
-        availabilityLabel = 'starter';
-      } else {
-        priorityTier = 2;
-        availabilityLabel = 'rotation';
-        adjustedProjection *= 0.88;
-      }
-    }
+    let priorityTier = oddsProfile.priorityTier;
+    let availabilityLabel = (oddsProfile.grade === 'A' || oddsProfile.grade === 'B' || oddsProfile.grade === 'C' || card.liveLineupStatus === 'starter' || manualStatus === 'xi')
+      ? 'starter'
+      : 'rotation';
 
     if (manualStatus === 'bench') {
-      const benchScore = Number(Math.max(12, adjustedProjection * 0.45 * (card.powerMultiplier || 1)).toFixed(1));
-      const detailedInsight = this.buildBespokeScoutingDossier(card, gwMatches, isCeiling, 'bench', benchScore, isNationalMatch, null);
+      const benchScore = Number(Math.max(12, adjustedProjection * (card.powerMultiplier || 1)).toFixed(1));
+      const detailedInsight = this.buildBespokeScoutingDossier(enrichedCardWithOdds, gwMatches, isCeiling, 'bench', benchScore, isNationalMatch, null);
       return {
-        ...card,
+        ...enrichedCardWithOdds,
         activeMatch: activeMatch,
         gwMatches: gwMatches,
         hasDoubleMatch: hasDoubleMatch,
@@ -1020,10 +1131,10 @@ const OptimizerEngine = {
     }
 
     const projectedScore = Number(Math.max(18, adjustedProjection * (card.powerMultiplier || 1)).toFixed(1));
-    const detailedInsight = this.buildBespokeScoutingDossier(card, gwMatches, isCeiling, manualStatus, projectedScore, isNationalMatch, null);
+    const detailedInsight = this.buildBespokeScoutingDossier(enrichedCardWithOdds, gwMatches, isCeiling, manualStatus, projectedScore, isNationalMatch, null);
 
     return {
-      ...card,
+      ...enrichedCardWithOdds,
       activeMatch: activeMatch,
       gwMatches: gwMatches,
       hasDoubleMatch: hasDoubleMatch,
@@ -1160,11 +1271,9 @@ const OptimizerEngine = {
         const aPenalty = (a.position === 'DEF' || a.position === 'GK') && selectedTeamPositionKeys.has(aTeamKey) ? 10 : 0;
         const bPenalty = (b.position === 'DEF' || b.position === 'GK') && selectedTeamPositionKeys.has(bTeamKey) ? 10 : 0;
 
-        // Bonus correlazione offensiva quando la soglia target è alta (es. MID + FWD dello stesso club favorito)
         const aStackBonus = (isHighTarget && (a.position === 'MID' || a.position === 'FWD') && selectedAttackingClubs.has(a.clubSlug)) ? 3.2 : 0;
         const bStackBonus = (isHighTarget && (b.position === 'MID' || b.position === 'FWD') && selectedAttackingClubs.has(b.clubSlug)) ? 3.2 : 0;
 
-        // Diversificazione club nella modalità Piano 4 Vite
         const aFourLivesPenalty = (penalizeClubs && penalizeClubs.has(a.clubSlug)) ? 4.5 : 0;
         const bFourLivesPenalty = (penalizeClubs && penalizeClubs.has(b.clubSlug)) ? 4.5 : 0;
 
