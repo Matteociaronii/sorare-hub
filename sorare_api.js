@@ -1,7 +1,7 @@
-// SorareHub - Dual Profile Engine (Strict Club Form vs National Form) + Long-Term Injury Radar + Vault Filter + Avatar Engine
+// SorareHub - Dual Profile Engine + Pre-Match Starting Odds (A-F) + Live Official Lineups (-1h) + Vault Filter
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v27',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v27', 'sorarehub_gallery_cache_v26', 'sorarehub_gallery_cache_v25'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v28',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v28', 'sorarehub_gallery_cache_v27', 'sorarehub_gallery_cache_v26', 'sorarehub_gallery_cache_v25'],
   CACHE_TTL_MS: 12 * 60 * 1000,
 
   // Lungodegenti noti / infortuni chirurgici non sempre segnalati in tempo reale dal feed Opta di Sorare
@@ -116,6 +116,11 @@ const SorareAPI = {
     }
   },
 
+  getWorkerGraphqlEndpoint() {
+    const baseWorkerUrl = String(CONFIG.TOKEN_ENDPOINT || 'https://sorarehub-oauth.matty-ciaroni.workers.dev').replace(/\/$/, '');
+    return baseWorkerUrl.endsWith('/graphql') ? baseWorkerUrl : `${baseWorkerUrl}/graphql`;
+  },
+
   buildOfficialSorareGameweeks(officialGwNumber = null) {
     const nowMs = Date.now();
     let cursorMs = Date.UTC(2026, 10, 10, 15, 0, 0);
@@ -198,12 +203,387 @@ const SorareAPI = {
     return null;
   },
 
+  // Mappe di conversione Fasce A-F <-> Percentuale Titolarità Sorare
+  percentageToSorareGrade(pct) {
+    if (typeof pct !== 'number' || Number.isNaN(pct)) return null;
+    if (pct >= 85) return 'A';
+    if (pct >= 75) return 'B';
+    if (pct >= 65) return 'C';
+    if (pct >= 50) return 'D';
+    if (pct >= 20) return 'E';
+    return 'F';
+  },
+
+  sorareGradeToPercentage(grade) {
+    const g = String(grade || '').toUpperCase().trim();
+    const map = { 'A': 90, 'B': 75, 'C': 70, 'D': 60, 'E': 30, 'F': 0 };
+    return map[g] !== undefined ? map[g] : null;
+  },
+
+  normalizeStartingOddsPayload(rawOddsObj) {
+    if (rawOddsObj === null || rawOddsObj === undefined) return null;
+
+    if (typeof rawOddsObj === 'number') {
+      const pct = rawOddsObj <= 1 && rawOddsObj > 0 ? Math.round(rawOddsObj * 100) : Math.round(rawOddsObj);
+      const clamped = Math.max(0, Math.min(100, pct));
+      return {
+        pct: clamped,
+        grade: this.percentageToSorareGrade(clamped),
+        officialStatus: null
+      };
+    }
+
+    if (typeof rawOddsObj === 'string') {
+      const clean = rawOddsObj.trim().toUpperCase();
+      if (/^[A-F]$/.test(clean)) {
+        return {
+          pct: this.sorareGradeToPercentage(clean),
+          grade: clean,
+          officialStatus: null
+        };
+      }
+      const numMatch = clean.match(/(\d+(?:\.\d+)?)/);
+      if (numMatch) {
+        const val = parseFloat(numMatch[1]);
+        const pct = val <= 1 && val > 0 ? Math.round(val * 100) : Math.round(val);
+        const clamped = Math.max(0, Math.min(100, pct));
+        return {
+          pct: clamped,
+          grade: this.percentageToSorareGrade(clamped),
+          officialStatus: null
+        };
+      }
+    }
+
+    if (typeof rawOddsObj === 'object') {
+      const isOfficialStarter =
+        rawOddsObj.officialStatus === 'starter' ||
+        rawOddsObj.starter === true ||
+        rawOddsObj.isStarter === true ||
+        rawOddsObj.starting === true ||
+        String(rawOddsObj.status || '').toLowerCase() === 'starter' ||
+        String(rawOddsObj.lineupStatus || '').toLowerCase() === 'starting';
+
+      const isOfficialBench =
+        rawOddsObj.officialStatus === 'bench' ||
+        rawOddsObj.starter === false ||
+        rawOddsObj.onBench === true ||
+        String(rawOddsObj.status || '').toLowerCase() === 'substitute' ||
+        String(rawOddsObj.status || '').toLowerCase() === 'bench';
+
+      let rawPct =
+        rawOddsObj.starterOddsBasisPoints !== undefined ? (Number(rawOddsObj.starterOddsBasisPoints) / 100) :
+        rawOddsObj.startingOdds !== undefined ? Number(rawOddsObj.startingOdds) :
+        rawOddsObj.probability !== undefined ? Number(rawOddsObj.probability) :
+        rawOddsObj.percentage !== undefined ? Number(rawOddsObj.percentage) :
+        rawOddsObj.pct !== undefined ? Number(rawOddsObj.pct) :
+        null;
+
+      if (typeof rawPct === 'number' && !Number.isNaN(rawPct)) {
+        if (rawPct > 0 && rawPct <= 1) rawPct = Math.round(rawPct * 100);
+        else rawPct = Math.round(rawPct);
+        rawPct = Math.max(0, Math.min(100, rawPct));
+      } else {
+        rawPct = null;
+      }
+
+      let rawGrade =
+        rawOddsObj.grade ||
+        rawOddsObj.tier ||
+        rawOddsObj.category ||
+        rawOddsObj.rank ||
+        null;
+
+      if (rawGrade) {
+        rawGrade = String(rawGrade).toUpperCase().trim().slice(0, 1);
+        if (!/^[A-F]$/.test(rawGrade)) rawGrade = null;
+      }
+
+      if (rawPct !== null && !rawGrade) {
+        rawGrade = this.percentageToSorareGrade(rawPct);
+      } else if (rawGrade && rawPct === null) {
+        rawPct = this.sorareGradeToPercentage(rawGrade);
+      }
+
+      return {
+        pct: isOfficialStarter ? 100 : (isOfficialBench ? 0 : rawPct),
+        grade: isOfficialStarter ? 'A' : (isOfficialBench ? 'F' : rawGrade),
+        officialStatus: isOfficialStarter ? 'starter' : (isOfficialBench ? 'bench' : null)
+      };
+    }
+
+    return null;
+  },
+
+  computeHeuristicStartingOdds(clubStats, natStats, isNationalMatch, isInjuredOrSuspended, l15 = 0) {
+    if (isInjuredOrSuspended) {
+      return { pct: 0, grade: 'F', officialStatus: null, source: 'heuristic' };
+    }
+
+    const stats = isNationalMatch
+      ? ((natStats && natStats.totalEntries > 0) ? natStats : clubStats)
+      : clubStats;
+
+    if (!stats || !stats.totalEntries || stats.totalEntries === 0) {
+      const fallbackPct = l15 >= 52 ? 70 : (l15 >= 42 ? 60 : 30);
+      return {
+        pct: fallbackPct,
+        grade: this.percentageToSorareGrade(fallbackPct),
+        officialStatus: null,
+        source: 'heuristic'
+      };
+    }
+
+    const total = Math.max(1, stats.totalEntries);
+    const starterRatio = stats.starterCount / total;
+    const playedRatio = stats.playedCount / total;
+    const recentLogs = Array.isArray(stats.matchLogs) ? stats.matchLogs : [];
+    const lastMatchMins = recentLogs[0]?.mins || 0;
+    const prevMatchMins = recentLogs[1]?.mins || 0;
+
+    let pct = 50;
+
+    if (stats.consecutiveRecentDnp >= 2) {
+      pct = 20;
+    } else if (stats.consecutiveRecentDnp === 1) {
+      if (starterRatio >= 0.6 && stats.avgMins >= 70) {
+        pct = 60; // D
+      } else {
+        pct = 30; // E (caso come Vitinha se ha saltato o fatto spezzone)
+      }
+    } else if (starterRatio >= 0.8 && stats.avgMins >= 75 && lastMatchMins >= 65) {
+      pct = 90; // A
+    } else if (starterRatio >= 0.65 && stats.avgMins >= 68) {
+      pct = 80; // B
+    } else if (starterRatio >= 0.5 && (lastMatchMins >= 55 || prevMatchMins >= 55)) {
+      pct = 70; // C
+    } else if (playedRatio >= 0.6 && stats.avgMins >= 42) {
+      pct = 60; // D
+    } else if (stats.playedCount >= 1) {
+      pct = 30; // E
+    } else {
+      pct = 10; // F
+    }
+
+    return {
+      pct,
+      grade: this.percentageToSorareGrade(pct),
+      officialStatus: null,
+      source: 'heuristic'
+    };
+  },
+
+  async fetchLiveLineupsAndOddsForPlayers(cardsList, selectedGw = null) {
+    const token = localStorage.getItem('sorare_access_token');
+    if (!token || !Array.isArray(cardsList) || cardsList.length === 0) {
+      return { updatedCount: 0, officialCount: 0, mapBySlug: {} };
+    }
+
+    const workerGraphqlEndpoint = this.getWorkerGraphqlEndpoint();
+    const nowMs = Date.now();
+    const gwStartMs = selectedGw?.startDate ? new Date(selectedGw.startDate).getTime() : (nowMs - 24 * 3600 * 1000);
+    const gwEndMs = selectedGw?.endDate ? new Date(selectedGw.endDate).getTime() : (nowMs + 96 * 3600 * 1000);
+
+    const relevantSlugsSet = new Set();
+    cardsList.forEach(c => {
+      if (!c || !c.playerSlug || c.isSealedInVault) return;
+      const games = Array.isArray(c.scheduleGames) ? c.scheduleGames : [];
+      const hasGameInGw = games.some(g => g.timestamp >= gwStartMs && g.timestamp <= gwEndMs);
+      if (hasGameInGw) {
+        relevantSlugsSet.add(c.playerSlug);
+      }
+    });
+
+    const allSlugs = Array.from(relevantSlugsSet);
+    if (allSlugs.length === 0) {
+      return { updatedCount: 0, officialCount: 0, mapBySlug: {} };
+    }
+
+    const mapBySlug = {};
+    let updatedCount = 0;
+    let officialCount = 0;
+
+    // 1. Tentativo primario: interroga starterOddsBasisPoints / stato live direttamente sui nodi Player di Sorare
+    const chunkSize = 35;
+    for (let i = 0; i < allSlugs.length; i += chunkSize) {
+      const chunk = allSlugs.slice(i, i + chunkSize);
+
+      // Query 1A: Prova a leggere le probabilità di titolarità / stato partita corrente da Sorare GraphQL
+      const queryWithOdds = `
+        query GetLivePlayerStatus($slugs: [String!]!) {
+          football {
+            players(slugs: $slugs) {
+              slug
+              activeInjuries {
+                status
+              }
+              activeSuspensions {
+                reason
+              }
+              so5Scores(last: 3) {
+                score
+                playerGameStats {
+                  minsPlayed
+                }
+                game {
+                  id
+                  date
+                  statusTyped
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      try {
+        const res = await fetch(workerGraphqlEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            query: queryWithOdds,
+            variables: { slugs: chunk }
+          })
+        });
+
+        if (res && res.ok) {
+          const json = await res.json();
+          const playersNodes = json?.data?.football?.players || [];
+          playersNodes.forEach(pNode => {
+            if (!pNode || !pNode.slug) return;
+            const pSlug = pNode.slug.trim();
+            const isNowInjured = (Array.isArray(pNode.activeInjuries) && pNode.activeInjuries.length > 0) ||
+                                 (Array.isArray(pNode.activeSuspensions) && pNode.activeSuspensions.length > 0);
+
+            const scoresInGw = (Array.isArray(pNode.so5Scores) ? pNode.so5Scores : []).filter(s => {
+              const gTs = s?.game?.date ? new Date(s.game.date).getTime() : 0;
+              return gTs >= gwStartMs && gTs <= gwEndMs;
+            });
+
+            if (isNowInjured) {
+              mapBySlug[pSlug] = {
+                pct: 0,
+                grade: 'F',
+                officialStatus: 'out',
+                updatedAt: nowMs
+              };
+              updatedCount++;
+              return;
+            }
+
+            if (scoresInGw.length > 0) {
+              const latestGwScore = scoresInGw[0];
+              const gDateMs = latestGwScore.game?.date ? new Date(latestGwScore.game.date).getTime() : 0;
+              const gStatus = String(latestGwScore.game?.statusTyped || '').toLowerCase();
+              const mins = latestGwScore.playerGameStats?.minsPlayed;
+              const sc = latestGwScore.score;
+
+              // Se il nodo so5Score esiste già nella finestra -75 min prima del calcio d'inizio o durante il match:
+              const timeToKickoffMin = (gDateMs - nowMs) / (60 * 1000);
+              if (timeToKickoffMin <= 75) {
+                if ((typeof mins === 'number' && mins > 0) || (typeof sc === 'number' && sc > 0)) {
+                  mapBySlug[pSlug] = {
+                    pct: 100,
+                    grade: 'A',
+                    officialStatus: 'starter',
+                    liveScore: sc,
+                    liveMins: mins,
+                    updatedAt: nowMs
+                  };
+                  officialCount++;
+                  updatedCount++;
+                } else if (gStatus === 'playing' || gStatus === 'played' || timeToKickoffMin <= 0) {
+                  mapBySlug[pSlug] = {
+                    pct: 0,
+                    grade: 'F',
+                    officialStatus: 'bench',
+                    liveScore: 0,
+                    liveMins: 0,
+                    updatedAt: nowMs
+                  };
+                  officialCount++;
+                  updatedCount++;
+                }
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('Warning sync live chunk:', err);
+      }
+    }
+
+    // 2. Tentativo opzionale introspect su starterOddsBasisPoints delle card (se supportato dallo schema corrente)
+    try {
+      const sampleCardSlugs = cardsList
+        .filter(c => c && c.id && relevantSlugsSet.has(c.playerSlug))
+        .slice(0, 45)
+        .map(c => c.id);
+
+      if (sampleCardSlugs.length > 0) {
+        const cardOddsQuery = `
+          query GetCardsStarterOdds($slugs: [String!]!) {
+            cards(slugs: $slugs) {
+              slug
+              ... on Card {
+                player {
+                  slug
+                }
+                starterOddsBasisPoints
+              }
+            }
+          }
+        `;
+        const oddsRes = await fetch(workerGraphqlEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            query: cardOddsQuery,
+            variables: { slugs: sampleCardSlugs }
+          })
+        });
+
+        if (oddsRes && oddsRes.ok) {
+          const oddsJson = await oddsRes.json();
+          const cardNodes = oddsJson?.data?.cards || [];
+          cardNodes.forEach(cn => {
+            const pSlug = cn?.player?.slug;
+            const bp = cn?.starterOddsBasisPoints;
+            if (pSlug && typeof bp === 'number' && !mapBySlug[pSlug]?.officialStatus) {
+              const pct = Math.max(0, Math.min(100, Math.round(bp / 100)));
+              mapBySlug[pSlug] = {
+                pct,
+                grade: this.percentageToSorareGrade(pct),
+                officialStatus: null,
+                updatedAt: nowMs
+              };
+              updatedCount++;
+            }
+          });
+        }
+      }
+    } catch (_) {
+      // Silenzioso se il campo starterOddsBasisPoints richiede parametri fixture specifici
+    }
+
+    return {
+      updatedCount,
+      officialCount,
+      mapBySlug
+    };
+  },
+
   async fetchCurrentUserGallery(forceRefresh = false) {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return null;
 
     if (!forceRefresh) {
-      // Usa solo la v27 per la lettura rapida così da avere sempre il campo `isSealedInVault`
       const cached = this.loadAnyAvailableCache(false, [this.CACHE_KEY]);
       if (cached) {
         return {
@@ -214,8 +594,7 @@ const SorareAPI = {
       }
     }
 
-    const baseWorkerUrl = String(CONFIG.TOKEN_ENDPOINT || 'https://sorarehub-oauth.matty-ciaroni.workers.dev').replace(/\/$/, '');
-    const workerGraphqlEndpoint = baseWorkerUrl.endsWith('/graphql') ? baseWorkerUrl : `${baseWorkerUrl}/graphql`;
+    const workerGraphqlEndpoint = this.getWorkerGraphqlEndpoint();
 
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
@@ -270,6 +649,7 @@ const SorareAPI = {
                       duelWon
                     }
                     game {
+                      id
                       date
                       homeGoals
                       awayGoals
@@ -299,6 +679,7 @@ const SorareAPI = {
                       displayName
                     }
                     upcomingGames(first: 5) {
+                      id
                       date
                       competition {
                         slug
@@ -322,6 +703,7 @@ const SorareAPI = {
                     name
                     slug
                     upcomingGames(first: 4) {
+                      id
                       date
                       competition {
                         slug
@@ -404,7 +786,7 @@ const SorareAPI = {
           loginBtnText.textContent = `📥 Caricate ${allCards.length} carte Pro...`;
         }
         if (window.App && App.notify) {
-          App.notify(`📥 Analisi Forma, Cassaforte & Filtro Lungodegenti: ${allCards.length} carte Pro...`);
+          App.notify(`📥 Analisi Forma, Fasce Titolarità (A–F) & Cassaforte: ${allCards.length} carte Pro...`);
         }
 
         const pageInfo = connection?.pageInfo;
@@ -874,6 +1256,7 @@ const SorareAPI = {
             const oppName = isHome ? awayName : homeName;
             const oppSlug = isHome ? awaySlug : homeSlug;
             scheduleGames.push({
+              id: g.id || '',
               date: g.date,
               timestamp: ts,
               competitionSlug: compSlug || 'international',
@@ -892,6 +1275,7 @@ const SorareAPI = {
             const oppName = isHome ? awayName : homeName;
             const oppSlug = isHome ? awaySlug : homeSlug;
             scheduleGames.push({
+              id: g.id || '',
               date: g.date,
               timestamp: ts,
               competitionSlug: compSlug || leagueSlug,
@@ -999,6 +1383,9 @@ const SorareAPI = {
           }
         }
 
+        const clubStartingOdds = this.computeHeuristicStartingOdds(clubStats, natStats, false, isInjuredOrSuspended, l15);
+        const natStartingOdds = this.computeHeuristicStartingOdds(clubStats, natStats, true, isInjuredOrSuspended, l15);
+
         let baseUnavailableReason = '';
         if (isSealedInVault) baseUnavailableReason = 'Carta in Cassaforte (Vault Sorare)';
         else if (isInjured) baseUnavailableReason = 'Infortunato (Ufficiale Sorare)';
@@ -1050,6 +1437,11 @@ const SorareAPI = {
           natStats: natStats,
           baseFitnessTier: clubFitnessTier,
           natFitnessTier: natFitnessTier,
+          clubStartingOdds: clubStartingOdds,
+          natStartingOdds: natStartingOdds,
+          liveLineupStatus: null, // 'starter' | 'bench' | 'out' | null (popolato da Sync Titolari Live -1h)
+          liveStartingOddsPct: null,
+          liveStartingGrade: null,
           baseUnavailableReason: baseUnavailableReason,
           tacticalTraits: {
             cleanSheets: clubStats.cleanSheets,
