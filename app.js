@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Account Menu (Logout) + Vault Filter + Collapsible Strips + Target Threshold + Anytime Entry + 4-Lives + Pre-Set Alert
+// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
   LOGOUT_FLAG_KEY: 'sorarehub_manual_logout',
@@ -17,6 +17,7 @@ const App = {
   anytimeWindow: 'ALL',
   portfolioMode: 'cascade',
   manualOverrides: {},
+  lastLiveSyncTimeStr: null,
   user: null,
   isLoggingOut: false,
   currentScarcity: 'limited',
@@ -149,6 +150,7 @@ const App = {
     if (window.SorareAPI && Array.isArray(SorareAPI.FALLBACK_CACHE_KEYS)) {
       SorareAPI.FALLBACK_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
     }
+    localStorage.removeItem('sorarehub_gallery_cache_v28');
     localStorage.removeItem('sorarehub_gallery_cache_v27');
     localStorage.removeItem('sorarehub_gallery_cache_v26');
     localStorage.removeItem('sorarehub_gallery_cache_v25');
@@ -167,6 +169,7 @@ const App = {
     this.unlockedVaultCardIds.clear();
     this.manualOverrides = {};
     this.selectedClubSlug = 'ALL';
+    this.lastLiveSyncTimeStr = null;
 
     const existingPopover = document.getElementById('sh-account-popover');
     if (existingPopover) existingPopover.remove();
@@ -204,6 +207,71 @@ const App = {
     setTimeout(() => {
       this.isLoggingOut = false;
     }, 600);
+  },
+
+  async syncLiveStartingLineups(btnEl = null) {
+    if (!this.cards || this.cards.length === 0) {
+      this.notify('⚠️ Sincronizza prima la tua galleria Sorare.', true);
+      return;
+    }
+
+    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+    const origHtml = btnEl ? btnEl.innerHTML : '🟢 Sync Titolari Live (-1h)';
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.innerHTML = '⏳ Lettura Distinte Opta...';
+    }
+    this.notify('📡 Controllo distinte ufficiali (-1h) e probabilità di titolarità (A–F) in corso...');
+
+    try {
+      const result = await SorareAPI.fetchLiveLineupsAndOddsForPlayers(this.cards, selectedGw);
+      const mapBySlug = result?.mapBySlug || {};
+      let appliedOfficial = 0;
+      let appliedOdds = 0;
+
+      this.cards.forEach(c => {
+        const entry = mapBySlug[c.playerSlug];
+        if (!entry) return;
+
+        if (entry.officialStatus === 'starter') {
+          c.liveLineupStatus = 'starter';
+          c.liveStartingOddsPct = 100;
+          c.liveStartingGrade = 'A';
+          appliedOfficial++;
+        } else if (entry.officialStatus === 'bench' || entry.officialStatus === 'out') {
+          c.liveLineupStatus = entry.officialStatus;
+          c.liveStartingOddsPct = 0;
+          c.liveStartingGrade = 'F';
+          appliedOfficial++;
+        } else if (typeof entry.pct === 'number') {
+          c.liveStartingOddsPct = entry.pct;
+          c.liveStartingGrade = entry.grade || SorareAPI.percentageToSorareGrade(entry.pct);
+          appliedOdds++;
+        }
+      });
+
+      const nowTime = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+      this.lastLiveSyncTimeStr = nowTime;
+
+      await this.syncRealSorareFixturesAndLineups();
+      this.runOptimizer();
+
+      if (appliedOfficial > 0) {
+        this.notify(`🟢 Distinte Ufficiali aggiornate (${nowTime}): ${appliedOfficial} carte con formazione ufficiale confermata (-1h) e ${appliedOdds} stime A–F aggiornate!`);
+      } else {
+        this.notify(`✅ Controllo Titolari completato (${nowTime}): fasce di titolarità A–F allineate (le distinte ufficiali escono 60 min prima del calcio d'inizio).`);
+      }
+    } catch (err) {
+      console.error('Errore syncLiveStartingLineups:', err);
+      this.notify('❌ Errore aggiornamento titolari live: ' + err.message, true);
+    } finally {
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.innerHTML = this.lastLiveSyncTimeStr
+          ? `🟢 Sync Titolari Live (-1h) • ${this.lastLiveSyncTimeStr}`
+          : origHtml;
+      }
+    }
   },
 
   loadSavedPresets() {
@@ -293,6 +361,16 @@ const App = {
             presetLabel: preset.label,
             playerName: liveCard.name,
             reason: 'Carta chiusa in Cassaforte (Vault)'
+          });
+          return;
+        }
+
+        if (liveCard.liveLineupStatus === 'bench' || liveCard.liveLineupStatus === 'out') {
+          alerts.push({
+            presetId: preset.id,
+            presetLabel: preset.label,
+            playerName: liveCard.name,
+            reason: '🔴 PANCHINA UFFICIALE nelle distinte a -1h!'
           });
           return;
         }
@@ -821,6 +899,7 @@ const App = {
     this.cards.forEach(c => {
       if (this.isCardLockedInVault(c)) return;
       if (c.isInjuredOrSuspended && this.manualOverrides[c.playerSlug] !== 'xi') return;
+      if ((c.liveLineupStatus === 'bench' || c.liveLineupStatus === 'out') && this.manualOverrides[c.playerSlug] !== 'xi') return;
       if (lockedMap[c.id] && !this.unlockedUsedCardSlugs.has(c.id)) return;
       if (presetReservedSet.has(c.id)) return;
       if (this.manualOverrides[c.playerSlug] === 'bench') return;
@@ -1065,7 +1144,7 @@ const App = {
       }
       .sh-rank { color: #f3d266; font-weight: 800; font-size: 16px; }
       .sh-comp { color: #9aa0a6; font-size: 12px; margin-top: 2px; }
-      .sh-score { color: #f3d266; font-weight: 800; font-size: 21px; text-align: right; }
+      .sh-score { color: #f3d266; font-weight: 800; font-size: 21px; text-align: right; white-space: nowrap; }
       .sh-target-pill {
         display: inline-block;
         margin-top: 4px;
@@ -1183,10 +1262,17 @@ const App = {
       .sh-xi-btn {
         border-radius: 6px;
         padding: 3px 7px;
-        font-size: 10.5px;
+        font-size: 10px;
         font-weight: 800;
         cursor: pointer;
+        white-space: nowrap;
         transition: all 0.15s ease;
+      }
+      .sh-xi-btn.xi-official {
+        background: rgba(0, 200, 83, 0.28);
+        border: 1px solid #00e676;
+        color: #69f0ae;
+        box-shadow: 0 0 8px rgba(0, 230, 118, 0.25);
       }
       .sh-xi-btn.xi-confirmed {
         background: rgba(46, 125, 50, 0.28);
@@ -1202,6 +1288,28 @@ const App = {
         background: rgba(244, 67, 54, 0.22);
         border-color: #ef5350;
         color: #ff8a95;
+      }
+      .sh-live-sync-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: linear-gradient(135deg, rgba(0, 200, 83, 0.22) 0%, rgba(27, 94, 32, 0.38) 100%);
+        border: 1px solid #00e676;
+        color: #69f0ae;
+        border-radius: 8px;
+        padding: 7px 12px;
+        font-size: 12px;
+        font-weight: 800;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .sh-live-sync-btn:hover {
+        background: rgba(0, 200, 83, 0.34);
+        transform: translateY(-1px);
+      }
+      .sh-live-sync-btn:disabled {
+        opacity: 0.6;
+        cursor: wait;
       }
       .sh-season-badge {
         display: inline-block;
@@ -1645,10 +1753,11 @@ const App = {
     const autoFilteredLongTerm = [];
     const seenLongTerm = new Set();
     this.cards.forEach(c => {
+      const isLiveBenched = (c.liveLineupStatus === 'bench' || c.liveLineupStatus === 'out') && this.manualOverrides[c.playerSlug] !== 'xi';
       if (
         c.scarcity === this.currentScarcity &&
         !this.isCardLockedInVault(c) &&
-        c.isInferredLongTermInactive &&
+        (c.isInferredLongTermInactive || isLiveBenched) &&
         this.manualOverrides[c.playerSlug] !== 'xi' &&
         !seenLongTerm.has(c.playerSlug) &&
         OptimizerEngine.isCardEligibleForCompetition(c, this.currentCompetition, this.currentScarcity)
@@ -1667,14 +1776,17 @@ const App = {
       });
 
       const autoLongTermChips = autoFilteredLongTerm.map(c => {
-        return `<span class="club-xi-chip benched" data-restore-slug="${this.escapeHtml(c.playerSlug)}" title="${this.escapeHtml(c.baseUnavailableReason)} — Clicca se il giocatore è tornato disponibile">🚑 ${this.escapeHtml(c.name)} (${this.escapeHtml(c.club)} • Forza XI ↩)</span>`;
+        const isLiveBench = c.liveLineupStatus === 'bench' || c.liveLineupStatus === 'out';
+        const tagIcon = isLiveBench ? '🔴 Panc. Uff.' : '🚑';
+        const reasonTxt = isLiveBench ? 'Panchina Ufficiale a -1h' : c.baseUnavailableReason;
+        return `<span class="club-xi-chip benched" data-restore-slug="${this.escapeHtml(c.playerSlug)}" title="${this.escapeHtml(reasonTxt)} — Clicca se vuoi forzarlo comunque nell'11 titolare">${tagIcon} ${this.escapeHtml(c.name)} (${this.escapeHtml(c.club)} • Forza XI ↩)</span>`;
       });
 
       collapsiblePanelsHtmlList.push(
         this.buildCollapsibleStripHtml(
           'excluded_longterm',
           'benched-restore-strip',
-          '🚑 / 🪑 Esclusi & Lungodegenti',
+          '🚑 / 🪑 Esclusi, Panchinari Uff. & Lungodegenti',
           `${totalExcludedCount} esclusi`,
           `<div>Clicca su un giocatore se è tornato disponibile e vuoi forzarlo nell'11 titolare:</div><div style="margin-top:4px;">${[...manualChips, ...autoLongTermChips].join('')}</div>`
         )
@@ -1711,6 +1823,10 @@ const App = {
       ? `<div class="sh-strips-grid">${collapsiblePanelsHtmlList.join('')}</div>`
       : '';
 
+    const liveSyncBtnLabel = this.lastLiveSyncTimeStr
+      ? `🟢 Sync Titolari Live (-1h) • ${this.lastLiveSyncTimeStr}`
+      : `🟢 Sync Titolari Live (-1h)`;
+
     container.innerHTML = `
       <div class="gw-selector-pill">
         <span>📅 GW:</span>
@@ -1732,6 +1848,9 @@ const App = {
         <span>🏟️ Club:</span>
         <select id="club-stack-select">${clubOptionsHtml}</select>
       </div>
+      <button type="button" id="sh-live-lineups-btn" class="sh-live-sync-btn" title="Aggiorna le distinte ufficiali Opta (-60 min dal match) e le probabilità di titolarità A–F senza riscaricare tutta la galleria">
+        ${liveSyncBtnLabel}
+      </button>
       ${presetAlertsHtml}
       ${stripsGridHtml}
     `;
@@ -1773,6 +1892,15 @@ const App = {
       clubSelect.addEventListener('change', (e) => {
         this.selectedClubSlug = e.target.value || 'ALL';
         this.runOptimizer();
+      });
+    }
+
+    const liveBtn = document.getElementById('sh-live-lineups-btn');
+    if (liveBtn) {
+      liveBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.syncLiveStartingLineups(liveBtn);
       });
     }
   },
@@ -1836,7 +1964,6 @@ const App = {
   bindEvents() {
     let loginBtn = document.getElementById('login-btn') || document.getElementById('connect-btn');
     if (loginBtn) {
-      // Rimuove qualsiasi onclick inline o vecchio listener duplicato
       loginBtn.removeAttribute('onclick');
       const cleanBtn = loginBtn.cloneNode(true);
       cleanBtn.removeAttribute('onclick');
@@ -2038,7 +2165,7 @@ const App = {
       }
 
       const btn = e.target.closest('button');
-      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn' && !btn.closest('#sh-account-popover') && !btn.hasAttribute('data-direct-submit-idx') && !btn.hasAttribute('data-pin-preset-idx')) {
+      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn' && btn.id !== 'sh-live-lineups-btn' && !btn.closest('#sh-account-popover') && !btn.hasAttribute('data-direct-submit-idx') && !btn.hasAttribute('data-pin-preset-idx')) {
         const txt = (btn.textContent || '').toLowerCase();
         if (txt.includes('genera') || txt.includes('ottimizz') || txt.includes('calcola') || btn.id === 'generate-btn' || btn.id === 'optimize-btn' || btn.id === 'run-optimizer-btn') {
           this.syncStateFromDOM();
@@ -2235,9 +2362,13 @@ const App = {
           }
         }
 
-        const isConfirmedStarter = p.availabilityTier === 'starter' || this.manualOverrides[p.playerSlug] === 'xi';
-        const xiBtnLabel = isConfirmedStarter ? '✅ XI' : '⚠️ Rot.';
-        const xiBtnCls = isConfirmedStarter ? 'sh-xi-btn xi-confirmed' : 'sh-xi-btn xi-rotation';
+        const isOfficialLiveStarter = p.liveLineupStatus === 'starter';
+        const isConfirmedStarter = isOfficialLiveStarter || p.availabilityTier === 'starter' || this.manualOverrides[p.playerSlug] === 'xi';
+
+        const xiBtnLabel = p.startingOddsBadge || (isOfficialLiveStarter ? '🟢 UFF. XI' : (isConfirmedStarter ? '✅ XI' : '⚠️ Rot.'));
+        const xiBtnCls = isOfficialLiveStarter
+          ? 'sh-xi-btn xi-official'
+          : (isConfirmedStarter ? 'sh-xi-btn xi-confirmed' : 'sh-xi-btn xi-rotation');
         const roleCls = `pos-${p.displayRole.toLowerCase()}`;
 
         const formTagLabel = p.contextFormLabel || 'Forma';
@@ -2260,7 +2391,7 @@ const App = {
             </div>
             <div class="sh-right">
               <div class="sh-pts">${p.projectedScore} pt</div>
-              <button type="button" class="${xiBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Verde = Titolare confermato. Clicca per spostarlo in Panchina se non parte dal 1'">${xiBtnLabel}</button>
+              <button type="button" class="${xiBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Mostra Fascia Titolarità (A–F / %) o Distinta Ufficiale (-1h). Clicca per spostarlo in Panchina">${this.escapeHtml(xiBtnLabel)}</button>
             </div>
           </div>
         `;
