@@ -1,7 +1,7 @@
-// SorareHub - Dual Profile Engine + Pre-Match Starting Odds (A-F) + Live Official Lineups (-1h) + Vault Filter + Deep Schema Builder
+// SorareHub - Dual Profile Engine + Pre-Match Starting Odds (A-F) + Live Official Lineups (-1h) + Vault Filter + AnyPlayerInterface Fix
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v31',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v31', 'sorarehub_gallery_cache_v30', 'sorarehub_gallery_cache_v29', 'sorarehub_gallery_cache_v28', 'sorarehub_gallery_cache_v27'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v32',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v32', 'sorarehub_gallery_cache_v31', 'sorarehub_gallery_cache_v30', 'sorarehub_gallery_cache_v29', 'sorarehub_gallery_cache_v28'],
   CACHE_TTL_MS: 12 * 60 * 1000,
   lastBenchDiagnostic: null,
   cachedBenchSchemaInfo: null,
@@ -471,21 +471,22 @@ const SorareAPI = {
       const benchCardFields = benchCardDef?.fields || [];
 
       const anyPlayerField = benchCardFields.find(f => f.name === 'anyPlayer' || f.name === 'player') || null;
-      const anyPlayerTypeInfo = anyPlayerField ? this.unwrapGraphqlType(anyPlayerField.type) : { name: 'Player', kind: 'OBJECT' };
-      const anyPlayerDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, anyPlayerTypeInfo.name || 'Player');
+      const anyPlayerTypeInfo = anyPlayerField ? this.unwrapGraphqlType(anyPlayerField.type) : { name: 'AnyPlayerInterface', kind: 'INTERFACE' };
+      const anyPlayerDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, anyPlayerTypeInfo.name || 'AnyPlayerInterface');
       const anyPlayerFields = anyPlayerDef?.fields || [];
+
+      const playerDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, 'Player');
+      const playerFields = playerDef?.fields || [];
 
       const hasScoresOnBenchCard = benchCardFields.some(f => f.name === 'eligiblePlayerGameScores');
       const hasScoresOnAnyPlayer = anyPlayerFields.some(f => f.name === 'eligiblePlayerGameScores');
+      const hasScoresOnConcretePlayer = playerFields.some(f => f.name === 'eligiblePlayerGameScores');
 
-      let scoresFieldDef = benchCardFields.find(f => f.name === 'eligiblePlayerGameScores') ||
-                           anyPlayerFields.find(f => f.name === 'eligiblePlayerGameScores') || null;
-
-      let playerDef = anyPlayerDef;
-      if (!scoresFieldDef && anyPlayerTypeInfo.name !== 'Player') {
-        playerDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, 'Player');
-        scoresFieldDef = (playerDef?.fields || []).find(f => f.name === 'eligiblePlayerGameScores') || null;
-      }
+      const scoresFieldDef =
+        benchCardFields.find(f => f.name === 'eligiblePlayerGameScores') ||
+        anyPlayerFields.find(f => f.name === 'eligiblePlayerGameScores') ||
+        playerFields.find(f => f.name === 'eligiblePlayerGameScores') ||
+        null;
 
       const scoresTypeInfo = scoresFieldDef ? this.unwrapGraphqlType(scoresFieldDef.type) : { name: '', kind: '' };
       const scoresDef = scoresTypeInfo.name ? await this.fetchTypeDefinition(workerGraphqlEndpoint, token, scoresTypeInfo.name) : null;
@@ -495,7 +496,6 @@ const SorareAPI = {
       const statsTypeInfo = statsField ? this.unwrapGraphqlType(statsField.type) : { name: '', kind: '' };
       const statsDef = statsTypeInfo.name ? await this.fetchTypeDefinition(workerGraphqlEndpoint, token, statsTypeInfo.name) : null;
 
-      // Se anyPlayerGameStats è un'interfaccia o union, controlliamo anche FootballPlayerGameStats
       let statsFields = statsDef?.fields || [];
       let statsRequiresInlineFragment = false;
       let statsConcreteTypeName = 'FootballPlayerGameStats';
@@ -533,10 +533,10 @@ const SorareAPI = {
         benchArgs: benchField?.args || [],
         anyPlayerFieldName: anyPlayerField?.name || 'anyPlayer',
         anyPlayerTypeName: anyPlayerTypeInfo.name,
-        anyPlayerTypeKind: anyPlayerDef?.kind || 'OBJECT',
+        anyPlayerTypeKind: anyPlayerDef?.kind || 'INTERFACE',
         hasScoresOnBenchCard,
         hasScoresOnAnyPlayer,
-        hasScoresOnPlayerFragment: !hasScoresOnAnyPlayer && Boolean(playerDef?.fields?.some(f => f.name === 'eligiblePlayerGameScores')),
+        hasScoresOnConcretePlayer,
         scoresArgs: scoresFieldDef?.args || [],
         hasProjectedScore: scoresFields.some(f => f.name === 'projectedScore'),
         hasProjection: Boolean(projField),
@@ -546,7 +546,9 @@ const SorareAPI = {
         statsConcreteTypeName,
         hasFieldStatus: statsFields.some(f => f.name === 'fieldStatus'),
         hasPlayingOdds: Boolean(oddsField),
-        hasStarterOddsBp: oddsFields.some(f => f.name === 'starterOddsBasisPoints')
+        hasStarterOddsBp: oddsFields.some(f => f.name === 'starterOddsBasisPoints'),
+        benchCardFieldNames: benchCardFields.map(f => f.name),
+        playerFieldNames: playerFields.map(f => f.name)
       };
 
       return this.cachedBenchSchemaInfo;
@@ -556,10 +558,9 @@ const SorareAPI = {
     }
   },
 
-  buildDynamicBenchQueryFromSchema(sInfo) {
+  buildDynamicBenchQueryFromSchema(sInfo, fixtureSlug = null) {
     if (!sInfo || !sInfo.foundBenchField) return null;
 
-    // 1. Costruisci il blocco interno di eligiblePlayerGameScores solo con i campi esistenti
     const scoreSubFields = [];
     if (sInfo.hasProjectedScore) scoreSubFields.push('projectedScore');
     if (sInfo.hasProjection && sInfo.hasProjectionGrade) {
@@ -582,12 +583,25 @@ const SorareAPI = {
       }
     }
 
+    // Controlliamo se eligiblePlayerGameScores accetta o richiede argomenti (es. so5LeaderboardSlug o so5FixtureSlug)
+    let scoresArgCall = '';
+    const scoresArgs = Array.isArray(sInfo.scoresArgs) ? sInfo.scoresArgs : [];
+    const hasLbSlugArg = scoresArgs.find(a => a.name === 'so5LeaderboardSlug' || a.name === 'leaderboardSlug');
+    const hasFixSlugArg = scoresArgs.find(a => a.name === 'so5FixtureSlug' || a.name === 'fixtureSlug');
+
+    if (hasLbSlugArg) {
+      scoresArgCall = `(${hasLbSlugArg.name}: $slug)`;
+    } else if (hasFixSlugArg && fixtureSlug) {
+      scoresArgCall = `(${hasFixSlugArg.name}: "${fixtureSlug}")`;
+    }
+
     const scoresBlock = scoreSubFields.length > 0
-      ? `eligiblePlayerGameScores { ${scoreSubFields.join(' ')} }`
+      ? `eligiblePlayerGameScores${scoresArgCall} { ${scoreSubFields.join(' ')} }`
       : '';
 
     let innerCardSelection = '';
     if (sInfo.hasScoresOnBenchCard) {
+      // Caso 1: eligiblePlayerGameScores è su ComposeTeamBenchCard
       innerCardSelection = `
         ... on ComposeTeamBenchCard {
           ${sInfo.anyPlayerFieldName} {
@@ -597,7 +611,19 @@ const SorareAPI = {
           ${scoresBlock}
         }
       `;
-    } else if (sInfo.hasScoresOnPlayerFragment) {
+    } else if (sInfo.hasScoresOnAnyPlayer) {
+      // Caso 2: eligiblePlayerGameScores è direttamente su AnyPlayerInterface
+      innerCardSelection = `
+        ... on ComposeTeamBenchCard {
+          ${sInfo.anyPlayerFieldName} {
+            slug
+            displayName
+            ${scoresBlock}
+          }
+        }
+      `;
+    } else if (sInfo.hasScoresOnConcretePlayer) {
+      // Caso 3: anyPlayer è AnyPlayerInterface, ma eligiblePlayerGameScores è sul tipo concreto Player!
       innerCardSelection = `
         ... on ComposeTeamBenchCard {
           ${sInfo.anyPlayerFieldName} {
@@ -610,30 +636,16 @@ const SorareAPI = {
         }
       `;
     } else {
-      innerCardSelection = `
-        ... on ComposeTeamBenchCard {
-          ${sInfo.anyPlayerFieldName} {
-            slug
-            displayName
-            ${scoresBlock}
-          }
-        }
-      `;
+      // Se né ComposeTeamBenchCard né Player hanno eligiblePlayerGameScores, registriamo quali campi esistono davvero!
+      const sampleBenchFields = (sInfo.benchCardFieldNames || []).slice(0, 8).join(',');
+      this.lastBenchDiagnostic = `Campi ComposeTeamBenchCard: [${sampleBenchFields}]`;
+      return null;
     }
-
-    // Controlla se myComposeTeamBenchObjects ha argomenti obbligatori (NON_NULL senza defaultValue)
-    const requiredArgs = (sInfo.benchArgs || []).filter(a => {
-      const u = this.unwrapGraphqlType(a.type);
-      return u.isNonNull && (a.defaultValue === null || a.defaultValue === undefined);
-    });
 
     let benchCallStr = 'myComposeTeamBenchObjects';
     if (sInfo.isConnection) {
       const hasFirstArg = (sInfo.benchArgs || []).some(a => a.name === 'first');
       benchCallStr = hasFirstArg ? 'myComposeTeamBenchObjects(first: 250)' : 'myComposeTeamBenchObjects';
-    } else if (requiredArgs.length > 0) {
-      // Se ci sono argomenti obbligatori imprevisti li annotiamo nella diagnostica
-      this.lastBenchDiagnostic = `Argomenti richiesti su Bench: ${requiredArgs.map(a => a.name).join(', ')}`;
     }
 
     const benchBody = sInfo.isConnection
@@ -722,7 +734,7 @@ const SorareAPI = {
     return added;
   },
 
-  async fetchOfficialBenchOddsFromLeaderboards(leaderboardSlugs = []) {
+  async fetchOfficialBenchOddsFromLeaderboards(leaderboardSlugs = [], fixtureSlug = null) {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return {};
 
@@ -734,11 +746,11 @@ const SorareAPI = {
     const diagNotes = [];
 
     const schemaInfo = await this.inspectBenchSchemaIfNeeded(workerGraphqlEndpoint, token);
-    const dynamicQuery = this.buildDynamicBenchQueryFromSchema(schemaInfo);
+    const dynamicQuery = this.buildDynamicBenchQueryFromSchema(schemaInfo, fixtureSlug);
 
-    // Query minimale ultra-compatibile (senza campi secondari che causano HTTP 422)
-    const minimalFallbackQuery = `
-      query FootballComposeBenchMinimal($slug: String!) {
+    // Fallback 1: eligiblePlayerGameScores dentro "... on Player" sotto anyPlayer (risolve l'errore AnyPlayerInterface)
+    const fallbackOnPlayerFragmentQuery = `
+      query FootballComposeBenchOnPlayer($slug: String!) {
         so5 {
           so5Leaderboard(slug: $slug) {
             slug
@@ -746,16 +758,18 @@ const SorareAPI = {
               ... on ComposeTeamBenchCard {
                 anyPlayer {
                   slug
-                  eligiblePlayerGameScores {
-                    projectedScore
-                    projection {
-                      grade
-                    }
-                    anyPlayerGameStats {
-                      ... on FootballPlayerGameStats {
-                        fieldStatus
-                        footballPlayingStatusOdds {
-                          starterOddsBasisPoints
+                  ... on Player {
+                    eligiblePlayerGameScores {
+                      projectedScore
+                      projection {
+                        grade
+                      }
+                      anyPlayerGameStats {
+                        ... on FootballPlayerGameStats {
+                          fieldStatus
+                          footballPlayingStatusOdds {
+                            starterOddsBasisPoints
+                          }
                         }
                       }
                     }
@@ -768,7 +782,43 @@ const SorareAPI = {
       }
     `;
 
-    const queryVariants = [dynamicQuery, minimalFallbackQuery].filter(Boolean);
+    // Fallback 2: eligiblePlayerGameScores direttamente su ComposeTeamBenchCard
+    const fallbackOnBenchCardQuery = `
+      query FootballComposeBenchOnCard($slug: String!) {
+        so5 {
+          so5Leaderboard(slug: $slug) {
+            slug
+            myComposeTeamBenchObjects {
+              ... on ComposeTeamBenchCard {
+                anyPlayer {
+                  slug
+                }
+                eligiblePlayerGameScores {
+                  projectedScore
+                  projection {
+                    grade
+                  }
+                  anyPlayerGameStats {
+                    ... on FootballPlayerGameStats {
+                      fieldStatus
+                      footballPlayingStatusOdds {
+                        starterOddsBasisPoints
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const queryVariants = Array.from(new Set([
+      dynamicQuery,
+      fallbackOnPlayerFragmentQuery,
+      fallbackOnBenchCardQuery
+    ].filter(Boolean)));
 
     for (const lbSlug of validSlugs) {
       for (let vIdx = 0; vIdx < queryVariants.length; vIdx++) {
@@ -785,7 +835,6 @@ const SorareAPI = {
             })
           });
 
-          // Leggiamo SEMPRE il JSON anche in caso di HTTP 422 per vedere l'errore esatto di GraphQL!
           let json = null;
           try {
             json = await res.json();
@@ -826,7 +875,8 @@ const SorareAPI = {
     }
 
     if (Object.keys(benchOddsMap).length === 0 && diagNotes.length > 0) {
-      this.lastBenchDiagnostic = diagNotes.slice(0, 2).join(' | ');
+      const schemaNote = this.lastBenchDiagnostic ? ` [${this.lastBenchDiagnostic}]` : '';
+      this.lastBenchDiagnostic = diagNotes.slice(0, 2).join(' | ') + schemaNote;
     }
 
     return benchOddsMap;
@@ -857,17 +907,18 @@ const SorareAPI = {
     let updatedCount = 0;
     let officialCount = 0;
 
+    const fixtureSlug = selectedGw?.sorareSlug || null;
+
     // 1. Sorgente primaria ufficiale Sorare: FootballComposeBenchQuery
     try {
       const candidateLbSlugs = Array.isArray(leaderboardSlugs) && leaderboardSlugs.length > 0
         ? [...leaderboardSlugs]
         : [];
 
-      const fixtureSlug = selectedGw?.sorareSlug || null;
       const activeRarity = (window.App && App.currentScarcity) ? App.currentScarcity : 'limited';
       candidateLbSlugs.push(this.buildDefaultAllStarLeaderboardSlug(fixtureSlug, activeRarity));
 
-      const officialBenchMap = await this.fetchOfficialBenchOddsFromLeaderboards(candidateLbSlugs);
+      const officialBenchMap = await this.fetchOfficialBenchOddsFromLeaderboards(candidateLbSlugs, fixtureSlug);
       Object.keys(officialBenchMap).forEach(pSlug => {
         const entry = officialBenchMap[pSlug];
         mapBySlug[pSlug] = entry;
@@ -892,18 +943,23 @@ const SorareAPI = {
     for (let i = 0; i < allSlugs.length; i += chunkSize) {
       const chunk = allSlugs.slice(i, i + chunkSize);
 
-      // 2A. Se il bench non ha restituito quote, interroga eligiblePlayerGameScores sui nodi Player usando lo schema scoperto
-      if (Object.keys(mapBySlug).length === 0 && schemaInfo && (schemaInfo.hasScoresOnAnyPlayer || schemaInfo.hasScoresOnPlayerFragment)) {
+      if (Object.keys(mapBySlug).length === 0 && schemaInfo && schemaInfo.hasScoresOnConcretePlayer) {
         const statsFragment = schemaInfo.statsRequiresInlineFragment
           ? `${schemaInfo.statsFieldName} { ... on ${schemaInfo.statsConcreteTypeName} { fieldStatus footballPlayingStatusOdds { starterOddsBasisPoints } } }`
           : `${schemaInfo.statsFieldName} { fieldStatus footballPlayingStatusOdds { starterOddsBasisPoints } }`;
+
+        const scoresArgs = Array.isArray(schemaInfo.scoresArgs) ? schemaInfo.scoresArgs : [];
+        const hasFixSlugArg = scoresArgs.find(a => a.name === 'so5FixtureSlug' || a.name === 'fixtureSlug');
+        const scoreCallStr = (hasFixSlugArg && fixtureSlug)
+          ? `eligiblePlayerGameScores(${hasFixSlugArg.name}: "${fixtureSlug}")`
+          : `eligiblePlayerGameScores`;
 
         const playerEligibleQuery = `
           query GetPlayerEligibleOddsSafe($slugs: [String!]!) {
             football {
               players(slugs: $slugs) {
                 slug
-                eligiblePlayerGameScores {
+                ${scoreCallStr} {
                   projectedScore
                   projection {
                     grade
@@ -934,7 +990,7 @@ const SorareAPI = {
             const addedFromPlayer = this.parseBenchObjectsIntoMap(fakeBenchItems, mapBySlug);
             if (addedFromPlayer > 0) {
               updatedCount += addedFromPlayer;
-              this.lastBenchDiagnostic = `OK da Player.eligiblePlayerGameScores (${addedFromPlayer})`;
+              this.lastBenchDiagnostic = `OK da Player.${scoreCallStr} (${addedFromPlayer})`;
             }
           }
         } catch (_) {}
