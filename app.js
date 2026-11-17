@@ -150,6 +150,7 @@ const App = {
     if (window.SorareAPI && Array.isArray(SorareAPI.FALLBACK_CACHE_KEYS)) {
       SorareAPI.FALLBACK_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
     }
+    localStorage.removeItem('sorarehub_gallery_cache_v29');
     localStorage.removeItem('sorarehub_gallery_cache_v28');
     localStorage.removeItem('sorarehub_gallery_cache_v27');
     localStorage.removeItem('sorarehub_gallery_cache_v26');
@@ -209,9 +210,47 @@ const App = {
     }, 600);
   },
 
-  async syncLiveStartingLineups(btnEl = null) {
+  collectCandidateLeaderboardSlugsForCurrentGw() {
+    const slugs = [];
+    const fix = this.getSelectedSorareFixture();
+    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+    const fSlug = fix?.slug || selectedGw?.sorareSlug || 'football-17-20-nov-2026';
+
+    if (fix && Array.isArray(fix.so5Leaderboards) && fix.so5Leaderboards.length > 0) {
+      const matched = this.matchLeaderboardFromFixture(
+        fix.so5Leaderboards,
+        this.currentCompetition,
+        this.currentScarcity,
+        'standard'
+      );
+      if (matched && matched.slug) {
+        slugs.push(matched.slug);
+      }
+
+      const allStarLb = fix.so5Leaderboards.find(lb => {
+        const s = String(lb.slug || '').toLowerCase();
+        return s.includes('all_star') && s.includes(this.currentScarcity);
+      });
+      if (allStarLb && allStarLb.slug && !slugs.includes(allStarLb.slug)) {
+        slugs.push(allStarLb.slug);
+      }
+    }
+
+    if (window.SorareAPI && typeof SorareAPI.buildDefaultAllStarLeaderboardSlug === 'function') {
+      const fallbackAllStar = SorareAPI.buildDefaultAllStarLeaderboardSlug(fSlug, this.currentScarcity);
+      if (fallbackAllStar && !slugs.includes(fallbackAllStar)) {
+        slugs.push(fallbackAllStar);
+      }
+    }
+
+    return slugs;
+  },
+
+  async syncLiveStartingLineups(btnEl = null, silentAuto = false) {
     if (!this.cards || this.cards.length === 0) {
-      this.notify('⚠️ Sincronizza prima la tua galleria Sorare.', true);
+      if (!silentAuto) {
+        this.notify('⚠️ Sincronizza prima la tua galleria Sorare.', true);
+      }
       return;
     }
 
@@ -221,10 +260,13 @@ const App = {
       btnEl.disabled = true;
       btnEl.innerHTML = '⏳ Lettura Distinte Opta...';
     }
-    this.notify('📡 Controllo distinte ufficiali (-1h) e probabilità di titolarità (A–F) in corso...');
+    if (!silentAuto) {
+      this.notify('📡 Controllo distinte ufficiali (-1h) e probabilità di titolarità Sorare (A–F / %) in corso...');
+    }
 
     try {
-      const result = await SorareAPI.fetchLiveLineupsAndOddsForPlayers(this.cards, selectedGw);
+      const candidateLbSlugs = this.collectCandidateLeaderboardSlugsForCurrentGw();
+      const result = await SorareAPI.fetchLiveLineupsAndOddsForPlayers(this.cards, selectedGw, candidateLbSlugs);
       const mapBySlug = result?.mapBySlug || {};
       let appliedOfficial = 0;
       let appliedOdds = 0;
@@ -232,6 +274,10 @@ const App = {
       this.cards.forEach(c => {
         const entry = mapBySlug[c.playerSlug];
         if (!entry) return;
+
+        if (typeof entry.officialProjectedScore === 'number') {
+          c.officialProjectedScore = entry.officialProjectedScore;
+        }
 
         if (entry.officialStatus === 'starter') {
           c.liveLineupStatus = 'starter';
@@ -243,9 +289,11 @@ const App = {
           c.liveStartingOddsPct = 0;
           c.liveStartingGrade = 'F';
           appliedOfficial++;
-        } else if (typeof entry.pct === 'number') {
-          c.liveStartingOddsPct = entry.pct;
-          c.liveStartingGrade = entry.grade || SorareAPI.percentageToSorareGrade(entry.pct);
+        } else if (typeof entry.pct === 'number' || entry.grade) {
+          c.liveStartingOddsPct = typeof entry.pct === 'number'
+            ? entry.pct
+            : SorareAPI.sorareGradeToPercentage(entry.grade);
+          c.liveStartingGrade = entry.grade || SorareAPI.percentageToSorareGrade(c.liveStartingOddsPct);
           appliedOdds++;
         }
       });
@@ -253,17 +301,23 @@ const App = {
       const nowTime = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
       this.lastLiveSyncTimeStr = nowTime;
 
-      await this.syncRealSorareFixturesAndLineups();
+      if (!silentAuto) {
+        await this.syncRealSorareFixturesAndLineups();
+      }
       this.runOptimizer();
 
-      if (appliedOfficial > 0) {
-        this.notify(`🟢 Distinte Ufficiali aggiornate (${nowTime}): ${appliedOfficial} carte con formazione ufficiale confermata (-1h) e ${appliedOdds} stime A–F aggiornate!`);
-      } else {
-        this.notify(`✅ Controllo Titolari completato (${nowTime}): fasce di titolarità A–F allineate (le distinte ufficiali escono 60 min prima del calcio d'inizio).`);
+      if (!silentAuto) {
+        if (appliedOfficial > 0) {
+          this.notify(`🟢 Distinte Ufficiali aggiornate (${nowTime}): ${appliedOfficial} carte con formazione ufficiale confermata (-1h) e ${appliedOdds} quote Sorare A–F aggiornate!`);
+        } else {
+          this.notify(`✅ Quote Ufficiali Sorare sincronizzate (${nowTime}): ${appliedOdds} carte aggiornate con percentuale e fascia A–F reale!`);
+        }
       }
     } catch (err) {
       console.error('Errore syncLiveStartingLineups:', err);
-      this.notify('❌ Errore aggiornamento titolari live: ' + err.message, true);
+      if (!silentAuto) {
+        this.notify('❌ Errore aggiornamento titolari live: ' + err.message, true);
+      }
     } finally {
       if (btnEl) {
         btnEl.disabled = false;
@@ -1859,7 +1913,7 @@ const App = {
     if (gwSelect) {
       gwSelect.addEventListener('change', (e) => {
         this.selectedGwIndex = Number(e.target.value) || 0;
-        this.runOptimizer();
+        this.syncLiveStartingLineups(null, true);
       });
     }
 
@@ -1900,7 +1954,7 @@ const App = {
       liveBtn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.syncLiveStartingLineups(liveBtn);
+        this.syncLiveStartingLineups(liveBtn, false);
       });
     }
   },
@@ -1935,6 +1989,7 @@ const App = {
         await this.syncRealSorareFixturesAndLineups();
 
         this.syncStateFromDOM();
+        await this.syncLiveStartingLineups(null, true);
         this.renderGwAndClubSelectors();
         this.runOptimizer();
       }
