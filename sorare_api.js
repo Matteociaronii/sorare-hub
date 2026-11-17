@@ -1,7 +1,7 @@
-// SorareHub - Dual Profile Engine + Official Sorare anyFutureGames & PlayerGameStats (v37 Definitive)
+// SorareHub - Dual Profile Engine + Official Sorare anyFutureGames & PlayerGameStats (v38 Definitive - statusTyped)
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v37',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v37', 'sorarehub_gallery_cache_v36', 'sorarehub_gallery_cache_v35', 'sorarehub_gallery_cache_v34', 'sorarehub_gallery_cache_v33'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v38',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v38', 'sorarehub_gallery_cache_v37', 'sorarehub_gallery_cache_v36', 'sorarehub_gallery_cache_v35', 'sorarehub_gallery_cache_v34'],
   CACHE_TTL_MS: 12 * 60 * 1000,
   lastBenchDiagnostic: null,
   cachedBenchSchemaInfo: null,
@@ -247,7 +247,6 @@ const SorareAPI = {
     return map[g] !== undefined ? map[g] : null;
   },
 
-  // Converte un oggetto PlayerGameScore di Sorare (da anyFutureGames, so5Scores o ComposeTeamBenchCard) in entry normalizzata
   extractOddsAndStatusFromScoreNode(scoreNode) {
     if (!scoreNode) return null;
 
@@ -758,7 +757,7 @@ const SorareAPI = {
     const diagNotes = [];
 
     // 1. SORGENTE PRIMARIA DEFINITIVA: football.players -> anyFutureGames -> playerGameScore + so5Scores
-    // Funziona per tutte le rarità, sia prima dell'apertura che a GW in corso (es. Vitinha 60% / Grade C)
+    // Usa statusTyped su AnyGameInterface
     const primaryFutureAndLiveQuery = `
       query GetPlayersFutureAndLiveOdds($slugs: [String!]!) {
         football {
@@ -776,7 +775,7 @@ const SorareAPI = {
                 nodes {
                   id
                   date
-                  status
+                  statusTyped
                   playerGameScore {
                     ... on PlayerGameScore {
                       projectedScore
@@ -794,7 +793,7 @@ const SorareAPI = {
                           anyGame {
                             id
                             date
-                            status
+                            statusTyped
                             so5Fixture {
                               gameWeek
                               slug
@@ -844,7 +843,6 @@ const SorareAPI = {
       }
     `;
 
-    // Query di fallback senza anyFutureGames nel caso un singolo nodo non lo supporti
     const fallbackLiveQuery = `
       query GetLivePlayerStatusFallback($slugs: [String!]!) {
         football {
@@ -893,7 +891,6 @@ const SorareAPI = {
       }
       if (!gameDateStr) return false;
       const gTs = new Date(gameDateStr).getTime();
-      // Tolleranza di +/- 6 ore sui bordi della finestra GW
       return gTs >= (gwStartMs - 6 * 3600 * 1000) && gTs <= (gwEndMs + 6 * 3600 * 1000);
     };
 
@@ -969,7 +966,7 @@ const SorareAPI = {
           return;
         }
 
-        // A) Controlliamo prima anyFutureGames (contiene le quote pre-partita ufficiali Sorare per la GW selezionata!)
+        // A) Controlliamo prima anyFutureGames
         const futureNodes = Array.isArray(pNode.anyFutureGames?.nodes) ? pNode.anyFutureGames.nodes : [];
         for (const fGame of futureNodes) {
           const scoreObj = fGame?.playerGameScore;
@@ -988,7 +985,7 @@ const SorareAPI = {
           }
         }
 
-        // B) Controlliamo so5Scores per le gare in corso, appena giocate o pre-match già listate in so5Scores
+        // B) Controlliamo so5Scores per gare in corso, appena giocate o pre-match
         const recentScores = Array.isArray(pNode.so5Scores) ? pNode.so5Scores : [];
         for (const sNode of recentScores) {
           const gDate = sNode?.game?.date || null;
@@ -1002,7 +999,6 @@ const SorareAPI = {
             return;
           }
 
-          // Verifica live a -1h dal calcio d'inizio
           const gDateMs = gDate ? new Date(gDate).getTime() : 0;
           const gStatus = String(sNode?.game?.statusTyped || '').toLowerCase();
           const mins = sNode?.playerGameStats?.minsPlayed ?? sNode?.anyPlayerGameStats?.minsPlayed;
@@ -1042,7 +1038,7 @@ const SorareAPI = {
       });
     }
 
-    // 2. Se per qualche giocatore non è stato ancora trovato il dato in anyFutureGames, proviamo anche la Leaderboard
+    // 2. Fallback sulla Leaderboard se manca ancora qualche giocatore
     const missingCards = relevantCards.filter(c => !mapBySlug[c.playerSlug]);
     if (missingCards.length > 0) {
       try {
@@ -1096,7 +1092,7 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = this.getWorkerGraphqlEndpoint();
 
-    // Nella query della galleria includiamo direttamente anyFutureGames(first: 3) con le quote ufficiali di Sorare!
+    // Nella query della galleria includiamo anyFutureGames(first: 3) con statusTyped
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
@@ -1137,7 +1133,7 @@ const SorareAPI = {
                     nodes {
                       id
                       date
-                      status
+                      statusTyped
                       playerGameScore {
                         ... on PlayerGameScore {
                           projectedScore
@@ -1578,7 +1574,6 @@ const SorareAPI = {
           return matchesNatTeam || (!matchesClubTeam && isCompNational);
         };
 
-        // Mappa quote ufficiali per data/id partita estratte da anyFutureGames
         const futureOddsByGameId = {};
         const futureOddsByDayKey = {};
         let latestOfficialFutureOdds = null;
