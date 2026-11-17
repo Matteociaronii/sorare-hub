@@ -335,7 +335,7 @@ const OptimizerEngine = {
       };
     }
 
-    // 2. Pre-Partita: usa i dati live di startingOdds (se presenti) oppure il profilo A-F calcolato
+    // 2. Pre-Partita: usa i dati live di startingOdds (starterOddsBasisPoints / projection.grade ufficiali Sorare) oppure il profilo A-F calcolato
     const contextOdds = isNationalMatch ? (card.natStartingOdds || card.clubStartingOdds) : card.clubStartingOdds;
     const pct = typeof card.liveStartingOddsPct === 'number'
       ? card.liveStartingOddsPct
@@ -568,8 +568,8 @@ const OptimizerEngine = {
       const bXi = (manualOverrides[b.playerSlug] === 'xi' || b.liveLineupStatus === 'starter') ? 1 : 0;
       if (bXi !== aXi) return bXi - aXi;
 
-      const aPct = a.startingOddsPct ?? 70;
-      const bPct = b.startingOddsPct ?? 70;
+      const aPct = a.startingOddsPct ?? a.liveStartingOddsPct ?? 70;
+      const bPct = b.startingOddsPct ?? b.liveStartingOddsPct ?? 70;
       if (bPct !== aPct) return bPct - aPct;
 
       if ((b.avgMins || 0) !== (a.avgMins || 0)) return (b.avgMins || 0) - (a.avgMins || 0);
@@ -846,6 +846,8 @@ const OptimizerEngine = {
 
     const oddsGrade = card.startingOddsGrade || 'B';
     const oddsPct = card.startingOddsPct !== undefined ? card.startingOddsPct : 75;
+    const hasOfficialSorareOdds = typeof card.liveStartingOddsPct === 'number' || Boolean(card.liveStartingGrade);
+    const oddsSourceTag = hasOfficialSorareOdds ? 'Ufficiale Sorare' : 'Stima';
 
     let statusSection = '';
     if (manualStatus === 'bench') {
@@ -858,12 +860,12 @@ const OptimizerEngine = {
       statusSection = `✅ STATO: Confermato manualmente nell'11 Titolare (${contextLabel} • Minutaggi: ${minsHistoryStr}).`;
     } else if (isNationalMatch) {
       if (nStats.playedCount > 0) {
-        statusSection = `🌍 STIMA TITOLARITÀ NAZIONALE [Fascia ${oddsGrade} • ${oddsPct}%]: ${nStats.starterCount}/${nStats.totalEntries} dal 1' con la Nazionale (Minutaggi: ${minsHistoryStr} • Media Naz: ${nStats.avgScore} pt).`;
+        statusSection = `🌍 TITOLARITÀ NAZIONALE (${oddsSourceTag}) [Fascia ${oddsGrade} • ${oddsPct}%]: ${nStats.starterCount}/${nStats.totalEntries} dal 1' con la Nazionale (Minutaggi: ${minsHistoryStr} • Media Naz: ${nStats.avgScore} pt).`;
       } else {
-        statusSection = `🌍 STIMA TITOLARITÀ NAZIONALE [Fascia ${oddsGrade} • ${oddsPct}%]: Riferimento Club ${card.club} (${cStats.starterCount || 0}/${cStats.totalEntries || 5} dal 1', L5 Club ${cStats.avgScore || card.l5} pt).`;
+        statusSection = `🌍 TITOLARITÀ NAZIONALE (${oddsSourceTag}) [Fascia ${oddsGrade} • ${oddsPct}%]: Riferimento Club ${card.club} (${cStats.starterCount || 0}/${cStats.totalEntries || 5} dal 1', L5 Club ${cStats.avgScore || card.l5} pt).`;
       }
     } else {
-      statusSection = `📊 STIMA TITOLARITÀ PRE-GARA [Fascia ${oddsGrade} • ${oddsPct}%] (${card.club}): ${cStats.starterCount}/${cStats.totalEntries || 5} gare ufficiali dal 1' (Minutaggi Club: ${minsHistoryStr}).`;
+      statusSection = `📊 TITOLARITÀ PRE-GARA (${oddsSourceTag}) [Fascia ${oddsGrade} • ${oddsPct}%] (${card.club}): ${cStats.starterCount}/${cStats.totalEntries || 5} gare ufficiali dal 1' (Minutaggi Club: ${minsHistoryStr}).`;
     }
 
     let recentLogSection = '';
