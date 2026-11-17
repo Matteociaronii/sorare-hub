@@ -150,6 +150,7 @@ const App = {
     if (window.SorareAPI && Array.isArray(SorareAPI.FALLBACK_CACHE_KEYS)) {
       SorareAPI.FALLBACK_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
     }
+    localStorage.removeItem('sorarehub_gallery_cache_v30');
     localStorage.removeItem('sorarehub_gallery_cache_v29');
     localStorage.removeItem('sorarehub_gallery_cache_v28');
     localStorage.removeItem('sorarehub_gallery_cache_v27');
@@ -268,6 +269,7 @@ const App = {
       const candidateLbSlugs = this.collectCandidateLeaderboardSlugsForCurrentGw();
       const result = await SorareAPI.fetchLiveLineupsAndOddsForPlayers(this.cards, selectedGw, candidateLbSlugs);
       const mapBySlug = result?.mapBySlug || {};
+      const diagnostic = result?.diagnostic || '';
       let appliedOfficial = 0;
       let appliedOdds = 0;
 
@@ -309,8 +311,11 @@ const App = {
       if (!silentAuto) {
         if (appliedOfficial > 0) {
           this.notify(`🟢 Distinte Ufficiali aggiornate (${nowTime}): ${appliedOfficial} carte con formazione ufficiale confermata (-1h) e ${appliedOdds} quote Sorare A–F aggiornate!`);
-        } else {
+        } else if (appliedOdds > 0) {
           this.notify(`✅ Quote Ufficiali Sorare sincronizzate (${nowTime}): ${appliedOdds} carte aggiornate con percentuale e fascia A–F reale!`);
+        } else {
+          const diagSuffix = diagnostic ? ` — Diagnostica API: ${diagnostic}` : '';
+          this.notify(`⚠️ Quote Ufficiali Sorare (${nowTime}): 0 carte aggiornate${diagSuffix}`, false);
         }
       }
     } catch (err) {
