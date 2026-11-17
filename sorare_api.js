@@ -1,7 +1,7 @@
-// SorareHub - Dual Profile Engine + Pre-Match Starting Odds (A-F) + Live Official Lineups (-1h) + Vault Filter + AnyPlayerInterface Fix
+// SorareHub - Dual Profile Engine + Pre-Match Starting Odds (A-F) + Live Official Lineups (-1h) + Vault Filter + ComposeBench IDs Fix
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v32',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v32', 'sorarehub_gallery_cache_v31', 'sorarehub_gallery_cache_v30', 'sorarehub_gallery_cache_v29', 'sorarehub_gallery_cache_v28'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v33',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v33', 'sorarehub_gallery_cache_v32', 'sorarehub_gallery_cache_v31', 'sorarehub_gallery_cache_v30', 'sorarehub_gallery_cache_v29'],
   CACHE_TTL_MS: 12 * 60 * 1000,
   lastBenchDiagnostic: null,
   cachedBenchSchemaInfo: null,
@@ -395,6 +395,17 @@ const SorareAPI = {
     return { name: '', kind: '', isNonNull, isList };
   },
 
+  formatGraphqlArgTypeString(typeObj) {
+    if (!typeObj) return '[String!]!';
+    if (typeObj.kind === 'NON_NULL') {
+      return `${this.formatGraphqlArgTypeString(typeObj.ofType)}!`;
+    }
+    if (typeObj.kind === 'LIST') {
+      return `[${this.formatGraphqlArgTypeString(typeObj.ofType)}]`;
+    }
+    return typeObj.name || 'String';
+  },
+
   async fetchTypeDefinition(workerGraphqlEndpoint, token, typeName) {
     if (!typeName) return null;
     const q = `
@@ -420,6 +431,10 @@ const SorareAPI = {
                   ofType {
                     kind
                     name
+                    ofType {
+                      kind
+                      name
+                    }
                   }
                 }
               }
@@ -433,6 +448,10 @@ const SorareAPI = {
                 ofType {
                   kind
                   name
+                  ofType {
+                    kind
+                    name
+                  }
                 }
               }
             }
@@ -466,27 +485,15 @@ const SorareAPI = {
       const benchField = lbDef.fields.find(f => f.name === 'myComposeTeamBenchObjects') || null;
       const benchReturn = benchField ? this.unwrapGraphqlType(benchField.type) : { name: '', kind: '' };
       const isConnection = benchReturn.name.toLowerCase().includes('connection');
+      const benchArgs = benchField?.args || [];
+      const idsArg = benchArgs.find(a => a.name === 'ids') || null;
+      const idsArgTypeStr = idsArg ? this.formatGraphqlArgTypeString(idsArg.type) : '[String!]!';
 
       const benchCardDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, 'ComposeTeamBenchCard');
       const benchCardFields = benchCardDef?.fields || [];
 
       const anyPlayerField = benchCardFields.find(f => f.name === 'anyPlayer' || f.name === 'player') || null;
-      const anyPlayerTypeInfo = anyPlayerField ? this.unwrapGraphqlType(anyPlayerField.type) : { name: 'AnyPlayerInterface', kind: 'INTERFACE' };
-      const anyPlayerDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, anyPlayerTypeInfo.name || 'AnyPlayerInterface');
-      const anyPlayerFields = anyPlayerDef?.fields || [];
-
-      const playerDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, 'Player');
-      const playerFields = playerDef?.fields || [];
-
-      const hasScoresOnBenchCard = benchCardFields.some(f => f.name === 'eligiblePlayerGameScores');
-      const hasScoresOnAnyPlayer = anyPlayerFields.some(f => f.name === 'eligiblePlayerGameScores');
-      const hasScoresOnConcretePlayer = playerFields.some(f => f.name === 'eligiblePlayerGameScores');
-
-      const scoresFieldDef =
-        benchCardFields.find(f => f.name === 'eligiblePlayerGameScores') ||
-        anyPlayerFields.find(f => f.name === 'eligiblePlayerGameScores') ||
-        playerFields.find(f => f.name === 'eligiblePlayerGameScores') ||
-        null;
+      const scoresFieldDef = benchCardFields.find(f => f.name === 'eligiblePlayerGameScores') || null;
 
       const scoresTypeInfo = scoresFieldDef ? this.unwrapGraphqlType(scoresFieldDef.type) : { name: '', kind: '' };
       const scoresDef = scoresTypeInfo.name ? await this.fetchTypeDefinition(workerGraphqlEndpoint, token, scoresTypeInfo.name) : null;
@@ -498,18 +505,18 @@ const SorareAPI = {
 
       let statsFields = statsDef?.fields || [];
       let statsRequiresInlineFragment = false;
-      let statsConcreteTypeName = 'FootballPlayerGameStats';
+      let statsConcreteTypeName = '';
 
       if (statsDef && (statsDef.kind === 'UNION' || statsDef.kind === 'INTERFACE')) {
         const hasOddsDirect = statsFields.some(f => f.name === 'footballPlayingStatusOdds');
-        if (!hasOddsDirect) {
-          const possible = (statsDef.possibleTypes || []).find(pt => pt.name.toLowerCase().includes('football')) || (statsDef.possibleTypes || [])[0];
-          if (possible && possible.name) {
-            statsConcreteTypeName = possible.name;
-            const concreteDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, statsConcreteTypeName);
+        if (!hasOddsDirect && Array.isArray(statsDef.possibleTypes)) {
+          for (const pt of statsDef.possibleTypes) {
+            const concreteDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, pt.name);
             if (concreteDef?.fields?.some(f => f.name === 'footballPlayingStatusOdds')) {
               statsRequiresInlineFragment = true;
+              statsConcreteTypeName = pt.name;
               statsFields = concreteDef.fields;
+              break;
             }
           }
         }
@@ -527,17 +534,13 @@ const SorareAPI = {
 
       this.cachedBenchSchemaInfo = {
         foundBenchField: Boolean(benchField),
-        benchReturnName: benchReturn.name,
-        benchReturnKind: benchReturn.kind,
         isConnection,
-        benchArgs: benchField?.args || [],
+        requiresIdsArg: Boolean(idsArg),
+        idsArgTypeStr,
         anyPlayerFieldName: anyPlayerField?.name || 'anyPlayer',
-        anyPlayerTypeName: anyPlayerTypeInfo.name,
-        anyPlayerTypeKind: anyPlayerDef?.kind || 'INTERFACE',
-        hasScoresOnBenchCard,
-        hasScoresOnAnyPlayer,
-        hasScoresOnConcretePlayer,
-        scoresArgs: scoresFieldDef?.args || [],
+        hasCardFieldOnBench: benchCardFields.some(f => f.name === 'card' || f.name === 'anyCard'),
+        cardFieldNameOnBench: benchCardFields.find(f => f.name === 'card' || f.name === 'anyCard')?.name || null,
+        hasScoresOnBenchCard: Boolean(scoresFieldDef),
         hasProjectedScore: scoresFields.some(f => f.name === 'projectedScore'),
         hasProjection: Boolean(projField),
         hasProjectionGrade: projFields.some(f => f.name === 'grade'),
@@ -546,9 +549,7 @@ const SorareAPI = {
         statsConcreteTypeName,
         hasFieldStatus: statsFields.some(f => f.name === 'fieldStatus'),
         hasPlayingOdds: Boolean(oddsField),
-        hasStarterOddsBp: oddsFields.some(f => f.name === 'starterOddsBasisPoints'),
-        benchCardFieldNames: benchCardFields.map(f => f.name),
-        playerFieldNames: playerFields.map(f => f.name)
+        hasStarterOddsBp: oddsFields.some(f => f.name === 'starterOddsBasisPoints')
       };
 
       return this.cachedBenchSchemaInfo;
@@ -558,124 +559,85 @@ const SorareAPI = {
     }
   },
 
-  buildDynamicBenchQueryFromSchema(sInfo, fixtureSlug = null) {
-    if (!sInfo || !sInfo.foundBenchField) return null;
+  buildDynamicBenchQueryWithIds(sInfo) {
+    const idsType = (sInfo && sInfo.idsArgTypeStr) ? sInfo.idsArgTypeStr : '[String!]!';
+    const anyPlayerField = (sInfo && sInfo.anyPlayerFieldName) ? sInfo.anyPlayerFieldName : 'anyPlayer';
+    const statsField = (sInfo && sInfo.statsFieldName) ? sInfo.statsFieldName : 'anyPlayerGameStats';
 
-    const scoreSubFields = [];
-    if (sInfo.hasProjectedScore) scoreSubFields.push('projectedScore');
-    if (sInfo.hasProjection && sInfo.hasProjectionGrade) {
-      scoreSubFields.push('projection { grade }');
-    }
-
-    const statsSubFields = [];
-    if (sInfo.hasFieldStatus) statsSubFields.push('fieldStatus');
-    if (sInfo.hasPlayingOdds && sInfo.hasStarterOddsBp) {
-      statsSubFields.push('footballPlayingStatusOdds { starterOddsBasisPoints }');
-    } else if (sInfo.hasPlayingOdds) {
-      statsSubFields.push('footballPlayingStatusOdds { __typename }');
-    }
-
-    if (statsSubFields.length > 0) {
-      if (sInfo.statsRequiresInlineFragment) {
-        scoreSubFields.push(`${sInfo.statsFieldName} { ... on ${sInfo.statsConcreteTypeName} { ${statsSubFields.join(' ')} } }`);
-      } else {
-        scoreSubFields.push(`${sInfo.statsFieldName} { ${statsSubFields.join(' ')} }`);
+    let statsSelection = `
+      ${statsField} {
+        fieldStatus
+        footballPlayingStatusOdds {
+          starterOddsBasisPoints
+        }
       }
-    }
+    `;
 
-    // Controlliamo se eligiblePlayerGameScores accetta o richiede argomenti (es. so5LeaderboardSlug o so5FixtureSlug)
-    let scoresArgCall = '';
-    const scoresArgs = Array.isArray(sInfo.scoresArgs) ? sInfo.scoresArgs : [];
-    const hasLbSlugArg = scoresArgs.find(a => a.name === 'so5LeaderboardSlug' || a.name === 'leaderboardSlug');
-    const hasFixSlugArg = scoresArgs.find(a => a.name === 'so5FixtureSlug' || a.name === 'fixtureSlug');
-
-    if (hasLbSlugArg) {
-      scoresArgCall = `(${hasLbSlugArg.name}: $slug)`;
-    } else if (hasFixSlugArg && fixtureSlug) {
-      scoresArgCall = `(${hasFixSlugArg.name}: "${fixtureSlug}")`;
-    }
-
-    const scoresBlock = scoreSubFields.length > 0
-      ? `eligiblePlayerGameScores${scoresArgCall} { ${scoreSubFields.join(' ')} }`
-      : '';
-
-    let innerCardSelection = '';
-    if (sInfo.hasScoresOnBenchCard) {
-      // Caso 1: eligiblePlayerGameScores è su ComposeTeamBenchCard
-      innerCardSelection = `
-        ... on ComposeTeamBenchCard {
-          ${sInfo.anyPlayerFieldName} {
-            slug
-            displayName
-          }
-          ${scoresBlock}
-        }
-      `;
-    } else if (sInfo.hasScoresOnAnyPlayer) {
-      // Caso 2: eligiblePlayerGameScores è direttamente su AnyPlayerInterface
-      innerCardSelection = `
-        ... on ComposeTeamBenchCard {
-          ${sInfo.anyPlayerFieldName} {
-            slug
-            displayName
-            ${scoresBlock}
-          }
-        }
-      `;
-    } else if (sInfo.hasScoresOnConcretePlayer) {
-      // Caso 3: anyPlayer è AnyPlayerInterface, ma eligiblePlayerGameScores è sul tipo concreto Player!
-      innerCardSelection = `
-        ... on ComposeTeamBenchCard {
-          ${sInfo.anyPlayerFieldName} {
-            slug
-            displayName
-            ... on Player {
-              ${scoresBlock}
+    if (sInfo && sInfo.statsRequiresInlineFragment && sInfo.statsConcreteTypeName) {
+      statsSelection = `
+        ${statsField} {
+          ... on ${sInfo.statsConcreteTypeName} {
+            fieldStatus
+            footballPlayingStatusOdds {
+              starterOddsBasisPoints
             }
           }
         }
       `;
-    } else {
-      // Se né ComposeTeamBenchCard né Player hanno eligiblePlayerGameScores, registriamo quali campi esistono davvero!
-      const sampleBenchFields = (sInfo.benchCardFieldNames || []).slice(0, 8).join(',');
-      this.lastBenchDiagnostic = `Campi ComposeTeamBenchCard: [${sampleBenchFields}]`;
-      return null;
     }
 
-    let benchCallStr = 'myComposeTeamBenchObjects';
-    if (sInfo.isConnection) {
-      const hasFirstArg = (sInfo.benchArgs || []).some(a => a.name === 'first');
-      benchCallStr = hasFirstArg ? 'myComposeTeamBenchObjects(first: 250)' : 'myComposeTeamBenchObjects';
-    }
+    const cardSubBlock = (sInfo && sInfo.cardFieldNameOnBench)
+      ? `${sInfo.cardFieldNameOnBench} { slug }`
+      : '';
 
-    const benchBody = sInfo.isConnection
-      ? `${benchCallStr} { nodes { ${innerCardSelection} } }`
-      : `${benchCallStr} { ${innerCardSelection} }`;
+    const innerCard = `
+      ... on ComposeTeamBenchCard {
+        ${cardSubBlock}
+        ${anyPlayerField} {
+          slug
+          displayName
+        }
+        eligiblePlayerGameScores {
+          projectedScore
+          projection {
+            grade
+          }
+          ${statsSelection}
+        }
+      }
+    `;
+
+    const body = (sInfo && sInfo.isConnection)
+      ? `myComposeTeamBenchObjects(ids: $ids) { nodes { ${innerCard} } }`
+      : `myComposeTeamBenchObjects(ids: $ids) { ${innerCard} }`;
 
     return `
-      query FootballComposeBenchQuery($slug: String!) {
+      query FootballComposeBenchQuery($slug: String!, $ids: ${idsType}) {
         so5 {
           so5Leaderboard(slug: $slug) {
             slug
-            ${benchBody}
+            ${body}
           }
         }
       }
     `;
   },
 
-  parseBenchObjectsIntoMap(benchItems, benchOddsMap) {
+  parseBenchObjectsIntoMap(benchItems, benchOddsMap, cardSlugToPlayerSlugMap = {}) {
     let added = 0;
     if (!Array.isArray(benchItems)) return 0;
 
     benchItems.forEach(item => {
       const pObj = item?.anyPlayer || item?.player || null;
-      const pSlug = pObj?.slug ? String(pObj.slug).trim() : null;
+      const cSlug = item?.card?.slug || item?.anyCard?.slug || null;
+      const pSlug = pObj?.slug
+        ? String(pObj.slug).trim()
+        : (cSlug && cardSlugToPlayerSlugMap[cSlug] ? cardSlugToPlayerSlugMap[cSlug] : null);
       if (!pSlug) return;
 
       const rawScoresList =
-        (Array.isArray(pObj?.eligiblePlayerGameScores) && pObj.eligiblePlayerGameScores) ||
         (Array.isArray(item?.eligiblePlayerGameScores) && item.eligiblePlayerGameScores) ||
+        (Array.isArray(pObj?.eligiblePlayerGameScores) && pObj.eligiblePlayerGameScores) ||
         [];
 
       const firstScoreObj = rawScoresList[0] || null;
@@ -687,9 +649,7 @@ const SorareAPI = {
         : null;
       const projScore = typeof firstScoreObj?.projectedScore === 'number'
         ? firstScoreObj.projectedScore
-        : (typeof pObj?.nextClassicFixtureProjectedScore === 'number'
-          ? pObj.nextClassicFixtureProjectedScore
-          : null);
+        : null;
 
       let pct = null;
       if (typeof bp === 'number' && !Number.isNaN(bp)) {
@@ -734,138 +694,104 @@ const SorareAPI = {
     return added;
   },
 
-  async fetchOfficialBenchOddsFromLeaderboards(leaderboardSlugs = [], fixtureSlug = null) {
+  async fetchOfficialBenchOddsFromLeaderboards(leaderboardSlugs = [], relevantCards = []) {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return {};
 
     const workerGraphqlEndpoint = this.getWorkerGraphqlEndpoint();
     const validSlugs = Array.from(new Set((leaderboardSlugs || []).filter(Boolean)));
-    if (validSlugs.length === 0) return {};
+    if (validSlugs.length === 0 || !Array.isArray(relevantCards) || relevantCards.length === 0) return {};
 
     const benchOddsMap = {};
     const diagNotes = [];
 
+    const cardSlugToPlayerSlugMap = {};
+    const rawCardSlugs = [];
+    const prefixedBenchCardIds = [];
+    const rawPlayerSlugs = [];
+
+    relevantCards.forEach(c => {
+      if (!c || !c.id) return;
+      cardSlugToPlayerSlugMap[c.id] = c.playerSlug;
+      rawCardSlugs.push(c.id);
+      prefixedBenchCardIds.push(`ComposeTeamBenchCard:${c.id}`);
+      if (c.playerSlug && !rawPlayerSlugs.includes(c.playerSlug)) {
+        rawPlayerSlugs.push(c.playerSlug);
+      }
+    });
+
     const schemaInfo = await this.inspectBenchSchemaIfNeeded(workerGraphqlEndpoint, token);
-    const dynamicQuery = this.buildDynamicBenchQueryFromSchema(schemaInfo, fixtureSlug);
+    const dynamicQuery = this.buildDynamicBenchQueryWithIds(schemaInfo);
 
-    // Fallback 1: eligiblePlayerGameScores dentro "... on Player" sotto anyPlayer (risolve l'errore AnyPlayerInterface)
-    const fallbackOnPlayerFragmentQuery = `
-      query FootballComposeBenchOnPlayer($slug: String!) {
-        so5 {
-          so5Leaderboard(slug: $slug) {
-            slug
-            myComposeTeamBenchObjects {
-              ... on ComposeTeamBenchCard {
-                anyPlayer {
-                  slug
-                  ... on Player {
-                    eligiblePlayerGameScores {
-                      projectedScore
-                      projection {
-                        grade
-                      }
-                      anyPlayerGameStats {
-                        ... on FootballPlayerGameStats {
-                          fieldStatus
-                          footballPlayingStatusOdds {
-                            starterOddsBasisPoints
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    // Fallback 2: eligiblePlayerGameScores direttamente su ComposeTeamBenchCard
-    const fallbackOnBenchCardQuery = `
-      query FootballComposeBenchOnCard($slug: String!) {
-        so5 {
-          so5Leaderboard(slug: $slug) {
-            slug
-            myComposeTeamBenchObjects {
-              ... on ComposeTeamBenchCard {
-                anyPlayer {
-                  slug
-                }
-                eligiblePlayerGameScores {
-                  projectedScore
-                  projection {
-                    grade
-                  }
-                  anyPlayerGameStats {
-                    ... on FootballPlayerGameStats {
-                      fieldStatus
-                      footballPlayingStatusOdds {
-                        starterOddsBasisPoints
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    const queryVariants = Array.from(new Set([
-      dynamicQuery,
-      fallbackOnPlayerFragmentQuery,
-      fallbackOnBenchCardQuery
-    ].filter(Boolean)));
+    // Proviamo i formati di ID usati da Sorare per ComposeTeamBenchObjects:
+    // 1. Slug diretti delle carte (es. "vitinha-2024-limited-123")
+    // 2. ID prefissati ("ComposeTeamBenchCard:vitinha-2024-limited-123")
+    // 3. Slug dei giocatori ("vitinha")
+    const idCandidatesLists = [
+      { label: 'cardSlugs', list: rawCardSlugs },
+      { label: 'prefixedCardIds', list: prefixedBenchCardIds },
+      { label: 'playerSlugs', list: rawPlayerSlugs }
+    ];
 
     for (const lbSlug of validSlugs) {
-      for (let vIdx = 0; vIdx < queryVariants.length; vIdx++) {
-        try {
-          const res = await fetch(workerGraphqlEndpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              query: queryVariants[vIdx],
-              variables: { slug: lbSlug }
-            })
-          });
+      for (const idFormat of idCandidatesLists) {
+        const allIds = idFormat.list;
+        if (allIds.length === 0) continue;
 
-          let json = null;
+        let formatAddedCount = 0;
+        const chunkSize = 50;
+
+        for (let i = 0; i < allIds.length; i += chunkSize) {
+          const idChunk = allIds.slice(i, i + chunkSize);
           try {
-            json = await res.json();
-          } catch (_) {}
+            const res = await fetch(workerGraphqlEndpoint, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                operationName: 'FootballComposeBenchQuery',
+                query: dynamicQuery,
+                variables: { slug: lbSlug, ids: idChunk }
+              })
+            });
 
-          if (Array.isArray(json?.errors) && json.errors.length > 0) {
-            const firstErrMsg = json.errors.map(e => e.message).join(' ; ');
-            diagNotes.push(`GQL(${res.status}) v${vIdx + 1}: ${firstErrMsg}`);
-          } else if (!res || !res.ok) {
-            diagNotes.push(`HTTP ${res ? res.status : 'ERR'} su ${lbSlug}`);
-            continue;
-          }
+            let json = null;
+            try {
+              json = await res.json();
+            } catch (_) {}
 
-          const rawContainer = json?.data?.so5?.so5Leaderboard?.myComposeTeamBenchObjects;
-          const benchItems = Array.isArray(rawContainer)
-            ? rawContainer
-            : (Array.isArray(rawContainer?.nodes) ? rawContainer.nodes : null);
-
-          if (Array.isArray(benchItems) && benchItems.length > 0) {
-            const count = this.parseBenchObjectsIntoMap(benchItems, benchOddsMap);
-            if (count > 0) {
-              this.lastBenchDiagnostic = `OK (${count} giocatori da ${lbSlug})`;
+            if (Array.isArray(json?.errors) && json.errors.length > 0) {
+              const firstErrMsg = json.errors.map(e => e.message).join(' ; ');
+              diagNotes.push(`GQL(${res.status}) [${idFormat.label}]: ${firstErrMsg}`);
               break;
-            } else {
-              diagNotes.push(`Bench (${benchItems.length} carte) ma 0 quote in ${lbSlug}`);
+            } else if (!res || !res.ok) {
+              diagNotes.push(`HTTP ${res ? res.status : 'ERR'} [${idFormat.label}]`);
+              break;
             }
-          } else if (rawContainer !== undefined) {
-            diagNotes.push(`Bench vuoto (0 carte) su ${lbSlug}`);
+
+            const rawContainer = json?.data?.so5?.so5Leaderboard?.myComposeTeamBenchObjects;
+            const benchItems = Array.isArray(rawContainer)
+              ? rawContainer
+              : (Array.isArray(rawContainer?.nodes) ? rawContainer.nodes : null);
+
+            if (Array.isArray(benchItems) && benchItems.length > 0) {
+              const added = this.parseBenchObjectsIntoMap(benchItems, benchOddsMap, cardSlugToPlayerSlugMap);
+              formatAddedCount += added;
+            } else if (i === 0) {
+              diagNotes.push(`0 nodi con formato ${idFormat.label}`);
+              break;
+            }
+          } catch (err) {
+            diagNotes.push(`Err [${idFormat.label}]: ${err.message}`);
+            break;
           }
-        } catch (err) {
-          diagNotes.push(`Err v${vIdx + 1}: ${err.message}`);
+        }
+
+        if (formatAddedCount > 0) {
+          this.lastBenchDiagnostic = `OK (${formatAddedCount} quote da ${lbSlug} con ${idFormat.label})`;
+          break;
         }
       }
 
@@ -875,8 +801,7 @@ const SorareAPI = {
     }
 
     if (Object.keys(benchOddsMap).length === 0 && diagNotes.length > 0) {
-      const schemaNote = this.lastBenchDiagnostic ? ` [${this.lastBenchDiagnostic}]` : '';
-      this.lastBenchDiagnostic = diagNotes.slice(0, 2).join(' | ') + schemaNote;
+      this.lastBenchDiagnostic = diagNotes.slice(0, 3).join(' | ');
     }
 
     return benchOddsMap;
@@ -892,16 +817,30 @@ const SorareAPI = {
     const nowMs = Date.now();
     const gwStartMs = selectedGw?.startDate ? new Date(selectedGw.startDate).getTime() : (nowMs - 24 * 3600 * 1000);
     const gwEndMs = selectedGw?.endDate ? new Date(selectedGw.endDate).getTime() : (nowMs + 96 * 3600 * 1000);
+    const activeRarity = (window.App && App.currentScarcity) ? App.currentScarcity : 'limited';
 
     const relevantSlugsSet = new Set();
+    const relevantCards = [];
+
     cardsList.forEach(c => {
       if (!c || !c.playerSlug || c.isSealedInVault) return;
       const games = Array.isArray(c.scheduleGames) ? c.scheduleGames : [];
       const hasGameInGw = games.some(g => g.timestamp >= gwStartMs && g.timestamp <= gwEndMs);
       if (hasGameInGw) {
         relevantSlugsSet.add(c.playerSlug);
+        if (!c.scarcity || c.scarcity === activeRarity) {
+          relevantCards.push(c);
+        }
       }
     });
+
+    if (relevantCards.length === 0) {
+      cardsList.forEach(c => {
+        if (c && c.playerSlug && !c.isSealedInVault && relevantSlugsSet.has(c.playerSlug)) {
+          relevantCards.push(c);
+        }
+      });
+    }
 
     const mapBySlug = {};
     let updatedCount = 0;
@@ -909,16 +848,15 @@ const SorareAPI = {
 
     const fixtureSlug = selectedGw?.sorareSlug || null;
 
-    // 1. Sorgente primaria ufficiale Sorare: FootballComposeBenchQuery
+    // 1. Sorgente primaria ufficiale Sorare: FootballComposeBenchQuery con argomento obbligatorio ids
     try {
       const candidateLbSlugs = Array.isArray(leaderboardSlugs) && leaderboardSlugs.length > 0
         ? [...leaderboardSlugs]
         : [];
 
-      const activeRarity = (window.App && App.currentScarcity) ? App.currentScarcity : 'limited';
       candidateLbSlugs.push(this.buildDefaultAllStarLeaderboardSlug(fixtureSlug, activeRarity));
 
-      const officialBenchMap = await this.fetchOfficialBenchOddsFromLeaderboards(candidateLbSlugs, fixtureSlug);
+      const officialBenchMap = await this.fetchOfficialBenchOddsFromLeaderboards(candidateLbSlugs, relevantCards);
       Object.keys(officialBenchMap).forEach(pSlug => {
         const entry = officialBenchMap[pSlug];
         mapBySlug[pSlug] = entry;
@@ -936,67 +874,11 @@ const SorareAPI = {
       return { updatedCount, officialCount, mapBySlug, diagnostic: this.lastBenchDiagnostic };
     }
 
-    // 2. Fallback / Integrazione diretta sui nodi Player
-    const schemaInfo = this.cachedBenchSchemaInfo;
+    // 2. Query sicura per infortuni e stato live (-1h / in corso)
     const chunkSize = 35;
-
     for (let i = 0; i < allSlugs.length; i += chunkSize) {
       const chunk = allSlugs.slice(i, i + chunkSize);
 
-      if (Object.keys(mapBySlug).length === 0 && schemaInfo && schemaInfo.hasScoresOnConcretePlayer) {
-        const statsFragment = schemaInfo.statsRequiresInlineFragment
-          ? `${schemaInfo.statsFieldName} { ... on ${schemaInfo.statsConcreteTypeName} { fieldStatus footballPlayingStatusOdds { starterOddsBasisPoints } } }`
-          : `${schemaInfo.statsFieldName} { fieldStatus footballPlayingStatusOdds { starterOddsBasisPoints } }`;
-
-        const scoresArgs = Array.isArray(schemaInfo.scoresArgs) ? schemaInfo.scoresArgs : [];
-        const hasFixSlugArg = scoresArgs.find(a => a.name === 'so5FixtureSlug' || a.name === 'fixtureSlug');
-        const scoreCallStr = (hasFixSlugArg && fixtureSlug)
-          ? `eligiblePlayerGameScores(${hasFixSlugArg.name}: "${fixtureSlug}")`
-          : `eligiblePlayerGameScores`;
-
-        const playerEligibleQuery = `
-          query GetPlayerEligibleOddsSafe($slugs: [String!]!) {
-            football {
-              players(slugs: $slugs) {
-                slug
-                ${scoreCallStr} {
-                  projectedScore
-                  projection {
-                    grade
-                  }
-                  ${statsFragment}
-                }
-              }
-            }
-          }
-        `;
-
-        try {
-          const elRes = await fetch(workerGraphqlEndpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-              query: playerEligibleQuery,
-              variables: { slugs: chunk }
-            })
-          });
-          const elJson = await elRes.json();
-          const pNodes = elJson?.data?.football?.players || [];
-          if (pNodes.length > 0) {
-            const fakeBenchItems = pNodes.map(p => ({ anyPlayer: p }));
-            const addedFromPlayer = this.parseBenchObjectsIntoMap(fakeBenchItems, mapBySlug);
-            if (addedFromPlayer > 0) {
-              updatedCount += addedFromPlayer;
-              this.lastBenchDiagnostic = `OK da Player.${scoreCallStr} (${addedFromPlayer})`;
-            }
-          }
-        } catch (_) {}
-      }
-
-      // 2B. Query sicura al 100% per infortuni e stato live (-1h / in corso)
       const safeLiveQuery = `
         query GetLivePlayerStatusSafe($slugs: [String!]!) {
           football {
