@@ -1,7 +1,7 @@
-// SorareHub - Dual Profile Engine + Official Sorare anyFutureGames(playerSlug) & PlayerGameStats (v39 Definitive)
+// SorareHub - Dual Profile Engine + Official Sorare anyFutureGames(playerSlug) & PlayerGameStats (v40 Definitive)
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v39',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v39', 'sorarehub_gallery_cache_v38', 'sorarehub_gallery_cache_v37', 'sorarehub_gallery_cache_v36', 'sorarehub_gallery_cache_v35'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v40',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v40', 'sorarehub_gallery_cache_v39', 'sorarehub_gallery_cache_v38', 'sorarehub_gallery_cache_v37', 'sorarehub_gallery_cache_v36'],
   CACHE_TTL_MS: 12 * 60 * 1000,
   lastBenchDiagnostic: null,
   cachedBenchSchemaInfo: null,
@@ -719,51 +719,53 @@ const SorareAPI = {
     return benchOddsMap;
   },
 
-  // Costruisce una query batch aliased per leggere anyFutureGames -> playerGameScore(playerSlug: $s_i) per 15 giocatori alla volta
-  buildAliasedFutureGamesBatchQuery(slugsBatch) {
-    const varDefs = slugsBatch.map((_, idx) => `$s_${idx}: String!`).join(', ');
-    const fieldsBody = slugsBatch.map((_, idx) => `
-      p_${idx}: anyPlayer(slug: $s_${idx}) {
-        ... on Player {
-          slug
-          displayName
-          activeInjuries {
-            status
-          }
-          activeSuspensions {
-            reason
-          }
-          anyFutureGames(first: 4) {
-            nodes {
-              id
-              date
-              statusTyped
-              playerGameScore(playerSlug: $s_${idx}) {
-                ... on PlayerGameScore {
-                  projectedScore
-                  score
-                  scoreStatus
-                  projection {
-                    grade
-                    reliabilityBasisPoints
-                  }
-                  anyPlayerGameStats {
-                    ... on PlayerGameStats {
-                      fieldStatus
-                      gameStarted
-                      minsPlayed
-                      anyGame {
-                        id
-                        date
-                        statusTyped
-                        so5Fixture {
-                          gameWeek
-                          slug
+  // Interroga un singolo giocatore tramite anyPlayer(slug: $slug) -> anyFutureGames -> playerGameScore(playerSlug: $slug)
+  // Evita l'errore "Duplicated root field: anyPlayer"
+  async fetchSinglePlayerFutureOdds(workerGraphqlEndpoint, token, playerSlug) {
+    const singleQuery = `
+      query GetSinglePlayerFutureOdds($slug: String!) {
+        anyPlayer(slug: $slug) {
+          ... on Player {
+            slug
+            displayName
+            activeInjuries {
+              status
+            }
+            activeSuspensions {
+              reason
+            }
+            anyFutureGames(first: 4) {
+              nodes {
+                id
+                date
+                statusTyped
+                playerGameScore(playerSlug: $slug) {
+                  ... on PlayerGameScore {
+                    projectedScore
+                    score
+                    scoreStatus
+                    projection {
+                      grade
+                      reliabilityBasisPoints
+                    }
+                    anyPlayerGameStats {
+                      ... on PlayerGameStats {
+                        fieldStatus
+                        gameStarted
+                        minsPlayed
+                        anyGame {
+                          id
+                          date
+                          statusTyped
+                          so5Fixture {
+                            gameWeek
+                            slug
+                          }
                         }
-                      }
-                      footballPlayingStatusOdds {
-                        starterOddsBasisPoints
-                        reliability
+                        footballPlayingStatusOdds {
+                          starterOddsBasisPoints
+                          reliability
+                        }
                       }
                     }
                   }
@@ -773,13 +775,30 @@ const SorareAPI = {
           }
         }
       }
-    `).join('\n');
-
-    return `
-      query GetAliasedPlayersFutureOdds(${varDefs}) {
-        ${fieldsBody}
-      }
     `;
+
+    try {
+      const res = await fetch(workerGraphqlEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          operationName: 'GetSinglePlayerFutureOdds',
+          query: singleQuery,
+          variables: { slug: playerSlug }
+        })
+      });
+
+      const json = await res.json();
+      if (Array.isArray(json?.errors) && json.errors.length > 0) {
+        return { error: json.errors[0].message, node: null };
+      }
+      return { error: null, node: json?.data?.anyPlayer || null };
+    } catch (err) {
+      return { error: err.message, node: null };
+    }
   },
 
   async fetchLiveLineupsAndOddsForPlayers(cardsList, selectedGw = null, leaderboardSlugs = []) {
@@ -833,78 +852,61 @@ const SorareAPI = {
       return gTs >= (gwStartMs - 6 * 3600 * 1000) && gTs <= (gwEndMs + 6 * 3600 * 1000);
     };
 
-    // 1. SORGENTE PRIMARIA DEFINITIVA: anyPlayer(slug: $s_i) -> anyFutureGames -> playerGameScore(playerSlug: $s_i)
-    const futureBatchSize = 15;
-    for (let i = 0; i < allSlugs.length; i += futureBatchSize) {
-      const batch = allSlugs.slice(i, i + futureBatchSize);
-      const aliasedQuery = this.buildAliasedFutureGamesBatchQuery(batch);
-      const vars = {};
-      batch.forEach((slugVal, idx) => {
-        vars[`s_${idx}`] = slugVal;
-      });
+    // 1. SORGENTE PRIMARIA DEFINITIVA: chiamate parallele pulite (6 alla volta) su anyPlayer(slug: $slug) -> anyFutureGames
+    const concurrency = 6;
+    for (let i = 0; i < allSlugs.length; i += concurrency) {
+      const slice = allSlugs.slice(i, i + concurrency);
+      const results = await Promise.all(
+        slice.map(slugVal => this.fetchSinglePlayerFutureOdds(workerGraphqlEndpoint, token, slugVal))
+      );
 
-      try {
-        const res = await fetch(workerGraphqlEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            operationName: 'GetAliasedPlayersFutureOdds',
-            query: aliasedQuery,
-            variables: vars
-          })
-        });
+      results.forEach((resItem, idx) => {
+        const origSlug = slice[idx];
+        if (resItem.error && diagNotes.length < 2) {
+          diagNotes.push(`GQL: ${resItem.error}`);
+        }
+        const pNode = resItem.node;
+        if (!pNode) return;
+        const pSlug = (pNode.slug || origSlug).trim();
 
-        const json = await res.json();
-        if (Array.isArray(json?.errors) && json.errors.length > 0) {
-          diagNotes.push(`GQL future: ${json.errors[0].message}`);
+        const isNowInjured =
+          (Array.isArray(pNode.activeInjuries) && pNode.activeInjuries.length > 0) ||
+          (Array.isArray(pNode.activeSuspensions) && pNode.activeSuspensions.length > 0);
+
+        if (isNowInjured) {
+          mapBySlug[pSlug] = {
+            pct: 0,
+            grade: 'F',
+            officialStatus: 'out',
+            source: 'sorare_official_injury',
+            updatedAt: nowMs
+          };
+          updatedCount++;
+          officialCount++;
+          return;
         }
 
-        const dataObj = json?.data || {};
-        batch.forEach((origSlug, idx) => {
-          const pNode = dataObj[`p_${idx}`];
-          if (!pNode) return;
-          const pSlug = (pNode.slug || origSlug).trim();
+        const futureNodes = Array.isArray(pNode.anyFutureGames?.nodes) ? pNode.anyFutureGames.nodes : [];
+        for (const fGame of futureNodes) {
+          const scoreObj = fGame?.playerGameScore;
+          if (!scoreObj) continue;
+          const fixtureObj = scoreObj?.anyPlayerGameStats?.anyGame?.so5Fixture || null;
+          const gameDate = fGame.date || scoreObj?.anyPlayerGameStats?.anyGame?.date || null;
 
-          const isNowInjured =
-            (Array.isArray(pNode.activeInjuries) && pNode.activeInjuries.length > 0) ||
-            (Array.isArray(pNode.activeSuspensions) && pNode.activeSuspensions.length > 0);
-
-          if (isNowInjured) {
-            mapBySlug[pSlug] = {
-              pct: 0,
-              grade: 'F',
-              officialStatus: 'out',
-              source: 'sorare_official_injury',
-              updatedAt: nowMs
-            };
-            updatedCount++;
-            officialCount++;
-            return;
-          }
-
-          const futureNodes = Array.isArray(pNode.anyFutureGames?.nodes) ? pNode.anyFutureGames.nodes : [];
-          for (const fGame of futureNodes) {
-            const scoreObj = fGame?.playerGameScore;
-            if (!scoreObj) continue;
-            const fixtureObj = scoreObj?.anyPlayerGameStats?.anyGame?.so5Fixture || null;
-            const gameDate = fGame.date || scoreObj?.anyPlayerGameStats?.anyGame?.date || null;
-
-            if (isGameMatchingSelectedGw(gameDate, fixtureObj)) {
-              const extracted = this.extractOddsAndStatusFromScoreNode(scoreObj);
-              if (extracted && (extracted.pct !== null || extracted.grade !== null || extracted.officialStatus !== null)) {
-                mapBySlug[pSlug] = extracted;
-                updatedCount++;
-                if (extracted.officialStatus) officialCount++;
-                break;
-              }
+          if (isGameMatchingSelectedGw(gameDate, fixtureObj)) {
+            const extracted = this.extractOddsAndStatusFromScoreNode(scoreObj);
+            if (extracted && (extracted.pct !== null || extracted.grade !== null || extracted.officialStatus !== null)) {
+              mapBySlug[pSlug] = extracted;
+              updatedCount++;
+              if (extracted.officialStatus) officialCount++;
+              break;
             }
           }
-        });
-      } catch (err) {
-        diagNotes.push(`Net future: ${err.message}`);
+        }
+      });
+
+      if (i + concurrency < allSlugs.length) {
+        await new Promise(resolve => setTimeout(resolve, 150));
       }
     }
 
@@ -1103,7 +1105,7 @@ const SorareAPI = {
 
     const workerGraphqlEndpoint = this.getWorkerGraphqlEndpoint();
 
-    // Query galleria pulita e veloce (senza campi che richiedono parametri per-giocatore)
+    // Query galleria pulita e veloce
     const pagedQuery = `
       query GetCurrentUserCards($after: String) {
         currentUser {
