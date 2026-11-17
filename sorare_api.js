@@ -1,7 +1,7 @@
 // SorareHub - Dual Profile Engine + Pre-Match Starting Odds (A-F) + Live Official Lineups (-1h) + Vault Filter
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v28',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v28', 'sorarehub_gallery_cache_v27', 'sorarehub_gallery_cache_v26', 'sorarehub_gallery_cache_v25'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v29',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v29', 'sorarehub_gallery_cache_v28', 'sorarehub_gallery_cache_v27', 'sorarehub_gallery_cache_v26', 'sorarehub_gallery_cache_v25'],
   CACHE_TTL_MS: 12 * 60 * 1000,
 
   // Lungodegenti noti / infortuni chirurgici non sempre segnalati in tempo reale dal feed Opta di Sorare
@@ -373,7 +373,140 @@ const SorareAPI = {
     };
   },
 
-  async fetchLiveLineupsAndOddsForPlayers(cardsList, selectedGw = null) {
+  buildDefaultAllStarLeaderboardSlug(fixtureSlug, scarcity = 'limited') {
+    const fSlug = String(fixtureSlug || 'football-17-20-nov-2026').trim();
+    const r = String(scarcity || 'limited').toLowerCase().trim();
+    return `${fSlug}-seasonal-all_star-all_seasons_all_star_${r}`;
+  },
+
+  async fetchOfficialBenchOddsFromLeaderboards(leaderboardSlugs = []) {
+    const token = localStorage.getItem('sorare_access_token');
+    if (!token) return {};
+
+    const workerGraphqlEndpoint = this.getWorkerGraphqlEndpoint();
+    const validSlugs = Array.from(new Set((leaderboardSlugs || []).filter(Boolean)));
+    if (validSlugs.length === 0) return {};
+
+    const benchOddsMap = {};
+
+    const queryBenchWithArgs = `
+      query FootballComposeBenchQuery($slug: String!) {
+        so5 {
+          so5Leaderboard(slug: $slug) {
+            slug
+            myComposeTeamBenchObjects {
+              ... on ComposeTeamBenchCard {
+                anyPlayer {
+                  slug
+                  displayName
+                  nextClassicFixtureProjectedScore
+                }
+                eligiblePlayerGameScores {
+                  projectedScore
+                  projection {
+                    grade
+                    reliabilityBasisPoints
+                  }
+                  anyPlayerGameStats {
+                    fieldStatus
+                    footballPlayingStatusOdds {
+                      starterOddsBasisPoints
+                      reliability
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    for (const lbSlug of validSlugs) {
+      try {
+        const res = await fetch(workerGraphqlEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            operationName: 'FootballComposeBenchQuery',
+            query: queryBenchWithArgs,
+            variables: { slug: lbSlug }
+          })
+        });
+
+        if (!res || !res.ok) continue;
+        const json = await res.json();
+        const benchItems = json?.data?.so5?.so5Leaderboard?.myComposeTeamBenchObjects;
+        if (!Array.isArray(benchItems) || benchItems.length === 0) continue;
+
+        benchItems.forEach(item => {
+          const pSlug = item?.anyPlayer?.slug ? String(item.anyPlayer.slug).trim() : null;
+          if (!pSlug) return;
+
+          const scores = Array.isArray(item.eligiblePlayerGameScores) ? item.eligiblePlayerGameScores : [];
+          const firstScoreObj = scores[0] || null;
+
+          const bp = firstScoreObj?.anyPlayerGameStats?.footballPlayingStatusOdds?.starterOddsBasisPoints;
+          const fieldStatus = String(firstScoreObj?.anyPlayerGameStats?.fieldStatus || '').toUpperCase().trim();
+          const rawGrade = firstScoreObj?.projection?.grade
+            ? String(firstScoreObj.projection.grade).toUpperCase().trim()
+            : null;
+          const projScore = typeof firstScoreObj?.projectedScore === 'number'
+            ? firstScoreObj.projectedScore
+            : (typeof item?.anyPlayer?.nextClassicFixtureProjectedScore === 'number'
+              ? item.anyPlayer.nextClassicFixtureProjectedScore
+              : null);
+
+          let pct = null;
+          if (typeof bp === 'number' && !Number.isNaN(bp)) {
+            pct = Math.max(0, Math.min(100, Math.round(bp / 100)));
+          }
+
+          let grade = /^[A-F]$/.test(rawGrade || '') ? rawGrade : null;
+          if (pct !== null && !grade) {
+            grade = this.percentageToSorareGrade(pct);
+          } else if (grade && pct === null) {
+            pct = this.sorareGradeToPercentage(grade);
+          }
+
+          let officialStatus = null;
+          if (fieldStatus === 'STARTER' || fieldStatus === 'STARTING') {
+            officialStatus = 'starter';
+            pct = 100;
+            grade = 'A';
+          } else if (fieldStatus === 'SUBSTITUTE' || fieldStatus === 'BENCH') {
+            officialStatus = 'bench';
+            pct = 0;
+            grade = 'F';
+          } else if (fieldStatus === 'NOT_IN_SQUAD' || fieldStatus === 'OUT' || fieldStatus === 'INJURED' || fieldStatus === 'SUSPENDED') {
+            officialStatus = 'out';
+            pct = 0;
+            grade = 'F';
+          }
+
+          if (pct !== null || grade !== null || officialStatus !== null) {
+            benchOddsMap[pSlug] = {
+              pct,
+              grade,
+              officialStatus,
+              officialProjectedScore: projScore,
+              source: 'sorare_official_bench',
+              updatedAt: Date.now()
+            };
+          }
+        });
+      } catch (err) {
+        console.warn('Warning fetchOfficialBenchOddsFromLeaderboards:', lbSlug, err);
+      }
+    }
+
+    return benchOddsMap;
+  },
+
+  async fetchLiveLineupsAndOddsForPlayers(cardsList, selectedGw = null, leaderboardSlugs = []) {
     const token = localStorage.getItem('sorare_access_token');
     if (!token || !Array.isArray(cardsList) || cardsList.length === 0) {
       return { updatedCount: 0, officialCount: 0, mapBySlug: {} };
@@ -394,21 +527,43 @@ const SorareAPI = {
       }
     });
 
-    const allSlugs = Array.from(relevantSlugsSet);
-    if (allSlugs.length === 0) {
-      return { updatedCount: 0, officialCount: 0, mapBySlug: {} };
-    }
-
     const mapBySlug = {};
     let updatedCount = 0;
     let officialCount = 0;
 
-    // 1. Tentativo primario: interroga starterOddsBasisPoints / stato live direttamente sui nodi Player di Sorare
+    // 1. Sorgente primaria ufficiale Sorare: FootballComposeBenchQuery (starterOddsBasisPoints + projection.grade)
+    try {
+      const candidateLbSlugs = Array.isArray(leaderboardSlugs) && leaderboardSlugs.length > 0
+        ? [...leaderboardSlugs]
+        : [];
+
+      const fixtureSlug = selectedGw?.sorareSlug || null;
+      const activeRarity = (window.App && App.currentScarcity) ? App.currentScarcity : 'limited';
+      candidateLbSlugs.push(this.buildDefaultAllStarLeaderboardSlug(fixtureSlug, activeRarity));
+
+      const officialBenchMap = await this.fetchOfficialBenchOddsFromLeaderboards(candidateLbSlugs);
+      Object.keys(officialBenchMap).forEach(pSlug => {
+        const entry = officialBenchMap[pSlug];
+        mapBySlug[pSlug] = entry;
+        updatedCount++;
+        if (entry.officialStatus === 'starter' || entry.officialStatus === 'bench' || entry.officialStatus === 'out') {
+          officialCount++;
+        }
+      });
+    } catch (benchErr) {
+      console.warn('Warning Step 1 official bench odds:', benchErr);
+    }
+
+    const allSlugs = Array.from(relevantSlugsSet);
+    if (allSlugs.length === 0) {
+      return { updatedCount, officialCount, mapBySlug };
+    }
+
+    // 2. Controllo stato live (-1h / in corso) e infortuni dell'ultim'ora sui nodi Player di Sorare
     const chunkSize = 35;
     for (let i = 0; i < allSlugs.length; i += chunkSize) {
       const chunk = allSlugs.slice(i, i + chunkSize);
 
-      // Query 1A: Prova a leggere le probabilità di titolarità / stato partita corrente da Sorare GraphQL
       const queryWithOdds = `
         query GetLivePlayerStatus($slugs: [String!]!) {
           football {
@@ -424,6 +579,13 @@ const SorareAPI = {
                 score
                 playerGameStats {
                   minsPlayed
+                  fieldStatus
+                  footballPlayingStatusOdds {
+                    starterOddsBasisPoints
+                  }
+                }
+                projection {
+                  grade
                 }
                 game {
                   id
@@ -479,9 +641,41 @@ const SorareAPI = {
               const gDateMs = latestGwScore.game?.date ? new Date(latestGwScore.game.date).getTime() : 0;
               const gStatus = String(latestGwScore.game?.statusTyped || '').toLowerCase();
               const mins = latestGwScore.playerGameStats?.minsPlayed;
+              const fieldSt = String(latestGwScore.playerGameStats?.fieldStatus || '').toUpperCase().trim();
+              const bp = latestGwScore.playerGameStats?.footballPlayingStatusOdds?.starterOddsBasisPoints;
+              const projGrade = latestGwScore.projection?.grade
+                ? String(latestGwScore.projection.grade).toUpperCase().trim()
+                : null;
               const sc = latestGwScore.score;
 
-              // Se il nodo so5Score esiste già nella finestra -75 min prima del calcio d'inizio o durante il match:
+              if (fieldSt === 'STARTER' || fieldSt === 'STARTING') {
+                mapBySlug[pSlug] = {
+                  pct: 100,
+                  grade: 'A',
+                  officialStatus: 'starter',
+                  liveScore: sc,
+                  liveMins: mins,
+                  updatedAt: nowMs
+                };
+                officialCount++;
+                updatedCount++;
+                return;
+              }
+
+              if (fieldSt === 'SUBSTITUTE' || fieldSt === 'BENCH' || fieldSt === 'NOT_IN_SQUAD') {
+                mapBySlug[pSlug] = {
+                  pct: 0,
+                  grade: 'F',
+                  officialStatus: 'bench',
+                  liveScore: sc || 0,
+                  liveMins: mins || 0,
+                  updatedAt: nowMs
+                };
+                officialCount++;
+                updatedCount++;
+                return;
+              }
+
               const timeToKickoffMin = (gDateMs - nowMs) / (60 * 1000);
               if (timeToKickoffMin <= 75) {
                 if ((typeof mins === 'number' && mins > 0) || (typeof sc === 'number' && sc > 0)) {
@@ -495,6 +689,7 @@ const SorareAPI = {
                   };
                   officialCount++;
                   updatedCount++;
+                  return;
                 } else if (gStatus === 'playing' || gStatus === 'played' || timeToKickoffMin <= 0) {
                   mapBySlug[pSlug] = {
                     pct: 0,
@@ -506,7 +701,20 @@ const SorareAPI = {
                   };
                   officialCount++;
                   updatedCount++;
+                  return;
                 }
+              }
+
+              if (typeof bp === 'number' && !mapBySlug[pSlug]?.officialStatus) {
+                const pct = Math.max(0, Math.min(100, Math.round(bp / 100)));
+                const grade = /^[A-F]$/.test(projGrade || '') ? projGrade : this.percentageToSorareGrade(pct);
+                mapBySlug[pSlug] = {
+                  pct,
+                  grade,
+                  officialStatus: null,
+                  updatedAt: nowMs
+                };
+                updatedCount++;
               }
             }
           });
@@ -514,62 +722,6 @@ const SorareAPI = {
       } catch (err) {
         console.warn('Warning sync live chunk:', err);
       }
-    }
-
-    // 2. Tentativo opzionale introspect su starterOddsBasisPoints delle card (se supportato dallo schema corrente)
-    try {
-      const sampleCardSlugs = cardsList
-        .filter(c => c && c.id && relevantSlugsSet.has(c.playerSlug))
-        .slice(0, 45)
-        .map(c => c.id);
-
-      if (sampleCardSlugs.length > 0) {
-        const cardOddsQuery = `
-          query GetCardsStarterOdds($slugs: [String!]!) {
-            cards(slugs: $slugs) {
-              slug
-              ... on Card {
-                player {
-                  slug
-                }
-                starterOddsBasisPoints
-              }
-            }
-          }
-        `;
-        const oddsRes = await fetch(workerGraphqlEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            query: cardOddsQuery,
-            variables: { slugs: sampleCardSlugs }
-          })
-        });
-
-        if (oddsRes && oddsRes.ok) {
-          const oddsJson = await oddsRes.json();
-          const cardNodes = oddsJson?.data?.cards || [];
-          cardNodes.forEach(cn => {
-            const pSlug = cn?.player?.slug;
-            const bp = cn?.starterOddsBasisPoints;
-            if (pSlug && typeof bp === 'number' && !mapBySlug[pSlug]?.officialStatus) {
-              const pct = Math.max(0, Math.min(100, Math.round(bp / 100)));
-              mapBySlug[pSlug] = {
-                pct,
-                grade: this.percentageToSorareGrade(pct),
-                officialStatus: null,
-                updatedAt: nowMs
-              };
-              updatedCount++;
-            }
-          });
-        }
-      }
-    } catch (_) {
-      // Silenzioso se il campo starterOddsBasisPoints richiede parametri fixture specifici
     }
 
     return {
@@ -1334,7 +1486,6 @@ const SorareAPI = {
         const isInjured = injuries.length > 0;
         const isSuspended = suspensions.length > 0;
 
-        // RADAR LUNGODEGENTI / INATTIVI (Caso Zoma e infortuni non taggati su Opta durante la sosta):
         const isKnownLongTermInjured =
           this.KNOWN_LONG_TERM_INJURED_SLUGS.has(canonicalPlayerSlug) ||
           canonicalPlayerSlug.includes('mohamed-ali-zoma');
@@ -1439,9 +1590,10 @@ const SorareAPI = {
           natFitnessTier: natFitnessTier,
           clubStartingOdds: clubStartingOdds,
           natStartingOdds: natStartingOdds,
-          liveLineupStatus: null, // 'starter' | 'bench' | 'out' | null (popolato da Sync Titolari Live -1h)
+          liveLineupStatus: null,
           liveStartingOddsPct: null,
           liveStartingGrade: null,
+          officialProjectedScore: null,
           baseUnavailableReason: baseUnavailableReason,
           tacticalTraits: {
             cleanSheets: clubStats.cleanSheets,
