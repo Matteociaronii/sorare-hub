@@ -1,7 +1,7 @@
-// SorareHub - Dual Profile Engine + Official Sorare Bench & PlayerGameStats (v35 Definitive)
+// SorareHub - Dual Profile Engine + Official Sorare Bench & PlayerGameStats (v36 Definitive - No Alias Field)
 const SorareAPI = {
-  CACHE_KEY: 'sorarehub_gallery_cache_v35',
-  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v35', 'sorarehub_gallery_cache_v34', 'sorarehub_gallery_cache_v33', 'sorarehub_gallery_cache_v32', 'sorarehub_gallery_cache_v31'],
+  CACHE_KEY: 'sorarehub_gallery_cache_v36',
+  FALLBACK_CACHE_KEYS: ['sorarehub_gallery_cache_v36', 'sorarehub_gallery_cache_v35', 'sorarehub_gallery_cache_v34', 'sorarehub_gallery_cache_v33', 'sorarehub_gallery_cache_v32'],
   CACHE_TTL_MS: 12 * 60 * 1000,
   lastBenchDiagnostic: null,
   cachedBenchSchemaInfo: null,
@@ -477,38 +477,24 @@ const SorareAPI = {
       const idsArg = benchObjectsField?.args?.find(a => a.name === 'ids') || null;
       const idsArgTypeStr = idsArg ? this.formatGraphqlArgTypeString(idsArg.type) : '[String!]!';
 
-      const filteredBenchField = fields.find(f => f.name === 'myFilteredBench') || null;
-      const filteredArgs = filteredBenchField?.args || [];
-
       const oddsDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, 'PlayingStatusOdds');
       const footballOddsDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, 'FootballPlayingStatusOdds');
       const actualOddsFields = (footballOddsDef?.fields || oddsDef?.fields || []).map(f => f.name);
 
-      const projDef = await this.fetchTypeDefinition(workerGraphqlEndpoint, token, 'PlayerGameScoreProjection');
-      const actualProjFields = (projDef?.fields || []).map(f => f.name);
-
       this.cachedBenchSchemaInfo = {
         idsArgTypeStr,
-        hasFilteredBench: Boolean(filteredBenchField),
-        filteredArgNames: filteredArgs.map(a => a.name),
-        filteredArgsFull: filteredArgs,
-        oddsFieldNames: actualOddsFields,
-        projFieldNames: actualProjFields
+        oddsFieldNames: actualOddsFields
       };
       return this.cachedBenchSchemaInfo;
     } catch (e) {
       return {
         idsArgTypeStr: '[String!]!',
-        hasFilteredBench: true,
-        filteredArgNames: [],
-        filteredArgsFull: [],
-        oddsFieldNames: ['starterOddsBasisPoints'],
-        projFieldNames: ['grade']
+        oddsFieldNames: ['starterOddsBasisPoints']
       };
     }
   },
 
-  // Costruisce il blocco interno di ComposeTeamBenchCard identico al payload reale di Sorare
+  // Costruisce il blocco interno di ComposeTeamBenchCard SOLO con campi reali dello schema Sorare (nessun alias)
   buildVerifiedBenchCardInnerSelection(sInfo) {
     const oddsFieldList = Array.isArray(sInfo?.oddsFieldNames) && sInfo.oddsFieldNames.length > 0
       ? sInfo.oddsFieldNames.filter(n => n === 'starterOddsBasisPoints' || n === 'substituteOddsBasisPoints' || n === 'nonPlayingOddsBasisPoints' || n === 'reliability')
@@ -525,9 +511,6 @@ const SorareAPI = {
         anyPlayer {
           slug
           displayName
-        }
-        benchCard {
-          slug
         }
         eligiblePlayerGameScores {
           scoreStatus
@@ -575,7 +558,6 @@ const SorareAPI = {
     `;
   },
 
-  // Fallback minimale con solo PlayerGameStats { fieldStatus footballPlayingStatusOdds { starterOddsBasisPoints } } e projection { grade }
   buildMinimalVerifiedBenchCardSelection() {
     return `
       ... on ComposeTeamBenchCard {
@@ -583,9 +565,6 @@ const SorareAPI = {
         anyPlayer {
           slug
           displayName
-        }
-        benchCard {
-          slug
         }
         eligiblePlayerGameScores {
           projection {
@@ -624,7 +603,7 @@ const SorareAPI = {
     `;
   },
 
-  parseBenchObjectsIntoMap(benchItems, benchOddsMap, cardSlugToPlayerSlugMap = {}) {
+  parseBenchObjectsIntoMap(benchItems, benchOddsMap, cardUuidToPlayerSlugMap = {}) {
     let added = 0;
     let validNodesSeen = 0;
     if (!Array.isArray(benchItems)) return { added: 0, validNodesSeen: 0 };
@@ -633,11 +612,11 @@ const SorareAPI = {
       if (!item) return;
       validNodesSeen++;
 
-      const pObj = item?.anyPlayer || item?.anyCard?.anyPlayer || null;
-      const cSlug = item?.benchCard?.slug || item?.anyCard?.slug || null;
+      const pObj = item?.anyPlayer || null;
+      const itemUuid = this.extractPureUuid(item?.id);
       const pSlug = pObj?.slug
         ? String(pObj.slug).trim()
-        : (cSlug && cardSlugToPlayerSlugMap[cSlug] ? cardSlugToPlayerSlugMap[cSlug] : null);
+        : (itemUuid && cardUuidToPlayerSlugMap[itemUuid] ? cardUuidToPlayerSlugMap[itemUuid] : null);
       if (!pSlug) return;
 
       const rawScoresList = Array.isArray(item?.eligiblePlayerGameScores)
@@ -658,22 +637,6 @@ const SorareAPI = {
       const projScore = typeof firstScoreObj?.projection?.projectedScore === 'number'
         ? firstScoreObj.projection.projectedScore
         : (typeof firstScoreObj?.projectedScore === 'number' ? firstScoreObj.projectedScore : null);
-
-      // Estrazione winOddsBasisPoints della squadra se presente in anyGame
-      let teamWinOddsPct = null;
-      const anyGame = firstScoreObj?.anyGame;
-      const playerTeamSlug = statsObj?.anyTeam?.slug || null;
-      if (anyGame) {
-        const homeSlug = anyGame?.homeTeam?.slug;
-        const awaySlug = anyGame?.awayTeam?.slug;
-        const homeWinBp = anyGame?.homeStats?.winOddsBasisPoints;
-        const awayWinBp = anyGame?.awayStats?.winOddsBasisPoints;
-        if (playerTeamSlug && homeSlug === playerTeamSlug && typeof homeWinBp === 'number') {
-          teamWinOddsPct = Math.round(homeWinBp / 100);
-        } else if (playerTeamSlug && awaySlug === playerTeamSlug && typeof awayWinBp === 'number') {
-          teamWinOddsPct = Math.round(awayWinBp / 100);
-        }
-      }
 
       let pct = null;
       if (typeof bp === 'number' && !Number.isNaN(bp)) {
@@ -709,7 +672,6 @@ const SorareAPI = {
           officialStatus,
           fieldStatus: fieldStatus || 'UNKNOWN',
           officialProjectedScore: projScore,
-          teamWinOddsPct,
           source: 'sorare_official_bench',
           updatedAt: Date.now()
         };
@@ -731,20 +693,20 @@ const SorareAPI = {
     const benchOddsMap = {};
     const diagNotes = [];
 
-    const cardSlugToPlayerSlugMap = {};
+    const cardUuidToPlayerSlugMap = {};
     const composeBenchUuidIds = [];
     const pureUuids = [];
 
     relevantCards.forEach(c => {
       if (!c) return;
-      if (c.id && c.playerSlug) {
-        cardSlugToPlayerSlugMap[c.id] = c.playerSlug;
-      }
       const benchId = this.getComposeBenchCardId(c);
       if (benchId && !composeBenchUuidIds.includes(benchId)) {
         composeBenchUuidIds.push(benchId);
         const rawUuid = benchId.replace('ComposeTeamBenchCard:', '');
-        if (rawUuid) pureUuids.push(rawUuid);
+        if (rawUuid) {
+          pureUuids.push(rawUuid);
+          if (c.playerSlug) cardUuidToPlayerSlugMap[rawUuid] = c.playerSlug;
+        }
       }
     });
 
@@ -817,7 +779,7 @@ const SorareAPI = {
                 : (Array.isArray(rawContainer?.nodes) ? rawContainer.nodes : null);
 
               if (Array.isArray(benchItems) && benchItems.length > 0) {
-                const parsed = this.parseBenchObjectsIntoMap(benchItems, benchOddsMap, cardSlugToPlayerSlugMap);
+                const parsed = this.parseBenchObjectsIntoMap(benchItems, benchOddsMap, cardUuidToPlayerSlugMap);
                 formatAddedCount += parsed.added;
                 formatNodesSeen += parsed.validNodesSeen;
                 totalValidNodesReturned += parsed.validNodesSeen;
