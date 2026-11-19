@@ -303,7 +303,7 @@ const App = {
           c.liveLineupStatus = null;
           c.liveStartingOddsPct = typeof entry.pct === 'number'
             ? entry.pct
-            : SorareAPI.sorareGradeToPercentage(entry.grade);
+            : SorareAPI.sorareGradeToPercentage(entry.grade, c);
           c.liveStartingGrade = entry.grade || SorareAPI.percentageToSorareGrade(c.liveStartingOddsPct);
           c.liveStartingOddsSource = 'sorare_official';
           appliedOdds++;
@@ -2462,7 +2462,7 @@ const App = {
           const gradeStr = p.liveStartingGrade ? `${p.liveStartingGrade} • ` : '';
           const pctVal = typeof p.liveStartingOddsPct === 'number'
             ? p.liveStartingOddsPct
-            : (window.SorareAPI ? SorareAPI.sorareGradeToPercentage(p.liveStartingGrade) : null);
+            : (window.SorareAPI ? SorareAPI.sorareGradeToPercentage(p.liveStartingGrade, p) : null);
           const pctStr = typeof pctVal === 'number' ? `${pctVal}%` : '';
           xiBtnLabel = `🎯 Sorare (${gradeStr}${pctStr})`;
           xiBtnCls = 'sh-xi-btn xi-sorare';
