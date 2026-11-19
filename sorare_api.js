@@ -24,8 +24,8 @@ const SorareAPI = {
 
   percentageToSorareGrade(pct) {
     if (typeof pct !== 'number' || Number.isNaN(pct)) return null;
-    if (pct >= 85) return 'A';
-    if (pct >= 75) return 'B';
+    if (pct >= 80) return 'A';
+    if (pct >= 70) return 'B';
     if (pct >= 65) return 'C';
     if (pct >= 50) return 'D';
     if (pct >= 20) return 'E';
@@ -34,7 +34,7 @@ const SorareAPI = {
 
   sorareGradeToPercentage(grade) {
     const g = String(grade || '').toUpperCase().trim();
-    const map = { 'A': 90, 'B': 75, 'C': 70, 'D': 60, 'E': 30, 'F': 0 };
+    const map = { 'A': 90, 'B': 70, 'C': 70, 'D': 60, 'E': 30, 'F': 0 };
     return map[g] !== undefined ? map[g] : null;
   },
 
@@ -77,9 +77,9 @@ const SorareAPI = {
     } else if (starterRatio >= 0.8 && stats.avgMins >= 75 && lastMatchMins >= 65) {
       pct = 90; // A
     } else if (starterRatio >= 0.65 && stats.avgMins >= 68) {
-      pct = 80; // B
+      pct = 80; // A/B
     } else if (starterRatio >= 0.5 && (lastMatchMins >= 55 || prevMatchMins >= 55)) {
-      pct = 70; // C
+      pct = 70; // B/C
     } else if (playedRatio >= 0.6 && stats.avgMins >= 42) {
       pct = 60; // D
     } else if (stats.playedCount >= 1) {
@@ -1557,6 +1557,7 @@ const SorareAPI = {
           liveLineupStatus: null,
           liveStartingOddsPct: null,
           liveStartingGrade: null,
+          liveStartingOddsSource: null,
           officialProjectedScore: null,
           baseUnavailableReason: baseUnavailableReason,
           tacticalTraits: {
