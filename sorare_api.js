@@ -32,9 +32,40 @@ const SorareAPI = {
     return 'F';
   },
 
-  sorareGradeToPercentage(grade) {
+  sorareGradeToPercentage(grade, card = null) {
     const g = String(grade || '').toUpperCase().trim();
-    const map = { 'A': 90, 'B': 70, 'C': 70, 'D': 60, 'E': 30, 'F': 0 };
+    if (!/^[A-F]$/.test(g)) return null;
+
+    const stats = card?.clubStats || null;
+    const total = stats && stats.totalEntries > 0 ? stats.totalEntries : 0;
+    const starterRatio = total > 0 ? (stats.starterCount / total) : null;
+    const avgMins = typeof stats?.avgMins === 'number' ? stats.avgMins : (typeof card?.avgMins === 'number' ? card.avgMins : null);
+    const isGk = card?.position === 'GK';
+
+    if (g === 'A') {
+      if (isGk && (starterRatio === null || starterRatio >= 0.8)) return 90;
+      if (starterRatio !== null && avgMins !== null) {
+        return (starterRatio >= 0.85 && avgMins >= 80) ? 90 : 80;
+      }
+      return 90;
+    }
+
+    if (g === 'B') {
+      if (starterRatio !== null && avgMins !== null) {
+        return (starterRatio >= 0.8 && avgMins >= 78) ? 80 : 70;
+      }
+      return 70;
+    }
+
+    if (g === 'C') {
+      if (starterRatio !== null && avgMins !== null) {
+        if (starterRatio >= 0.85 && avgMins >= 82) return 80;
+        if (starterRatio < 0.65 || avgMins < 65) return 60;
+      }
+      return 70;
+    }
+
+    const map = { 'D': 60, 'E': 30, 'F': 0 };
     return map[g] !== undefined ? map[g] : null;
   },
 
@@ -96,12 +127,13 @@ const SorareAPI = {
     };
   },
 
-  extractOddsAndStatusFromScoreNode(scoreNode, allowConfirmedFieldStatus = true) {
+  extractOddsAndStatusFromScoreNode(scoreNode, allowConfirmedFieldStatus = true, card = null) {
     if (!scoreNode) return null;
 
     const statsObj = scoreNode.anyPlayerGameStats || scoreNode.playerGameStats || null;
     const oddsObj = statsObj?.footballPlayingStatusOdds || null;
     const bp = oddsObj?.starterOddsBasisPoints;
+    const relBp = scoreNode.projection?.reliabilityBasisPoints;
     const reliability = oddsObj?.reliability || null;
     const fieldStatus = String(statsObj?.fieldStatus || '').toUpperCase().trim();
     const minsPlayed = typeof statsObj?.minsPlayed === 'number' ? statsObj.minsPlayed : null;
@@ -124,7 +156,21 @@ const SorareAPI = {
     if (pct !== null && !grade) {
       grade = this.percentageToSorareGrade(pct);
     } else if (grade && pct === null) {
-      pct = this.sorareGradeToPercentage(grade);
+      if (typeof relBp === 'number' && !Number.isNaN(relBp) && relBp > 0 && relBp <= 10000) {
+        const snappedRel = Math.round((relBp / 100) / 10) * 10;
+        const gradeBounds = {
+          'A': [80, 90],
+          'B': [70, 80],
+          'C': [60, 80],
+          'D': [50, 60],
+          'E': [20, 40],
+          'F': [0, 10]
+        };
+        const [minG, maxG] = gradeBounds[grade] || [0, 90];
+        pct = Math.max(minG, Math.min(maxG, snappedRel));
+      } else {
+        pct = this.sorareGradeToPercentage(grade, card);
+      }
     }
 
     let officialStatus = null;
@@ -269,8 +315,10 @@ const SorareAPI = {
     // 1. Filtriamo rigorosamente SOLO i giocatori che hanno una partita vera dentro [gwStartMs, gwEndMs].
     // Chi è in "Sosta Club" non viene mai inserito in allSlugs né in mapBySlug!
     const relevantSlugsSet = new Set();
+    const cardBySlug = {};
     cardsList.forEach(c => {
       if (!c || !c.playerSlug || c.isSealedInVault) return;
+      if (!cardBySlug[c.playerSlug]) cardBySlug[c.playerSlug] = c;
       const games = Array.isArray(c.scheduleGames) ? c.scheduleGames : [];
       const hasGameInGw = games.some(g => g.timestamp >= gwStartMs && g.timestamp <= gwEndMs);
       if (hasGameInGw) {
@@ -343,7 +391,7 @@ const SorareAPI = {
             const timeToKickoffMin = gDateMs > 0 ? (gDateMs - nowMs) / (60 * 1000) : 999;
             // Consente stato "UFF. XI" (starter/bench) solo se siamo a <= 75 min dal calcio d'inizio
             const allowConfirmed = timeToKickoffMin <= 75;
-            const extracted = this.extractOddsAndStatusFromScoreNode(scoreObj, allowConfirmed);
+            const extracted = this.extractOddsAndStatusFromScoreNode(scoreObj, allowConfirmed, cardBySlug[pSlug] || null);
             if (extracted && (extracted.pct !== null || extracted.grade !== null || extracted.officialStatus !== null)) {
               mapBySlug[pSlug] = extracted;
               updatedCount++;
@@ -382,6 +430,7 @@ const SorareAPI = {
                 projectedScore
                 projection {
                   grade
+                  reliabilityBasisPoints
                 }
                 anyPlayerGameStats {
                   ... on PlayerGameStats {
@@ -458,7 +507,7 @@ const SorareAPI = {
               const timeToKickoffMin = (gDateMs - nowMs) / (60 * 1000);
 
               const isWithinLineupWindow = timeToKickoffMin <= 75;
-              const extracted = this.extractOddsAndStatusFromScoreNode(sNode, isWithinLineupWindow);
+              const extracted = this.extractOddsAndStatusFromScoreNode(sNode, isWithinLineupWindow, cardBySlug[pSlug] || null);
 
               if (extracted && (extracted.officialStatus || !mapBySlug[pSlug])) {
                 if (!mapBySlug[pSlug]) updatedCount++;
