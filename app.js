@@ -275,7 +275,13 @@ const App = {
 
       this.cards.forEach(c => {
         const entry = mapBySlug[c.playerSlug];
-        if (!entry) return;
+        if (!entry) {
+          c.liveLineupStatus = null;
+          c.liveStartingOddsPct = null;
+          c.liveStartingGrade = null;
+          c.liveStartingOddsSource = null;
+          return;
+        }
 
         if (typeof entry.officialProjectedScore === 'number') {
           c.officialProjectedScore = entry.officialProjectedScore;
@@ -285,17 +291,21 @@ const App = {
           c.liveLineupStatus = 'starter';
           c.liveStartingOddsPct = 100;
           c.liveStartingGrade = 'A';
+          c.liveStartingOddsSource = 'official_xi';
           appliedOfficial++;
         } else if (entry.officialStatus === 'bench' || entry.officialStatus === 'out') {
           c.liveLineupStatus = entry.officialStatus;
           c.liveStartingOddsPct = 0;
           c.liveStartingGrade = 'F';
+          c.liveStartingOddsSource = 'official_xi';
           appliedOfficial++;
         } else if (typeof entry.pct === 'number' || entry.grade) {
+          c.liveLineupStatus = null;
           c.liveStartingOddsPct = typeof entry.pct === 'number'
             ? entry.pct
             : SorareAPI.sorareGradeToPercentage(entry.grade);
           c.liveStartingGrade = entry.grade || SorareAPI.percentageToSorareGrade(c.liveStartingOddsPct);
+          c.liveStartingOddsSource = 'sorare_official';
           appliedOdds++;
         }
       });
@@ -1332,6 +1342,16 @@ const App = {
         border: 1px solid #00e676;
         color: #69f0ae;
         box-shadow: 0 0 8px rgba(0, 230, 118, 0.25);
+      }
+      .sh-xi-btn.xi-sorare {
+        background: rgba(3, 169, 244, 0.22);
+        border: 1px solid #29b6f6;
+        color: #81d4fa;
+      }
+      .sh-xi-btn.xi-hub {
+        background: rgba(212, 175, 55, 0.16);
+        border: 1px solid rgba(212, 175, 55, 0.55);
+        color: #f3d266;
       }
       .sh-xi-btn.xi-confirmed {
         background: rgba(46, 125, 50, 0.28);
@@ -2423,12 +2443,41 @@ const App = {
         }
 
         const isOfficialLiveStarter = p.liveLineupStatus === 'starter';
+        const isSorareOfficialOdds = !isOfficialLiveStarter && (
+          p.liveStartingOddsSource === 'sorare_official' ||
+          typeof p.liveStartingOddsPct === 'number' ||
+          Boolean(p.liveStartingGrade)
+        );
         const isConfirmedStarter = isOfficialLiveStarter || p.availabilityTier === 'starter' || this.manualOverrides[p.playerSlug] === 'xi';
 
-        const xiBtnLabel = p.startingOddsBadge || (isOfficialLiveStarter ? '🟢 UFF. XI' : (isConfirmedStarter ? '✅ XI' : '⚠️ Rot.'));
-        const xiBtnCls = isOfficialLiveStarter
-          ? 'sh-xi-btn xi-official'
-          : (isConfirmedStarter ? 'sh-xi-btn xi-confirmed' : 'sh-xi-btn xi-rotation');
+        let xiBtnLabel;
+        let xiBtnCls;
+        let xiBtnTitle;
+
+        if (isOfficialLiveStarter) {
+          xiBtnLabel = '✅ UFF. XI';
+          xiBtnCls = 'sh-xi-btn xi-official';
+          xiBtnTitle = 'Formazione Titolare Ufficiale confermata a -1h dal calcio d\'inizio. Clicca per spostarlo in Panchina';
+        } else if (isSorareOfficialOdds) {
+          const gradeStr = p.liveStartingGrade ? `${p.liveStartingGrade} • ` : '';
+          const pctVal = typeof p.liveStartingOddsPct === 'number'
+            ? p.liveStartingOddsPct
+            : (window.SorareAPI ? SorareAPI.sorareGradeToPercentage(p.liveStartingGrade) : null);
+          const pctStr = typeof pctVal === 'number' ? `${pctVal}%` : '';
+          xiBtnLabel = `🎯 Sorare (${gradeStr}${pctStr})`;
+          xiBtnCls = 'sh-xi-btn xi-sorare';
+          xiBtnTitle = 'Probabilità di titolarità ufficiale letta dai server Sorare. Clicca per spostarlo in Panchina';
+        } else {
+          const isNatMatch = gwMatches.length > 0 && gwMatches[0].isNationalTeam;
+          const localOdds = isNatMatch ? p.natStartingOdds : p.clubStartingOdds;
+          const hubPct = typeof localOdds?.pct === 'number'
+            ? localOdds.pct
+            : (isConfirmedStarter ? 90 : 50);
+          xiBtnLabel = `📊 Stima Hub (${hubPct}%)`;
+          xiBtnCls = isConfirmedStarter ? 'sh-xi-btn xi-hub' : 'sh-xi-btn xi-rotation';
+          xiBtnTitle = 'Stima locale SorareHub basata sui minutaggi Opta recenti (quote Sorare non ancora pubblicate). Clicca per spostarlo in Panchina';
+        }
+
         const roleCls = `pos-${p.displayRole.toLowerCase()}`;
 
         const formTagLabel = p.contextFormLabel || 'Forma';
@@ -2451,7 +2500,7 @@ const App = {
             </div>
             <div class="sh-right">
               <div class="sh-pts">${p.projectedScore} pt</div>
-              <button type="button" class="${xiBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="Mostra Fascia Titolarità (A–F / %) o Distinta Ufficiale (-1h). Clicca per spostarlo in Panchina">${this.escapeHtml(xiBtnLabel)}</button>
+              <button type="button" class="${xiBtnCls}" data-slug="${this.escapeHtml(p.playerSlug)}" title="${this.escapeHtml(xiBtnTitle)}">${this.escapeHtml(xiBtnLabel)}</button>
             </div>
           </div>
         `;
