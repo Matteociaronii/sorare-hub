@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Hot Streak Sync
+// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Hot Streak Sync (ComposeBench)
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
   LOGOUT_FLAG_KEY: 'sorarehub_manual_logout',
@@ -704,25 +704,33 @@ const App = {
         });
       }
 
-      // Sincronizzazione non bloccante delle carte già schierate in Hot Streak PRO (via estensione)
+      // Sincronizzazione non bloccante di tutte le carte già usate su Sorare (incluse Hot Streak PRO) tramite ComposeBench
       try {
-        const proSlugs = this.collectRelevantProBoardConfigSlugs();
         const activeFix = this.getSelectedSorareFixture();
-        if (proSlugs.length > 0 && activeFix && activeFix.slug) {
-          const proUsedResp = await Promise.race([
-            this.sendToExtension('SH_GET_PRO_HOTSTREAK_USED_CARDS', { configSlugs: proSlugs }),
-            new Promise(resolve => setTimeout(() => resolve({ ok: false, usedCards: [], timeout: true }), 15000))
-          ]);
-          console.log('[SorareHub HotStreak Sync]', proUsedResp);
-          if (proUsedResp && proUsedResp.ok && Array.isArray(proUsedResp.usedCards)) {
-            if (!this.usedCardsByGwSlug[activeFix.slug]) {
-              this.usedCardsByGwSlug[activeFix.slug] = {};
-            }
-            proUsedResp.usedCards.forEach(entry => {
-              if (entry && entry.cardSlug && !this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug]) {
-                this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug] = entry;
+        if (activeFix && activeFix.slug && Array.isArray(activeFix.so5Leaderboards)) {
+          const allStarSlugs = activeFix.so5Leaderboards
+            .filter(lb => {
+              const s = String(lb.slug || '').toLowerCase();
+              return s.includes('all_star') && !s.includes('_arena_');
+            })
+            .map(lb => lb.slug);
+
+          if (allStarSlugs.length > 0) {
+            const proUsedResp = await Promise.race([
+              this.sendToExtension('SH_GET_PRO_HOTSTREAK_USED_CARDS', { so5LeaderboardSlugs: allStarSlugs }),
+              new Promise(resolve => setTimeout(() => resolve({ ok: false, usedCards: [], timeout: true }), 15000))
+            ]);
+            console.log('[SorareHub HotStreak Sync]', proUsedResp);
+            if (proUsedResp && proUsedResp.ok && Array.isArray(proUsedResp.usedCards)) {
+              if (!this.usedCardsByGwSlug[activeFix.slug]) {
+                this.usedCardsByGwSlug[activeFix.slug] = {};
               }
-            });
+              proUsedResp.usedCards.forEach(entry => {
+                if (entry && entry.cardSlug && !this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug]) {
+                  this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug] = entry;
+                }
+              });
+            }
           }
         }
       } catch (_) {}
