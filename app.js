@@ -565,7 +565,7 @@ const App = {
       });
     }
 
-    return Array.from(slugsSet).slice(0, 6);
+    return Array.from(slugsSet);
   },
 
   async syncRealSorareFixturesAndLineups() {
@@ -711,8 +711,9 @@ const App = {
         if (proSlugs.length > 0 && activeFix && activeFix.slug) {
           const proUsedResp = await Promise.race([
             this.sendToExtension('SH_GET_PRO_HOTSTREAK_USED_CARDS', { configSlugs: proSlugs }),
-            new Promise(resolve => setTimeout(() => resolve({ ok: false, usedCards: [] }), 4500))
+            new Promise(resolve => setTimeout(() => resolve({ ok: false, usedCards: [], timeout: true }), 15000))
           ]);
+          console.log('[SorareHub HotStreak Sync]', proUsedResp);
           if (proUsedResp && proUsedResp.ok && Array.isArray(proUsedResp.usedCards)) {
             if (!this.usedCardsByGwSlug[activeFix.slug]) {
               this.usedCardsByGwSlug[activeFix.slug] = {};
