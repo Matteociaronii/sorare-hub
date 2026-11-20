@@ -1,4 +1,4 @@
-// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter
+// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Hot Streak Sync
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
   LOGOUT_FLAG_KEY: 'sorarehub_manual_logout',
@@ -547,6 +547,27 @@ const App = {
     return `football-${d1}-${m1}-${y1}-${d2}-${m2}-${y2}`;
   },
 
+  collectRelevantProBoardConfigSlugs() {
+    const slugsSet = new Set();
+    const currentSlug = this.getProBoardConfigSlug(this.currentCompetition?.id);
+    if (currentSlug) slugsSet.add(currentSlug);
+
+    if (window.CONFIG && Array.isArray(CONFIG.OFFICIAL_COMPETITIONS) && Array.isArray(this.cards)) {
+      const inSeasonCards = this.cards.filter(c => c.isInSeason && !this.isCardLockedInVault(c));
+      CONFIG.OFFICIAL_COMPETITIONS.forEach(comp => {
+        if (comp.format !== 'SO5') return;
+        const cfgSlug = this.getProBoardConfigSlug(comp.id);
+        if (!cfgSlug) return;
+        const hasCards = inSeasonCards.some(c =>
+          window.OptimizerEngine && OptimizerEngine.isCardEligibleForCompetition(c, comp, c.scarcity)
+        );
+        if (hasCards) slugsSet.add(cfgSlug);
+      });
+    }
+
+    return Array.from(slugsSet).slice(0, 6);
+  },
+
   async syncRealSorareFixturesAndLineups() {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return false;
@@ -682,6 +703,28 @@ const App = {
           }
         });
       }
+
+      // Sincronizzazione non bloccante delle carte già schierate in Hot Streak PRO (via estensione)
+      try {
+        const proSlugs = this.collectRelevantProBoardConfigSlugs();
+        const activeFix = this.getSelectedSorareFixture();
+        if (proSlugs.length > 0 && activeFix && activeFix.slug) {
+          const proUsedResp = await Promise.race([
+            this.sendToExtension('SH_GET_PRO_HOTSTREAK_USED_CARDS', { configSlugs: proSlugs }),
+            new Promise(resolve => setTimeout(() => resolve({ ok: false, usedCards: [] }), 4500))
+          ]);
+          if (proUsedResp && proUsedResp.ok && Array.isArray(proUsedResp.usedCards)) {
+            if (!this.usedCardsByGwSlug[activeFix.slug]) {
+              this.usedCardsByGwSlug[activeFix.slug] = {};
+            }
+            proUsedResp.usedCards.forEach(entry => {
+              if (entry && entry.cardSlug && !this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug]) {
+                this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug] = entry;
+              }
+            });
+          }
+        }
+      } catch (_) {}
 
       return true;
     } catch (err) {
@@ -884,7 +927,7 @@ const App = {
           orderedStarters.forEach(p => {
             this.usedCardsByGwSlug[targetFixture.slug][p.id] = {
               cardSlug: p.id,
-              leaderboardName: `${this.currentCompetition.name} Hot Streak PRO`,
+              leaderboardName: `🔥 Hot Streak PRO (${this.currentCompetition.name})`,
               leaderboardSlug: configSlug,
               leaderboardId: proResp.taskId || configSlug,
               lineupId: proResp.taskLineupId || 'pro',
