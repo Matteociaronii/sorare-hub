@@ -1,7 +1,8 @@
-// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Auto Hot Streak Sync
+// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Targeted Auto Hot Streak Sync
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
-  PRO_LOCKED_STORAGE_KEY: 'sorarehub_pro_locked_by_gw_v2',
+  PRO_LOCKED_STORAGE_KEY: 'sorarehub_pro_locked_by_gw_v5_1',
+  FIXTURES_CACHE_KEY: 'sorarehub_fixtures_cache_v5_1',
   LOGOUT_FLAG_KEY: 'sorarehub_manual_logout',
   cards: [],
   gameweeks: [],
@@ -33,9 +34,13 @@ const App = {
   },
 
   async init() {
-    // Rimuove eventuale vecchia cache v1 sporca
-    try { localStorage.removeItem('sorarehub_pro_locked_by_gw_v1'); } catch (_) {}
+    try {
+      localStorage.removeItem('sorarehub_pro_locked_by_gw_v1');
+      localStorage.removeItem('sorarehub_pro_locked_by_gw_v2');
+      localStorage.removeItem('sorarehub_pro_locked_by_gw_v5');
+    } catch (_) {}
 
+    this.restoreFixturesFromLocalCache();
     this.loadSavedPresets();
     this.injectFavicon();
     this.injectTacticalStyles();
@@ -68,6 +73,31 @@ const App = {
     } else {
       this.renderEmptyState();
     }
+  },
+
+  restoreFixturesFromLocalCache() {
+    try {
+      const raw = localStorage.getItem(this.FIXTURES_CACHE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.fixturesBySlug) this.sorareFixturesBySlug = parsed.fixturesBySlug;
+        if (parsed.usedCardsByGwSlug) this.usedCardsByGwSlug = parsed.usedCardsByGwSlug;
+      }
+    } catch (_) {}
+  },
+
+  persistFixturesToLocalCache() {
+    try {
+      localStorage.setItem(
+        this.FIXTURES_CACHE_KEY,
+        JSON.stringify({
+          savedAt: Date.now(),
+          fixturesBySlug: this.sorareFixturesBySlug,
+          usedCardsByGwSlug: this.usedCardsByGwSlug
+        })
+      );
+    } catch (_) {}
   },
 
   loadLocalProLockedForGw(gwSlug) {
@@ -173,6 +203,7 @@ const App = {
 
     localStorage.removeItem('sorare_access_token');
     localStorage.removeItem('sorare_oauth_state');
+    localStorage.removeItem(this.FIXTURES_CACHE_KEY);
     if (window.SorareAPI && Array.isArray(SorareAPI.FALLBACK_CACHE_KEYS)) {
       SorareAPI.FALLBACK_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
     }
@@ -273,6 +304,56 @@ const App = {
     return slugs;
   },
 
+  collectTargetedProSyncLeaderboardSlugs(activeFix) {
+    if (!activeFix || !Array.isArray(activeFix.so5Leaderboards)) return [];
+    const targetRarity = String(this.currentScarcity || 'limited').toLowerCase();
+    const resultSlugs = [];
+
+    // 1. Aggiunge All-Star della rarità attiva
+    const allStarLb = activeFix.so5Leaderboards.find(lb => {
+      const s = String(lb.slug || '').toLowerCase();
+      return s.includes('all_star') && !s.includes('_arena_') && s.includes(targetRarity);
+    });
+    if (allStarLb && allStarLb.slug) {
+      resultSlugs.push(allStarLb.slug);
+    }
+
+    // 2. Trova fino a 2 competizioni In-Season dove l'utente possiede più carte 26/27 (così ogni chiamata resta sotto le 30 carte e cattura il 100% delle Hot Streak PRO)
+    if (window.CONFIG && Array.isArray(CONFIG.OFFICIAL_COMPETITIONS) && Array.isArray(this.cards) && window.OptimizerEngine) {
+      const inSeasonCards = this.cards.filter(c =>
+        c.isInSeason &&
+        c.scarcity === targetRarity &&
+        !this.isCardLockedInVault(c)
+      );
+
+      const scoredComps = CONFIG.OFFICIAL_COMPETITIONS
+        .filter(comp => comp.format === 'SO5')
+        .map(comp => {
+          const count = inSeasonCards.filter(c =>
+            OptimizerEngine.isCardEligibleForCompetition(c, comp, targetRarity)
+          ).length;
+          return { comp, count };
+        })
+        .filter(item => item.count >= 4)
+        .sort((a, b) => b.count - a.count);
+
+      for (const item of scoredComps) {
+        if (resultSlugs.length >= 3) break;
+        const matchedLb = this.matchLeaderboardFromFixture(
+          activeFix.so5Leaderboards,
+          item.comp,
+          targetRarity,
+          'standard'
+        );
+        if (matchedLb && matchedLb.slug && !resultSlugs.includes(matchedLb.slug)) {
+          resultSlugs.push(matchedLb.slug);
+        }
+      }
+    }
+
+    return resultSlugs;
+  },
+
   async syncLiveStartingLineups(btnEl = null, silentAuto = false) {
     if (!this.cards || this.cards.length === 0) {
       if (!silentAuto) {
@@ -340,7 +421,7 @@ const App = {
       this.lastLiveSyncTimeStr = nowTime;
 
       if (!silentAuto) {
-        await this.syncRealSorareFixturesAndLineups();
+        await this.syncRealSorareFixturesAndLineups(true);
       }
       this.runOptimizer();
 
@@ -535,7 +616,7 @@ const App = {
       const timeout = setTimeout(() => {
         window.removeEventListener('message', listener);
         resolve({ ok: false, error: 'Estensione Chrome non risponde: vai su chrome://extensions, clicca Ricarica su SorareHub Direct API e aggiorna questa pagina.' });
-      }, 25000);
+      }, 15000);
 
       function listener(event) {
         if (event.source !== window) return;
@@ -573,7 +654,7 @@ const App = {
     return `football-${d1}-${m1}-${y1}-${d2}-${m2}-${y2}`;
   },
 
-  async syncRealSorareFixturesAndLineups() {
+  async syncRealSorareFixturesAndLineups(forceProRefresh = false) {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return false;
 
@@ -590,6 +671,11 @@ const App = {
           query: '{ so5 { so5Fixtures(first: 8) { nodes { slug gameWeek startDate endDate aasmState } } } }'
         })
       });
+
+      if (!listRes.ok) {
+        return false;
+      }
+
       const listJson = await listRes.json();
       const rawNodes = listJson?.data?.so5?.so5Fixtures?.nodes || [];
 
@@ -648,98 +734,98 @@ const App = {
         })
       });
 
+      if (!detailRes.ok) {
+        return false;
+      }
+
       const detailJson = await detailRes.json();
       const so5Data = detailJson?.data?.so5 || {};
 
-      const fixturesMap = {};
-      const usedBySlug = {};
-      const realFixturesArray = [];
+      // Aggiornamento atomico: non sovrascrive mai la cache locale se Sorare risponde vuoto
+      const validFixKeys = Object.keys(so5Data).filter(k => so5Data[k] && so5Data[k].slug);
+      if (validFixKeys.length > 0) {
+        const fixturesMap = {};
+        const usedBySlug = {};
+        const realFixturesArray = [];
 
-      Object.keys(so5Data).forEach(aliasKey => {
-        const fix = so5Data[aliasKey];
-        if (!fix || !fix.slug) return;
-        fixturesMap[fix.slug] = fix;
-        realFixturesArray.push(fix);
-        usedBySlug[fix.slug] = { ...this.loadLocalProLockedForGw(fix.slug) };
+        validFixKeys.forEach(aliasKey => {
+          const fix = so5Data[aliasKey];
+          fixturesMap[fix.slug] = fix;
+          realFixturesArray.push(fix);
+          usedBySlug[fix.slug] = { ...this.loadLocalProLockedForGw(fix.slug) };
 
-        (fix.so5Leaderboards || []).forEach(lb => {
-          (lb.mySo5Lineups || []).forEach(lu => {
-            (lu.so5Appearances || []).forEach(app => {
-              const cSlug = app?.anyCard?.slug;
-              if (cSlug) {
-                usedBySlug[fix.slug][cSlug] = {
-                  cardSlug: cSlug,
-                  leaderboardName: lb.displayName || lb.slug,
-                  leaderboardSlug: lb.slug,
-                  leaderboardId: lb.id,
-                  lineupId: lu.id,
-                  lineupName: lu.name || 'Formazione'
-                };
-              }
+          (fix.so5Leaderboards || []).forEach(lb => {
+            (lb.mySo5Lineups || []).forEach(lu => {
+              (lu.so5Appearances || []).forEach(app => {
+                const cSlug = app?.anyCard?.slug;
+                if (cSlug) {
+                  usedBySlug[fix.slug][cSlug] = {
+                    cardSlug: cSlug,
+                    leaderboardName: lb.displayName || lb.slug,
+                    leaderboardSlug: lb.slug,
+                    leaderboardId: lb.id,
+                    lineupId: lu.id,
+                    lineupName: lu.name || 'Formazione'
+                  };
+                }
+              });
             });
           });
         });
-      });
 
-      this.sorareFixturesBySlug = fixturesMap;
-      this.usedCardsByGwSlug = usedBySlug;
+        this.sorareFixturesBySlug = fixturesMap;
+        this.usedCardsByGwSlug = usedBySlug;
+        this.persistFixturesToLocalCache();
 
-      realFixturesArray.sort((a, b) => (a.gameWeek || 0) - (b.gameWeek || 0));
+        realFixturesArray.sort((a, b) => (a.gameWeek || 0) - (b.gameWeek || 0));
 
-      if (realFixturesArray.length > 0 && Array.isArray(this.gameweeks)) {
-        this.gameweeks.forEach((gw, idx) => {
-          const computedSlug = this.buildSorareFixtureSlugFromDates(gw.startDate, gw.endDate);
-          const gwStart = gw.startDate ? new Date(gw.startDate).getTime() : 0;
+        if (Array.isArray(this.gameweeks)) {
+          this.gameweeks.forEach((gw, idx) => {
+            const computedSlug = this.buildSorareFixtureSlugFromDates(gw.startDate, gw.endDate);
+            const gwStart = gw.startDate ? new Date(gw.startDate).getTime() : 0;
 
-          let matchedFix =
-            (computedSlug && fixturesMap[computedSlug]) ||
-            realFixturesArray.find(rf => {
-              if (!rf.startDate) return false;
-              const rfStart = new Date(rf.startDate).getTime();
-              return Math.abs(rfStart - gwStart) <= 36 * 3600 * 1000;
-            }) ||
-            realFixturesArray[idx];
+            let matchedFix =
+              (computedSlug && fixturesMap[computedSlug]) ||
+              realFixturesArray.find(rf => {
+                if (!rf.startDate) return false;
+                const rfStart = new Date(rf.startDate).getTime();
+                return Math.abs(rfStart - gwStart) <= 36 * 3600 * 1000;
+              }) ||
+              realFixturesArray[idx];
 
-          if (matchedFix) {
-            gw.gameWeek = matchedFix.gameWeek;
-            gw.sorareSlug = matchedFix.slug;
-            const isMidweek = gw.label && gw.label.toLowerCase().includes('midweek');
-            gw.label = `GW #${matchedFix.gameWeek} (${isMidweek ? 'Midweek' : 'Weekend'})`;
-          }
-        });
+            if (matchedFix) {
+              gw.gameWeek = matchedFix.gameWeek;
+              gw.sorareSlug = matchedFix.slug;
+              const isMidweek = gw.label && gw.label.toLowerCase().includes('midweek');
+              gw.label = `GW #${matchedFix.gameWeek} (${isMidweek ? 'Midweek' : 'Weekend'})`;
+            }
+          });
+        }
       }
 
-      // Sincronizzazione automatica e non bloccante delle carte già usate in Hot Streak PRO
+      // Sincronizzazione mirata su All-Star + leghe In-Season attive dell'utente (con cache 5 min anti-429)
       try {
         const activeFix = this.getSelectedSorareFixture();
-        if (activeFix && activeFix.slug && Array.isArray(activeFix.so5Leaderboards)) {
-          const allStarSlugs = activeFix.so5Leaderboards
-            .filter(lb => {
-              const s = String(lb.slug || '').toLowerCase();
-              return s.includes('all_star') && !s.includes('_arena_');
-            })
-            .map(lb => lb.slug);
-
-          if (allStarSlugs.length > 0) {
-            const proUsedResp = await Promise.race([
-              this.sendToExtension('SH_GET_PRO_HOTSTREAK_USED_CARDS', { so5LeaderboardSlugs: allStarSlugs }),
-              new Promise(resolve => setTimeout(() => resolve({ ok: false, usedCards: [], timeout: true }), 18000))
-            ]);
-            console.log('[SorareHub HotStreak Sync]', proUsedResp);
-            if (proUsedResp && proUsedResp.ok && Array.isArray(proUsedResp.usedCards)) {
-              if (!this.usedCardsByGwSlug[activeFix.slug]) {
-                this.usedCardsByGwSlug[activeFix.slug] = {};
+        const targetSlugs = this.collectTargetedProSyncLeaderboardSlugs(activeFix);
+        if (activeFix && activeFix.slug && targetSlugs.length > 0) {
+          const proUsedResp = await this.sendToExtension('SH_GET_PRO_HOTSTREAK_USED_CARDS', {
+            so5LeaderboardSlugs: targetSlugs,
+            forceRefresh: forceProRefresh
+          });
+          if (proUsedResp && proUsedResp.ok && Array.isArray(proUsedResp.usedCards) && proUsedResp.usedCards.length > 0) {
+            if (!this.usedCardsByGwSlug[activeFix.slug]) {
+              this.usedCardsByGwSlug[activeFix.slug] = {};
+            }
+            const newlyFoundMap = {};
+            proUsedResp.usedCards.forEach(entry => {
+              if (entry && entry.cardSlug && !this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug]) {
+                this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug] = entry;
+                newlyFoundMap[entry.cardSlug] = entry;
               }
-              const newlyFoundMap = {};
-              proUsedResp.usedCards.forEach(entry => {
-                if (entry && entry.cardSlug && !this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug]) {
-                  this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug] = entry;
-                  newlyFoundMap[entry.cardSlug] = entry;
-                }
-              });
-              if (Object.keys(newlyFoundMap).length > 0) {
-                this.saveLocalProLockedForGw(activeFix.slug, newlyFoundMap);
-              }
+            });
+            if (Object.keys(newlyFoundMap).length > 0) {
+              this.saveLocalProLockedForGw(activeFix.slug, newlyFoundMap);
+              this.persistFixturesToLocalCache();
             }
           }
         }
@@ -900,7 +986,7 @@ const App = {
 
     try {
       if (Object.keys(this.sorareFixturesBySlug).length === 0) {
-        await this.syncRealSorareFixturesAndLineups();
+        await this.syncRealSorareFixturesAndLineups(false);
       }
 
       const targetFixture = this.getSelectedSorareFixture();
@@ -963,6 +1049,7 @@ const App = {
             savedMap[p.id] = entry;
           });
           this.saveLocalProLockedForGw(gwSlug, savedMap);
+          this.persistFixturesToLocalCache();
         }
 
         this.runOptimizer();
@@ -1012,7 +1099,7 @@ const App = {
         throw new Error(submitResp?.error || `Errore salvataggio su ${matchedLb.displayName || matchedLb.slug}`);
       }
 
-      await this.syncRealSorareFixturesAndLineups();
+      await this.syncRealSorareFixturesAndLineups(true);
       this.runOptimizer();
       this.notify(`✅ ${lineup.rankLabel} schierata con successo su Sorare in ${matchedLb.displayName || matchedLb.slug} (${modeLabel})!`);
     } catch (err) {
@@ -2083,7 +2170,7 @@ const App = {
           loginBtn.disabled = false;
         }
 
-        await this.syncRealSorareFixturesAndLineups();
+        await this.syncRealSorareFixturesAndLineups(forceRefresh);
 
         this.syncStateFromDOM();
         await this.syncLiveStartingLineups(null, true);
