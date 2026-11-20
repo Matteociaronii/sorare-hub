@@ -1,6 +1,7 @@
-// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Hot Streak Sync (ComposeBench)
+// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Persistent Hot Streak Lock
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
+  PRO_LOCKED_STORAGE_KEY: 'sorarehub_pro_locked_by_gw_v1',
   LOGOUT_FLAG_KEY: 'sorarehub_manual_logout',
   cards: [],
   gameweeks: [],
@@ -64,6 +65,60 @@ const App = {
     } else {
       this.renderEmptyState();
     }
+  },
+
+  loadLocalProLockedForGw(gwSlug) {
+    if (!gwSlug) return {};
+    try {
+      const raw = localStorage.getItem(this.PRO_LOCKED_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return (parsed && parsed[gwSlug]) || {};
+    } catch (_) {
+      return {};
+    }
+  },
+
+  saveLocalProLockedForGw(gwSlug, entriesMap) {
+    if (!gwSlug || !entriesMap) return;
+    try {
+      const raw = localStorage.getItem(this.PRO_LOCKED_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      parsed[gwSlug] = { ...(parsed[gwSlug] || {}), ...entriesMap };
+      localStorage.setItem(this.PRO_LOCKED_STORAGE_KEY, JSON.stringify(parsed));
+    } catch (_) {}
+  },
+
+  lockLineupAsHotStreakLocally(lineupIndex) {
+    const lineup = this.lastGeneratedLineups[lineupIndex];
+    if (!lineup || !Array.isArray(lineup.starters) || lineup.starters.length === 0) return;
+
+    const fix = this.getSelectedSorareFixture();
+    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+    const gwSlug = fix?.slug || selectedGw?.sorareSlug || 'active-gw';
+
+    if (!this.usedCardsByGwSlug[gwSlug]) {
+      this.usedCardsByGwSlug[gwSlug] = {};
+    }
+
+    const newEntries = {};
+    lineup.starters.forEach((p) => {
+      const entry = {
+        cardSlug: p.id,
+        leaderboardName: `🔥 Hot Streak PRO (${this.currentCompetition.name})`,
+        leaderboardSlug: this.getProBoardConfigSlug(this.currentCompetition.id) || 'hot-streak-pro',
+        leaderboardId: 'local-pro',
+        lineupId: 'local-pro-' + Date.now(),
+        lineupName: lineup.rankLabel
+      };
+      this.usedCardsByGwSlug[gwSlug][p.id] = entry;
+      newEntries[p.id] = entry;
+      this.unlockedUsedCardSlugs.delete(p.id);
+    });
+
+    this.saveLocalProLockedForGw(gwSlug, newEntries);
+    this.notify(`🔒 ${lineup.starters.length} carte della ${lineup.rankLabel} bloccate come schierate in Hot Streak PRO!`);
+    this.runOptimizer();
   },
 
   patchOAuthFlowGuard() {
@@ -547,27 +602,6 @@ const App = {
     return `football-${d1}-${m1}-${y1}-${d2}-${m2}-${y2}`;
   },
 
-  collectRelevantProBoardConfigSlugs() {
-    const slugsSet = new Set();
-    const currentSlug = this.getProBoardConfigSlug(this.currentCompetition?.id);
-    if (currentSlug) slugsSet.add(currentSlug);
-
-    if (window.CONFIG && Array.isArray(CONFIG.OFFICIAL_COMPETITIONS) && Array.isArray(this.cards)) {
-      const inSeasonCards = this.cards.filter(c => c.isInSeason && !this.isCardLockedInVault(c));
-      CONFIG.OFFICIAL_COMPETITIONS.forEach(comp => {
-        if (comp.format !== 'SO5') return;
-        const cfgSlug = this.getProBoardConfigSlug(comp.id);
-        if (!cfgSlug) return;
-        const hasCards = inSeasonCards.some(c =>
-          window.OptimizerEngine && OptimizerEngine.isCardEligibleForCompetition(c, comp, c.scarcity)
-        );
-        if (hasCards) slugsSet.add(cfgSlug);
-      });
-    }
-
-    return Array.from(slugsSet);
-  },
-
   async syncRealSorareFixturesAndLineups() {
     const token = localStorage.getItem('sorare_access_token');
     if (!token) return false;
@@ -655,7 +689,7 @@ const App = {
         if (!fix || !fix.slug) return;
         fixturesMap[fix.slug] = fix;
         realFixturesArray.push(fix);
-        usedBySlug[fix.slug] = {};
+        usedBySlug[fix.slug] = { ...this.loadLocalProLockedForGw(fix.slug) };
 
         (fix.so5Leaderboards || []).forEach(lb => {
           (lb.mySo5Lineups || []).forEach(lu => {
@@ -704,7 +738,7 @@ const App = {
         });
       }
 
-      // Sincronizzazione non bloccante di tutte le carte già usate su Sorare (incluse Hot Streak PRO) tramite ComposeBench
+      // Sincronizzazione non bloccante delle carte già usate in Hot Streak PRO tramite ComposeBench + Storage estensione
       try {
         const activeFix = this.getSelectedSorareFixture();
         if (activeFix && activeFix.slug && Array.isArray(activeFix.so5Leaderboards)) {
@@ -725,11 +759,16 @@ const App = {
               if (!this.usedCardsByGwSlug[activeFix.slug]) {
                 this.usedCardsByGwSlug[activeFix.slug] = {};
               }
+              const newlyFoundMap = {};
               proUsedResp.usedCards.forEach(entry => {
                 if (entry && entry.cardSlug && !this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug]) {
                   this.usedCardsByGwSlug[activeFix.slug][entry.cardSlug] = entry;
+                  newlyFoundMap[entry.cardSlug] = entry;
                 }
               });
+              if (Object.keys(newlyFoundMap).length > 0) {
+                this.saveLocalProLockedForGw(activeFix.slug, newlyFoundMap);
+              }
             }
           }
         }
@@ -753,8 +792,13 @@ const App = {
 
   getLockedCardsMapForCurrentGw() {
     const fix = this.getSelectedSorareFixture();
-    if (!fix || !fix.slug) return {};
-    return this.usedCardsByGwSlug[fix.slug] || {};
+    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+    const slug = fix?.slug || selectedGw?.sorareSlug;
+    if (!slug) return {};
+    return {
+      ...this.loadLocalProLockedForGw(slug),
+      ...(this.usedCardsByGwSlug[slug] || {})
+    };
   },
 
   matchLeaderboardFromFixture(leaderboards, comp, scarcity, targetMode = 'standard') {
@@ -929,12 +973,14 @@ const App = {
           throw new Error(proResp?.error || 'Errore durante il salvataggio della formazione Hot Streak PRO.');
         }
 
-        if (targetFixture && targetFixture.slug) {
-          if (!this.usedCardsByGwSlug[targetFixture.slug]) {
-            this.usedCardsByGwSlug[targetFixture.slug] = {};
+        const gwSlug = targetFixture?.slug || selectedGw?.sorareSlug;
+        if (gwSlug) {
+          if (!this.usedCardsByGwSlug[gwSlug]) {
+            this.usedCardsByGwSlug[gwSlug] = {};
           }
+          const savedMap = {};
           orderedStarters.forEach(p => {
-            this.usedCardsByGwSlug[targetFixture.slug][p.id] = {
+            const entry = {
               cardSlug: p.id,
               leaderboardName: `🔥 Hot Streak PRO (${this.currentCompetition.name})`,
               leaderboardSlug: configSlug,
@@ -942,11 +988,14 @@ const App = {
               lineupId: proResp.taskLineupId || 'pro',
               lineupName: lineup.rankLabel
             };
+            this.usedCardsByGwSlug[gwSlug][p.id] = entry;
+            savedMap[p.id] = entry;
           });
+          this.saveLocalProLockedForGw(gwSlug, savedMap);
         }
 
         this.runOptimizer();
-        this.notify(`✅ ${lineup.rankLabel} schierata in 1-Click su Sorare Hot Streak PRO (${this.currentCompetition.name})!`);
+        this.notify(`✅ ${lineup.rankLabel} schierata in 1-Click su Sorare Hot Streak PRO (${this.currentCompetition.name}) e bloccata per tutte le altre competizioni!`);
         return;
       }
 
@@ -1652,7 +1701,7 @@ const App = {
       }
       .sh-direct-submit-btn {
         flex: 1;
-        min-width: 115px;
+        min-width: 110px;
         background: linear-gradient(135deg, #f3d266 0%, #d4af37 100%);
         color: #0d0e12;
         border: none;
@@ -1670,6 +1719,14 @@ const App = {
       .sh-direct-submit-btn.hotstreak-btn {
         background: linear-gradient(135deg, #ff7043 0%, #d84315 100%);
         color: #ffffff;
+      }
+      .sh-direct-submit-btn.lock-pro-btn {
+        flex: 0 0 auto;
+        min-width: auto;
+        background: rgba(156, 39, 176, 0.24);
+        border: 1px solid rgba(186, 104, 200, 0.65);
+        color: #f3e5f5;
+        padding: 9px 10px;
       }
       .sh-direct-submit-btn.preset-btn {
         flex: 0 0 auto;
@@ -2201,6 +2258,14 @@ const App = {
         return;
       }
 
+      const lockProBtn = e.target.closest('[data-lock-pro-idx]');
+      if (lockProBtn) {
+        e.stopPropagation();
+        const idx = Number(lockProBtn.dataset.lockProIdx);
+        if (!Number.isNaN(idx)) this.lockLineupAsHotStreakLocally(idx);
+        return;
+      }
+
       const pinPresetBtn = e.target.closest('[data-pin-preset-idx]');
       if (pinPresetBtn) {
         e.stopPropagation();
@@ -2297,7 +2362,7 @@ const App = {
       }
 
       const btn = e.target.closest('button');
-      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn' && btn.id !== 'sh-live-lineups-btn' && !btn.closest('#sh-account-popover') && !btn.hasAttribute('data-direct-submit-idx') && !btn.hasAttribute('data-pin-preset-idx')) {
+      if (btn && btn.id !== 'login-btn' && btn.id !== 'connect-btn' && btn.id !== 'sh-live-lineups-btn' && !btn.closest('#sh-account-popover') && !btn.hasAttribute('data-direct-submit-idx') && !btn.hasAttribute('data-pin-preset-idx') && !btn.hasAttribute('data-lock-pro-idx')) {
         const txt = (btn.textContent || '').toLowerCase();
         if (txt.includes('genera') || txt.includes('ottimizz') || txt.includes('calcola') || btn.id === 'generate-btn' || btn.id === 'optimize-btn' || btn.id === 'run-optimizer-btn') {
           this.syncStateFromDOM();
@@ -2585,6 +2650,9 @@ const App = {
               ⚡ Invia Torneo
             </button>
             ${hotStreakBtnHtml}
+            <button type="button" class="sh-direct-submit-btn lock-pro-btn" data-lock-pro-idx="${idx}" title="Segna subito queste carte come già schierate in Hot Streak PRO per tutta la GW">
+              🔒 Blocca PRO
+            </button>
             <button type="button" class="sh-direct-submit-btn preset-btn" data-pin-preset-idx="${idx}" title="Fissa questa formazione come Pre-Set Step e riserva le sue 5 carte">
               📌 Pre-Set
             </button>
