@@ -1,8 +1,8 @@
-// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Targeted Auto Hot Streak Sync
+// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Targeted Auto Hot Streak Sync (v5.2.0)
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
-  PRO_LOCKED_STORAGE_KEY: 'sorarehub_pro_locked_by_gw_v5_1',
-  FIXTURES_CACHE_KEY: 'sorarehub_fixtures_cache_v5_1',
+  PRO_LOCKED_STORAGE_KEY: 'sorarehub_pro_locked_by_gw_v5_2',
+  FIXTURES_CACHE_KEY: 'sorarehub_fixtures_cache_v5_2',
   LOGOUT_FLAG_KEY: 'sorarehub_manual_logout',
   cards: [],
   gameweeks: [],
@@ -38,6 +38,8 @@ const App = {
       localStorage.removeItem('sorarehub_pro_locked_by_gw_v1');
       localStorage.removeItem('sorarehub_pro_locked_by_gw_v2');
       localStorage.removeItem('sorarehub_pro_locked_by_gw_v5');
+      localStorage.removeItem('sorarehub_pro_locked_by_gw_v5_1');
+      localStorage.removeItem('sorarehub_fixtures_cache_v5_1');
     } catch (_) {}
 
     this.restoreFixturesFromLocalCache();
@@ -309,16 +311,42 @@ const App = {
     const targetRarity = String(this.currentScarcity || 'limited').toLowerCase();
     const resultSlugs = [];
 
-    // 1. Aggiunge All-Star della rarità attiva
-    const allStarLb = activeFix.so5Leaderboards.find(lb => {
+    const rarityLbs = activeFix.so5Leaderboards.filter(lb => {
       const s = String(lb.slug || '').toLowerCase();
-      return s.includes('all_star') && !s.includes('_arena_') && s.includes(targetRarity);
+      if (s.includes('_arena_')) return false;
+      if (targetRarity === 'super_rare') return s.includes('super_rare');
+      if (targetRarity === 'rare') return s.includes('rare') && !s.includes('super_rare');
+      return s.includes(targetRarity);
     });
+
+    // 1. All-Star della rarità attiva
+    const allStarLb = rarityLbs.find(lb => String(lb.slug || '').toLowerCase().includes('all_star'));
     if (allStarLb && allStarLb.slug) {
       resultSlugs.push(allStarLb.slug);
     }
 
-    // 2. Trova fino a 2 competizioni In-Season dove l'utente possiede più carte 26/27 (così ogni chiamata resta sotto le 30 carte e cattura il 100% delle Hot Streak PRO)
+    // 2. Contender In-Season (cattura sempre i giocatori Contender, incluso il portiere Johnstone del Celtic)
+    const contenderLb = rarityLbs.find(lb => {
+      const s = String(lb.slug || '').toLowerCase();
+      return s.includes('contender') && s.includes('in_season') && !s.endsWith('_pve');
+    }) || rarityLbs.find(lb => {
+      const s = String(lb.slug || '').toLowerCase();
+      return s.includes('contender') && !s.endsWith('_pve');
+    });
+    if (contenderLb && contenderLb.slug && !resultSlugs.includes(contenderLb.slug)) {
+      resultSlugs.push(contenderLb.slug);
+    }
+
+    // 3. Scottish In-Season (se presente nelle leaderboard della GW)
+    const scottishLb = rarityLbs.find(lb => {
+      const s = String(lb.slug || '').toLowerCase();
+      return s.includes('scotland') && s.includes('in_season') && !s.endsWith('_pve');
+    });
+    if (scottishLb && scottishLb.slug && !resultSlugs.includes(scottishLb.slug)) {
+      resultSlugs.push(scottishLb.slug);
+    }
+
+    // 4. Altre leghe In-Season dove l'utente possiede almeno 4 carte 26/27 (fino a 6 tornei totali)
     if (window.CONFIG && Array.isArray(CONFIG.OFFICIAL_COMPETITIONS) && Array.isArray(this.cards) && window.OptimizerEngine) {
       const inSeasonCards = this.cards.filter(c =>
         c.isInSeason &&
@@ -338,7 +366,7 @@ const App = {
         .sort((a, b) => b.count - a.count);
 
       for (const item of scoredComps) {
-        if (resultSlugs.length >= 3) break;
+        if (resultSlugs.length >= 6) break;
         const matchedLb = this.matchLeaderboardFromFixture(
           activeFix.so5Leaderboards,
           item.comp,
@@ -803,7 +831,7 @@ const App = {
         }
       }
 
-      // Sincronizzazione mirata su All-Star + leghe In-Season attive dell'utente (con cache 5 min anti-429)
+      // Sincronizzazione mirata su All-Star + Contender + Scottish + leghe In-Season attive
       try {
         const activeFix = this.getSelectedSorareFixture();
         const targetSlugs = this.collectTargetedProSyncLeaderboardSlugs(activeFix);
