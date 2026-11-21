@@ -1,8 +1,8 @@
-// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Non-Blocking Fast Sync & Universal Lock (v5.4.0)
+// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Ultra-Fast O(1) Memory Lock (v5.5.0)
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
-  PRO_LOCKED_STORAGE_KEY: 'sorarehub_pro_locked_by_gw_v5_4',
-  FIXTURES_CACHE_KEY: 'sorarehub_fixtures_cache_v5_4',
+  PRO_LOCKED_STORAGE_KEY: 'sorarehub_pro_locked_by_gw_v5_5',
+  FIXTURES_CACHE_KEY: 'sorarehub_fixtures_cache_v5_5',
   LOGOUT_FLAG_KEY: 'sorarehub_manual_logout',
   cards: [],
   gameweeks: [],
@@ -33,101 +33,32 @@ const App = {
     allowNationalTeams: true
   },
 
-  shNormKey(val) {
-    return String(val || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
+  // Lookup istantaneo O(1) in memoria: ZERO chiamate localStorage durante i filtri
+  getLockedCardsMapForCurrentGw() {
+    const fix = this.getSelectedSorareFixture();
+    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
+    const slug = fix?.slug || selectedGw?.sorareSlug;
+    if (!slug) return {};
+    return this.usedCardsByGwSlug[slug] || {};
   },
 
-  shExtractSerial(idOrSlug) {
-    const m = String(idOrSlug || '').match(/-(\d+)$/);
-    return m ? m[1] : '';
-  },
-
-  buildCardLookupKeys(cardOrUsed) {
-    const keys = new Set();
-    if (!cardOrUsed || typeof cardOrUsed !== 'object') return keys;
-
-    for (const raw of [cardOrUsed.cardSlug, cardOrUsed.slug, cardOrUsed.id, cardOrUsed.cardId]) {
-      const n = this.shNormKey(raw);
-      if (n) keys.add(n);
-    }
-
-    const playerSlug = this.shNormKey(cardOrUsed.playerSlug || cardOrUsed.playerName || cardOrUsed.name);
-    const scarcity = this.shNormKey(cardOrUsed.scarcity);
-    const seasonYear = cardOrUsed.seasonYear ? String(cardOrUsed.seasonYear).trim() : '';
-    const clubSlug = this.shNormKey(cardOrUsed.clubSlug || cardOrUsed.club);
-    const serial = this.shExtractSerial(
-      cardOrUsed.cardSlug || cardOrUsed.slug || cardOrUsed.id || cardOrUsed.cardId
-    );
-
-    if (playerSlug) {
-      if (scarcity && seasonYear && serial) {
-        keys.add(`p:${playerSlug}:${seasonYear}:${scarcity}:${serial}`);
-      }
-      if (scarcity && serial) {
-        keys.add(`p:${playerSlug}:${scarcity}:${serial}`);
-      }
-      if (scarcity && seasonYear) {
-        keys.add(`p:${playerSlug}:${seasonYear}:${scarcity}`);
-      }
-      if (clubSlug && scarcity) {
-        keys.add(`p:${playerSlug}:${clubSlug}:${scarcity}`);
-      }
-    }
-
-    return keys;
-  },
-
-  isCardLockedInGw(card, gwSlug = null) {
+  isCardLockedInGw(card, lockedMap = null) {
     if (!card) return false;
-    const lockedMap = gwSlug
-      ? { ...this.loadLocalProLockedForGw(gwSlug), ...(this.usedCardsByGwSlug[gwSlug] || {}) }
-      : this.getLockedCardsMapForCurrentGw();
+    const map = lockedMap || this.getLockedCardsMapForCurrentGw();
+    if (!map) return false;
 
-    if (!lockedMap || typeof lockedMap !== 'object') return false;
+    const idKey = card.id;
+    const slugKey = card.slug;
 
-    const cardKeys = this.buildCardLookupKeys(card);
-    if (this.unlockedUsedCardSlugs.has(card.id) || (card.slug && this.unlockedUsedCardSlugs.has(card.slug))) {
-      return false;
-    }
+    if (idKey && this.unlockedUsedCardSlugs.has(idKey)) return false;
+    if (slugKey && this.unlockedUsedCardSlugs.has(slugKey)) return false;
 
-    for (const k of cardKeys) {
-      if (this.unlockedUsedCardSlugs.has(k)) return false;
-      if (lockedMap[k]) {
-        const entryCanonical = lockedMap[k].cardSlug || k;
-        if (this.unlockedUsedCardSlugs.has(entryCanonical)) return false;
-        return true;
-      }
-    }
+    const entry = (idKey && map[idKey]) || (slugKey && map[slugKey]);
+    if (!entry) return false;
 
-    const pSlug = this.shNormKey(card.playerSlug || card.name);
-    const scarcity = this.shNormKey(card.scarcity);
-    const serial = this.shExtractSerial(card.slug || card.id);
-    const seasonYear = card.seasonYear ? String(card.seasonYear).trim() : '';
-
-    for (const entry of Object.values(lockedMap)) {
-      if (!entry || typeof entry !== 'object') continue;
-      const entryCanonical = entry.cardSlug || entry.slug || entry.id;
-      if (entryCanonical && this.unlockedUsedCardSlugs.has(entryCanonical)) continue;
-
-      for (const ek of this.buildCardLookupKeys(entry)) {
-        if (cardKeys.has(ek)) return true;
-      }
-
-      const eSlug = this.shNormKey(entryCanonical);
-      if (pSlug && eSlug && (eSlug === pSlug || eSlug.startsWith(pSlug + '-'))) {
-        const scarcityOk = !scarcity || eSlug.includes('-' + scarcity + '-') || eSlug.endsWith('-' + scarcity);
-        const serialOk = !serial || eSlug.endsWith('-' + serial);
-        const seasonOk = !seasonYear || eSlug.includes('-' + seasonYear + '-');
-        if (scarcityOk && serialOk && seasonOk) return true;
-      }
-    }
-
-    return false;
+    const canonical = entry.cardSlug || idKey || slugKey;
+    if (canonical && this.unlockedUsedCardSlugs.has(canonical)) return false;
+    return true;
   },
 
   mergeAndIndexUsedCardsForGw(gwSlug, incomingUsedCards = []) {
@@ -135,51 +66,21 @@ const App = {
     if (!targetGw) return {};
 
     this.usedCardsByGwSlug = this.usedCardsByGwSlug || {};
-    const merged = {
-      ...this.loadLocalProLockedForGw(targetGw),
-      ...(this.usedCardsByGwSlug[targetGw] || {})
-    };
+    const merged = { ...(this.usedCardsByGwSlug[targetGw] || {}) };
 
-    const indexSingleRecord = (item) => {
-      if (!item || typeof item !== 'object') return;
-      const canonical = this.shNormKey(item.cardSlug || item.slug || item.id);
-      if (!canonical) return;
+    for (const item of (incomingUsedCards || [])) {
+      if (!item || typeof item !== 'object') continue;
+      const canonical = String(item.cardSlug || item.slug || item.id || '').trim();
+      if (!canonical) continue;
 
       const record = {
         ...item,
-        cardSlug: item.cardSlug || canonical
+        cardSlug: canonical
       };
-
-      const keys = this.buildCardLookupKeys(record);
-      keys.add(canonical);
-
-      // Collega anche le carte in App.cards (incluse quelle con `slug: undefined`)
-      for (const c of (this.cards || [])) {
-        if (!c || typeof c !== 'object') continue;
-        const cId = this.shNormKey(c.id);
-        const cSlug = this.shNormKey(c.slug);
-        if (cId === canonical || (cSlug && cSlug === canonical)) {
-          for (const ck of this.buildCardLookupKeys(c)) keys.add(ck);
-          if (c.id) keys.add(c.id);
-        }
-      }
-
-      merged[record.cardSlug] = record;
-      for (const k of keys) {
-        if (!merged[k]) merged[k] = record;
-      }
-    };
-
-    for (const existingVal of Object.values({ ...merged })) {
-      indexSingleRecord(existingVal);
-    }
-
-    for (const item of (incomingUsedCards || [])) {
-      indexSingleRecord(item);
+      merged[canonical] = record;
     }
 
     this.usedCardsByGwSlug[targetGw] = merged;
-    this.saveLocalProLockedForGw(targetGw, merged);
     this.persistFixturesToLocalCache();
     return merged;
   },
@@ -195,6 +96,8 @@ const App = {
       localStorage.removeItem('sorarehub_fixtures_cache_v5_2');
       localStorage.removeItem('sorarehub_pro_locked_by_gw_v5_3');
       localStorage.removeItem('sorarehub_fixtures_cache_v5_3');
+      localStorage.removeItem('sorarehub_pro_locked_by_gw_v5_4');
+      localStorage.removeItem('sorarehub_fixtures_cache_v5_4');
     } catch (_) {}
 
     this.restoreFixturesFromLocalCache();
@@ -254,28 +157,6 @@ const App = {
           usedCardsByGwSlug: this.usedCardsByGwSlug
         })
       );
-    } catch (_) {}
-  },
-
-  loadLocalProLockedForGw(gwSlug) {
-    if (!gwSlug) return {};
-    try {
-      const raw = localStorage.getItem(this.PRO_LOCKED_STORAGE_KEY);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      return (parsed && parsed[gwSlug]) || {};
-    } catch (_) {
-      return {};
-    }
-  },
-
-  saveLocalProLockedForGw(gwSlug, entriesMap) {
-    if (!gwSlug || !entriesMap) return;
-    try {
-      const raw = localStorage.getItem(this.PRO_LOCKED_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      parsed[gwSlug] = { ...(parsed[gwSlug] || {}), ...entriesMap };
-      localStorage.setItem(this.PRO_LOCKED_STORAGE_KEY, JSON.stringify(parsed));
     } catch (_) {}
   },
 
@@ -461,43 +342,6 @@ const App = {
     return slugs;
   },
 
-  collectTargetedProBoardConfigSlugs() {
-    const configSlugs = new Set();
-    const targetRarity = String(this.currentScarcity || 'limited').toLowerCase();
-
-    if (window.CONFIG && Array.isArray(CONFIG.OFFICIAL_COMPETITIONS) && Array.isArray(this.cards) && window.OptimizerEngine) {
-      const inSeasonCards = this.cards.filter(c =>
-        c.isInSeason &&
-        c.scarcity === targetRarity &&
-        !this.isCardLockedInVault(c)
-      );
-
-      const scoredComps = CONFIG.OFFICIAL_COMPETITIONS
-        .filter(comp => comp.format === 'SO5')
-        .map(comp => {
-          const count = inSeasonCards.filter(c =>
-            OptimizerEngine.isCardEligibleForCompetition(c, comp, targetRarity)
-          ).length;
-          return { comp, count };
-        })
-        .filter(item => item.count >= 4)
-        .sort((a, b) => b.count - a.count);
-
-      for (const item of scoredComps) {
-        const cfg = this.getProBoardConfigSlug(item.comp.id);
-        if (cfg) configSlugs.add(cfg);
-      }
-    }
-
-    configSlugs.add('football-pro-27-contender');
-    configSlugs.add('football-pro-27-scotland');
-
-    const currentCfg = this.getProBoardConfigSlug(this.currentCompetition?.id);
-    if (currentCfg) configSlugs.add(currentCfg);
-
-    return Array.from(configSlugs).slice(0, 8);
-  },
-
   collectTargetedProSyncLeaderboardSlugs(activeFix) {
     if (!activeFix || !Array.isArray(activeFix.so5Leaderboards)) return [];
     const targetRarity = String(this.currentScarcity || 'limited').toLowerCase();
@@ -512,9 +356,7 @@ const App = {
     });
 
     const allStarLb = rarityLbs.find(lb => String(lb.slug || '').toLowerCase().includes('all_star'));
-    if (allStarLb && allStarLb.slug) {
-      resultSlugs.push(allStarLb.slug);
-    }
+    if (allStarLb && allStarLb.slug) resultSlugs.push(allStarLb.slug);
 
     const contenderLb = rarityLbs.find(lb => {
       const s = String(lb.slug || '').toLowerCase();
@@ -535,39 +377,7 @@ const App = {
       resultSlugs.push(scottishLb.slug);
     }
 
-    if (window.CONFIG && Array.isArray(CONFIG.OFFICIAL_COMPETITIONS) && Array.isArray(this.cards) && window.OptimizerEngine) {
-      const inSeasonCards = this.cards.filter(c =>
-        c.isInSeason &&
-        c.scarcity === targetRarity &&
-        !this.isCardLockedInVault(c)
-      );
-
-      const scoredComps = CONFIG.OFFICIAL_COMPETITIONS
-        .filter(comp => comp.format === 'SO5')
-        .map(comp => {
-          const count = inSeasonCards.filter(c =>
-            OptimizerEngine.isCardEligibleForCompetition(c, comp, targetRarity)
-          ).length;
-          return { comp, count };
-        })
-        .filter(item => item.count >= 4)
-        .sort((a, b) => b.count - a.count);
-
-      for (const item of scoredComps) {
-        if (resultSlugs.length >= 6) break;
-        const matchedLb = this.matchLeaderboardFromFixture(
-          activeFix.so5Leaderboards,
-          item.comp,
-          targetRarity,
-          'standard'
-        );
-        if (matchedLb && matchedLb.slug && !resultSlugs.includes(matchedLb.slug)) {
-          resultSlugs.push(matchedLb.slug);
-        }
-      }
-    }
-
-    return resultSlugs;
+    return resultSlugs.slice(0, 4);
   },
 
   async syncLiveStartingLineups(btnEl = null, silentAuto = false) {
@@ -832,7 +642,7 @@ const App = {
       const timeout = setTimeout(() => {
         window.removeEventListener('message', listener);
         resolve({ ok: false, error: 'Estensione Chrome non risponde: vai su chrome://extensions, clicca Ricarica su SorareHub Direct API e aggiorna questa pagina.' });
-      }, 20000);
+      }, 15000);
 
       function listener(event) {
         if (event.source !== window) return;
@@ -1018,16 +828,14 @@ const App = {
         }
       }
 
-      // Sincronizzazione unificata: Board PRO via scheda reale Sorare + diff parallelo rapido
+      // Diff leggero in puro Service Worker (non apre mai schede)
       try {
         const activeFix = this.getSelectedSorareFixture();
         const targetSlugs = this.collectTargetedProSyncLeaderboardSlugs(activeFix);
-        const proConfigSlugs = this.collectTargetedProBoardConfigSlugs();
 
-        if (activeFix && activeFix.slug && (targetSlugs.length > 0 || proConfigSlugs.length > 0)) {
+        if (activeFix && activeFix.slug && targetSlugs.length > 0) {
           const proUsedResp = await this.sendToExtension('SH_GET_PRO_HOTSTREAK_USED_CARDS', {
             so5LeaderboardSlugs: targetSlugs,
-            proConfigSlugs,
             forceRefresh: forceProRefresh
           });
           if (proUsedResp && proUsedResp.ok && Array.isArray(proUsedResp.usedCards) && proUsedResp.usedCards.length > 0) {
@@ -1050,17 +858,6 @@ const App = {
     }
     const allFixes = Object.values(this.sorareFixturesBySlug).sort((a, b) => (a.gameWeek || 0) - (b.gameWeek || 0));
     return allFixes[this.selectedGwIndex] || allFixes[0] || null;
-  },
-
-  getLockedCardsMapForCurrentGw() {
-    const fix = this.getSelectedSorareFixture();
-    const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
-    const slug = fix?.slug || selectedGw?.sorareSlug;
-    if (!slug) return {};
-    return {
-      ...this.loadLocalProLockedForGw(slug),
-      ...(this.usedCardsByGwSlug[slug] || {})
-    };
   },
 
   matchLeaderboardFromFixture(leaderboards, comp, scarcity, targetMode = 'standard') {
@@ -1241,9 +1038,6 @@ const App = {
             cardSlug: p.id,
             playerSlug: p.playerSlug,
             playerName: p.name,
-            scarcity: p.scarcity,
-            seasonYear: p.seasonYear,
-            clubSlug: p.clubSlug,
             leaderboardName: `🔥 Hot Streak PRO (${this.currentCompetition.name})`,
             leaderboardSlug: configSlug,
             leaderboardId: proResp.taskId || configSlug,
@@ -1319,6 +1113,7 @@ const App = {
     const inSeasonTotal = this.cards.filter(c => c.isInSeason).length;
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
     const presetReservedSet = this.getPresetReservedCardIdsSet();
+    const lockedMap = this.getLockedCardsMapForCurrentGw();
 
     let confirmedXiCount = 0;
     const roleActiveCounts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
@@ -1328,7 +1123,7 @@ const App = {
       if (this.isCardLockedInVault(c)) return;
       if (c.isInjuredOrSuspended && this.manualOverrides[c.playerSlug] !== 'xi') return;
       if ((c.liveLineupStatus === 'bench' || c.liveLineupStatus === 'out') && this.manualOverrides[c.playerSlug] !== 'xi') return;
-      if (this.isCardLockedInGw(c)) return;
+      if (this.isCardLockedInGw(c, lockedMap)) return;
       if (presetReservedSet.has(c.id)) return;
       if (this.manualOverrides[c.playerSlug] === 'bench') return;
       if (c.scarcity !== this.currentScarcity) return;
@@ -2161,15 +1956,8 @@ const App = {
     }
 
     const lockedMap = this.getLockedCardsMapForCurrentGw();
-    const dedupedLockedByCanonical = new Map();
-    Object.values(lockedMap).forEach(entry => {
-      if (!entry || !entry.cardSlug) return;
-      if (!dedupedLockedByCanonical.has(entry.cardSlug)) {
-        dedupedLockedByCanonical.set(entry.cardSlug, entry);
-      }
-    });
-
-    const lockedEntries = Array.from(dedupedLockedByCanonical.values()).filter(entry => {
+    const lockedEntries = Object.values(lockedMap).filter(entry => {
+      if (!entry || !entry.cardSlug) return false;
       const foundCard = this.cards.find(c => c.id === entry.cardSlug || c.slug === entry.cardSlug);
       return !foundCard || foundCard.scarcity === this.currentScarcity;
     });
@@ -2379,12 +2167,12 @@ const App = {
           loginBtn.disabled = false;
         }
 
-        // Render IMMEDIATO usando la cache locale (0 ms di attesa per l'utente)
+        // Render IMMEDIATO (0 ms)
         this.syncStateFromDOM();
         this.renderGwAndClubSelectors();
         this.runOptimizer();
 
-        // Sincronizzazione non bloccante in background (Board PRO + SO5 + Distinte Live)
+        // Sync leggero in background (senza aprire schede)
         (async () => {
           await this.syncRealSorareFixturesAndLineups(forceRefresh);
           if (this.isLoggingOut) return;
@@ -2451,7 +2239,6 @@ const App = {
         if (found) {
           this.currentCompetition = found;
           this.selectedClubSlug = 'ALL';
-          this.renderGwAndClubSelectors();
           this.runOptimizer();
         }
       });
@@ -2468,7 +2255,6 @@ const App = {
         target.classList.add('active');
         this.currentScarcity = val;
         this.selectedClubSlug = 'ALL';
-        this.renderGwAndClubSelectors();
         this.runOptimizer();
       });
     });
@@ -2696,17 +2482,12 @@ const App = {
     this.renderGwAndClubSelectors();
     const selectedGw = this.gameweeks[this.selectedGwIndex] || null;
     const presetReservedSet = this.getPresetReservedCardIdsSet();
+    const lockedMap = this.getLockedCardsMapForCurrentGw();
 
     const availableCardsForGw = this.cards.filter(c => {
-      if (this.isCardLockedInVault(c)) {
-        return false;
-      }
-      if (this.isCardLockedInGw(c)) {
-        return false;
-      }
-      if (presetReservedSet.has(c.id)) {
-        return false;
-      }
+      if (this.isCardLockedInVault(c)) return false;
+      if (this.isCardLockedInGw(c, lockedMap)) return false;
+      if (presetReservedSet.has(c.id)) return false;
       return true;
     });
 
