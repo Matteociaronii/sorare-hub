@@ -1,8 +1,8 @@
-// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Universal Multi-Key Lock & Auto Hot Streak Sync (v5.3.0)
+// SorareHub - Application Controller + Live Official Lineups (-1h) + Starting Odds (A-F) + Account Menu + Vault Filter + Non-Blocking Fast Sync & Universal Lock (v5.4.0)
 const App = {
   PRESET_STORAGE_KEY: 'sorarehub_preset_lineups_v1',
-  PRO_LOCKED_STORAGE_KEY: 'sorarehub_pro_locked_by_gw_v5_3',
-  FIXTURES_CACHE_KEY: 'sorarehub_fixtures_cache_v5_3',
+  PRO_LOCKED_STORAGE_KEY: 'sorarehub_pro_locked_by_gw_v5_4',
+  FIXTURES_CACHE_KEY: 'sorarehub_fixtures_cache_v5_4',
   LOGOUT_FLAG_KEY: 'sorarehub_manual_logout',
   cards: [],
   gameweeks: [],
@@ -170,12 +170,10 @@ const App = {
       }
     };
 
-    // Re-indicizza ciò che era già presente
     for (const existingVal of Object.values({ ...merged })) {
       indexSingleRecord(existingVal);
     }
 
-    // Aggiunge e indicizza i nuovi record
     for (const item of (incomingUsedCards || [])) {
       indexSingleRecord(item);
     }
@@ -195,6 +193,8 @@ const App = {
       localStorage.removeItem('sorarehub_fixtures_cache_v5_1');
       localStorage.removeItem('sorarehub_pro_locked_by_gw_v5_2');
       localStorage.removeItem('sorarehub_fixtures_cache_v5_2');
+      localStorage.removeItem('sorarehub_pro_locked_by_gw_v5_3');
+      localStorage.removeItem('sorarehub_fixtures_cache_v5_3');
     } catch (_) {}
 
     this.restoreFixturesFromLocalCache();
@@ -465,7 +465,6 @@ const App = {
     const configSlugs = new Set();
     const targetRarity = String(this.currentScarcity || 'limited').toLowerCase();
 
-    // Aggiunge sempre le board PRO delle competizioni dove l'utente possiede almeno 4 carte In-Season
     if (window.CONFIG && Array.isArray(CONFIG.OFFICIAL_COMPETITIONS) && Array.isArray(this.cards) && window.OptimizerEngine) {
       const inSeasonCards = this.cards.filter(c =>
         c.isInSeason &&
@@ -490,7 +489,6 @@ const App = {
       }
     }
 
-    // Assicura sempre Contender e Scotland se presenti carte pertinenti
     configSlugs.add('football-pro-27-contender');
     configSlugs.add('football-pro-27-scotland');
 
@@ -513,13 +511,11 @@ const App = {
       return s.includes(targetRarity);
     });
 
-    // 1. All-Star della rarità attiva
     const allStarLb = rarityLbs.find(lb => String(lb.slug || '').toLowerCase().includes('all_star'));
     if (allStarLb && allStarLb.slug) {
       resultSlugs.push(allStarLb.slug);
     }
 
-    // 2. Contender In-Season
     const contenderLb = rarityLbs.find(lb => {
       const s = String(lb.slug || '').toLowerCase();
       return s.includes('contender') && s.includes('in_season') && !s.endsWith('_pve');
@@ -531,7 +527,6 @@ const App = {
       resultSlugs.push(contenderLb.slug);
     }
 
-    // 3. Scottish In-Season
     const scottishLb = rarityLbs.find(lb => {
       const s = String(lb.slug || '').toLowerCase();
       return s.includes('scotland') && s.includes('in_season') && !s.endsWith('_pve');
@@ -540,32 +535,6 @@ const App = {
       resultSlugs.push(scottishLb.slug);
     }
 
-    // 4. Leghe extra presenti in galleria (2. Bundesliga, Austrian Bundesliga, ecc.)
-    const activeLeagueTokens = new Set(
-      (this.cards || [])
-        .filter(c => c && c.isInSeason && c.scarcity === targetRarity && !this.isCardLockedInVault(c))
-        .map(c => this.shNormKey(c.leagueSlug || c.competitionSlug))
-        .filter(Boolean)
-    );
-
-    const extraTokenMap = {
-      '2-bundesliga': ['2_bundesliga', 'germany_second'],
-      'austrian-bundesliga': ['austria'],
-      'premiership-gb-sct': ['scotland']
-    };
-
-    for (const [lgKey, searchTokens] of Object.entries(extraTokenMap)) {
-      if (!activeLeagueTokens.has(lgKey)) continue;
-      const foundExtra = rarityLbs.find(lb => {
-        const s = String(lb.slug || '').toLowerCase();
-        return s.includes('in_season') && !s.endsWith('_pve') && searchTokens.some(tk => s.includes(tk));
-      });
-      if (foundExtra && foundExtra.slug && !resultSlugs.includes(foundExtra.slug)) {
-        resultSlugs.push(foundExtra.slug);
-      }
-    }
-
-    // 5. Altre leghe In-Season dove l'utente possiede almeno 4 carte 26/27 (fino a 10 tornei totali)
     if (window.CONFIG && Array.isArray(CONFIG.OFFICIAL_COMPETITIONS) && Array.isArray(this.cards) && window.OptimizerEngine) {
       const inSeasonCards = this.cards.filter(c =>
         c.isInSeason &&
@@ -585,7 +554,7 @@ const App = {
         .sort((a, b) => b.count - a.count);
 
       for (const item of scoredComps) {
-        if (resultSlugs.length >= 10) break;
+        if (resultSlugs.length >= 6) break;
         const matchedLb = this.matchLeaderboardFromFixture(
           activeFix.so5Leaderboards,
           item.comp,
@@ -988,7 +957,6 @@ const App = {
       const detailJson = await detailRes.json();
       const so5Data = detailJson?.data?.so5 || {};
 
-      // Aggiornamento atomico: non sovrascrive mai la cache locale se Sorare risponde vuoto
       const validFixKeys = Object.keys(so5Data).filter(k => so5Data[k] && so5Data[k].slug);
       if (validFixKeys.length > 0) {
         const fixturesMap = {};
@@ -1050,7 +1018,7 @@ const App = {
         }
       }
 
-      // Sincronizzazione unificata: Board PRO dirette + diff ampliato (pageSize: 100)
+      // Sincronizzazione unificata: Board PRO via scheda reale Sorare + diff parallelo rapido
       try {
         const activeFix = this.getSelectedSorareFixture();
         const targetSlugs = this.collectTargetedProSyncLeaderboardSlugs(activeFix);
@@ -2337,6 +2305,7 @@ const App = {
     if (gwSelect) {
       gwSelect.addEventListener('change', (e) => {
         this.selectedGwIndex = Number(e.target.value) || 0;
+        this.runOptimizer();
         this.syncLiveStartingLineups(null, true);
       });
     }
@@ -2392,7 +2361,7 @@ const App = {
 
     if (loginBtn) loginBtn.disabled = true;
     if (loginBtnText) loginBtnText.textContent = '⏳ Sincronizzazione...';
-    this.notify('⏳ Connessione a Sorare e lettura formazioni schierate in corso...');
+    this.notify('⏳ Caricamento galleria Sorare...');
 
     try {
       const data = await SorareAPI.fetchCurrentUserGallery(forceRefresh);
@@ -2410,12 +2379,19 @@ const App = {
           loginBtn.disabled = false;
         }
 
-        await this.syncRealSorareFixturesAndLineups(forceRefresh);
-
+        // Render IMMEDIATO usando la cache locale (0 ms di attesa per l'utente)
         this.syncStateFromDOM();
-        await this.syncLiveStartingLineups(null, true);
         this.renderGwAndClubSelectors();
         this.runOptimizer();
+
+        // Sincronizzazione non bloccante in background (Board PRO + SO5 + Distinte Live)
+        (async () => {
+          await this.syncRealSorareFixturesAndLineups(forceRefresh);
+          if (this.isLoggingOut) return;
+          this.renderGwAndClubSelectors();
+          this.runOptimizer();
+          await this.syncLiveStartingLineups(null, true);
+        })();
       }
     } catch (err) {
       console.error('Errore fetch galleria:', err);
